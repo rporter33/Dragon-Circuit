@@ -233,6 +233,7 @@ export interface DomeUniforms {
   uCloudShade: { value: Color };
   uFlashPos: { value: Vector3 };
   uFlash: { value: number };
+  uCloudDirect: { value: number };
 }
 
 export class SkyDome {
@@ -240,7 +241,7 @@ export class SkyDome {
   readonly uniforms: DomeUniforms;
 
   /** Cloud uniforms are shared with the cloud sea so both shade identically. */
-  constructor(scene: Scene, shared: Pick<DomeUniforms, 'uCloudLit' | 'uCloudShade' | 'uFlashPos' | 'uFlash'>) {
+  constructor(scene: Scene, shared: Pick<DomeUniforms, 'uCloudLit' | 'uCloudShade' | 'uFlashPos' | 'uFlash' | 'uCloudDirect'>) {
     this.uniforms = {
       uHorizonSun: { value: new Color() },
       uSunDisk: { value: new Color() },

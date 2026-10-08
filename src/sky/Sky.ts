@@ -84,6 +84,7 @@ export class Sky implements SkySystem {
     uCloudShade: { value: new Color() },
     uFlashPos: { value: new Vector3() },
     uFlash: { value: 0 },
+    uCloudDirect: { value: 1 },
   };
   private puffTex = puffAtlas();
   private cloudLevel = -1;
@@ -213,6 +214,7 @@ export class Sky implements SkySystem {
 
     // --- Palette --------------------------------------------------------------------------
     const pal = samplePalette(this.timeOfDay, this.palette);
+    const clearKey = pal.keyI;
     applyWeather(pal, w ? { overcast: w.overcast, mist: w.mist, rain: w.rain, fog: w.params.fog } : NEUTRAL_WEATHER);
 
     // --- Shared uniforms --------------------------------------------------------------------
@@ -255,6 +257,9 @@ export class Sky implements SkySystem {
     this.shared.uCloudLit.value.copy(pal.cloudLit);
     this.shared.uCloudShade.value.copy(pal.cloudShade);
     this.shared.uFlash.value = flash;
+    // How much of the clear-sky key light the weather lets through: clouds lose their modelling
+    // under an overcast lid.
+    this.shared.uCloudDirect.value = clearKey > 1e-4 ? clamp01(pal.keyI / clearKey) : 1;
     if (w) this.shared.uFlashPos.value.copy(w.flashPosition);
 
     this.updateDome(dt, camera, pal);

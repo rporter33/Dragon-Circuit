@@ -1,7 +1,7 @@
 // The cloud sea below the islands: a heightfield of soft billows, relief-marched in one opaque
-// pass. A disc at the top of the cloud layer follows the camera; each pixel marches its view ray
-// down through the layer to the billow surface, so crests occlude the troughs behind them and
-// the sea has real parallax as you fly. The pixel then writes the depth of that surface, so
+// full-screen pass. Each pixel clips its view ray to the cloud layer and marches it to the billow
+// surface, so crests occlude the troughs behind them and the sea has real parallax as you fly —
+// from high above, or skimming through the tops inside the layer. The pixel then writes the depth of that surface, so
 // islands that dip into the sea sink into the billows along their contours.
 //
 // Lighting: the shared cloud model (painterly bands, crest brightening, forward-scatter silver
@@ -9,8 +9,8 @@
 // cast by the floating islands and cloud banks above. Everything flows with the wind.
 
 import {
-  CircleGeometry,
-  DoubleSide,
+  BufferAttribute,
+  BufferGeometry,
   Mesh,
   ShaderMaterial,
   Vector2,
@@ -35,13 +35,14 @@ export const SEA_TOP = SEA_BASE + SEA_RANGE;
 export const MAX_SHADOWERS = 24;
 
 const VERTEX = /* glsl */ `
-uniform float uRadius;
-uniform float uSeaTop;
-varying vec3 vWorld;
+varying vec3 vDir;
 void main() {
-  vec3 w = vec3(cameraPosition.x + position.x * uRadius, uSeaTop, cameraPosition.z - position.y * uRadius);
-  vWorld = w;
-  gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
+  // A full-screen triangle; each pixel gets its world-space view ray from the camera matrices,
+  // so the sea is marched correctly whether the camera is above, inside or below the layer.
+  vec2 ndc = position.xy;
+  vec3 view = vec3((ndc.x + projectionMatrix[2][0]) / projectionMatrix[0][0], (ndc.y + projectionMatrix[2][1]) / projectionMatrix[1][1], -1.0);
+  vDir = transpose(mat3(viewMatrix)) * view;
+  gl_Position = vec4(ndc, 0.0, 1.0);
 }
 `;
 
@@ -59,10 +60,11 @@ uniform float uSeaBase;
 uniform float uSeaTop;
 uniform float uPixelAngle;
 uniform float uTexSize;
+uniform float uMaxDist;
 uniform vec4 uShadowers[${MAX_SHADOWERS}];
 uniform int uShadowerCount;
 uniform float uShadowerStrength;
-varying vec3 vWorld;
+varying vec3 vDir;
 
 const float TILE_MAIN = ${SEA_TILE.toFixed(1)};
 const float TILE_MACRO = ${SEA_MACRO_TILE.toFixed(1)};
@@ -88,29 +90,45 @@ float seaHeightCoarse(vec2 xz, float lodMain, float lodMacro) {
   return seaHeight(xz, lodMain, lodMacro, s);
 }
 
+// Mip level for a ray sample at distance t: the pixel's footprint on the layer (geometric mean
+// of its two axes, so grazing rays blur along the view a little but not across it).
+float lodAt(float t, float ry, float tile) {
+  return lodFor(max(t, 1.0) * uPixelAngle / sqrt(max(abs(ry), 0.03)), tile);
+}
+
 void main() {
   vec3 ro = cameraPosition;
-  vec3 rd = normalize(vWorld - ro);
+  vec3 rd = normalize(vDir);
+  // Clip the ray to the cloud layer [uSeaBase, uSeaTop].
   float t0 = 0.0;
   if (ro.y > uSeaTop) {
     if (rd.y > -1e-4) discard;
     t0 = (uSeaTop - ro.y) / rd.y;
+  } else if (ro.y < uSeaBase) {
+    if (rd.y < 1e-4) discard;
+    t0 = (uSeaBase - ro.y) / rd.y;
   }
-  float t1 = rd.y < -1e-4 ? (uSeaBase - ro.y) / rd.y : t0 + 2000.0;
-  t1 = min(t1, t0 + 3500.0);
+  // Beyond the far plane the sky dome draws the far field.
+  if (t0 > uMaxDist) discard;
+  float tExit = rd.y < -1e-4 ? (uSeaBase - ro.y) / rd.y : (rd.y > 1e-4 ? (uSeaTop - ro.y) / rd.y : 1e9);
+  float t1 = min(tExit, uMaxDist);
+  float span = t1 - t0;
 
-  // Mip level from the pixel's footprint on the layer (geometric mean of its two axes).
-  float foot = t0 * uPixelAngle / sqrt(max(abs(rd.y), 0.03));
-  float lodM = lodFor(foot, TILE_MAIN);
-  float lodC = lodFor(foot, TILE_MACRO);
-
-  // Relief march: uniform steps, then a secant refinement at the crossing.
-  float dt = (t1 - t0) / float(SEA_STEPS);
+  // Relief march, then a secant refinement at the crossing. Long, grazing spans (skimming the
+  // tops, or inside the layer) put their steps close to the eye where detail matters.
+  float kDist = 1.0 + 1.2 * smoothstep(250.0, 2500.0, span);
+  float lodM = lodAt(t0, rd.y, TILE_MAIN);
+  float lodC = lodAt(t0, rd.y, TILE_MACRO);
   float tPrev = t0;
   float dPrev = (ro.y + rd.y * t0) - seaHeightCoarse((ro + rd * t0).xz, lodM, lodC);
   float tHit = t1;
+  bool found = dPrev < 0.0;
+  if (found) tHit = t0;
   for (int i = 1; i <= SEA_STEPS; i++) {
-    float t = t0 + dt * float(i);
+    if (found) break;
+    float t = t0 + span * pow(float(i) / float(SEA_STEPS), kDist);
+    lodM = lodAt(t, rd.y, TILE_MAIN);
+    lodC = lodAt(t, rd.y, TILE_MACRO);
     vec3 p = ro + rd * t;
     float dd = p.y - seaHeightCoarse(p.xz, lodM, lodC);
     if (dd < 0.0) {
@@ -124,11 +142,16 @@ void main() {
         if (dm < 0.0) { tB = tm; dB = dm; } else { tA = tm; dA = dm; }
       }
       tHit = tA + (tB - tA) * dA / max(dA - dB, 1e-4);
-      break;
+      found = true;
     }
     tPrev = t;
     dPrev = dd;
   }
+  // Looking up and out of the layer past every crest: the sky shows.
+  if (!found && rd.y > 0.0) discard;
+  float foot = max(tHit, 1.0) * uPixelAngle / sqrt(max(abs(rd.y), 0.03));
+  lodM = lodFor(foot, TILE_MAIN);
+  lodC = lodFor(foot, TILE_MACRO);
   vec3 hit = ro + rd * tHit;
   float swell;
   float hy = seaHeight(hit.xz, lodM, lodC, swell);
@@ -187,6 +210,7 @@ export interface SeaShared {
   uCloudShade: { value: Color };
   uFlashPos: { value: Vector3 };
   uFlash: { value: number };
+  uCloudDirect: { value: number };
 }
 
 export class CloudSea {
@@ -200,7 +224,7 @@ export class CloudSea {
     uScrollDetail: { value: Vector2 };
     uSeaBase: { value: number };
     uSeaTop: { value: number };
-    uRadius: { value: number };
+    uMaxDist: { value: number };
     uPixelAngle: { value: number };
     uTexSize: { value: number };
     uShadowers: { value: Vector4[] };
@@ -217,7 +241,7 @@ export class CloudSea {
       uScrollDetail: { value: new Vector2() },
       uSeaBase: { value: SEA_BASE },
       uSeaTop: { value: SEA_TOP },
-      uRadius: { value: 6000 },
+      uMaxDist: { value: 6000 },
       uPixelAngle: { value: 0.001 },
       uTexSize: { value: texSize },
       uShadowers: { value: this.shadowers },
@@ -226,14 +250,16 @@ export class CloudSea {
     };
     this.material = new ShaderMaterial({
       name: 'DriftwingCloudSea',
-      side: DoubleSide,
       uniforms: { ...globalUniforms, ...shared, ...this.uniforms },
+      depthTest: true,
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
       defines: { SEA_STEPS: steps, SEA_SHADOW_STEPS: 4 },
     });
-    // A disc (in its XY plane; the vertex shader lays it flat) around the camera.
-    this.mesh = new Mesh(new CircleGeometry(1, 96), this.material);
+    // One full-screen triangle: the fragment shader finds the sea along each pixel's view ray.
+    const tri = new BufferGeometry();
+    tri.setAttribute('position', new BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+    this.mesh = new Mesh(tri, this.material);
     this.mesh.name = 'cloudSea';
     this.mesh.frustumCulled = false;
     // After the dome, before the world: islands below the billows are then depth-rejected early.
@@ -253,8 +279,8 @@ export class CloudSea {
    */
   update(camera: PerspectiveCamera, drift: Vector3, count: number, shadowStrength: number, viewportHeight: number): void {
     const u = this.uniforms;
-    // Stay inside the far plane, so the disc is never clipped; the dome draws the rest.
-    u.uRadius.value = camera.far * 0.94;
+    // Stay inside the far plane (the depth written must be in range); the dome draws the rest.
+    u.uMaxDist.value = camera.far * 0.94;
     u.uPixelAngle.value = (2 * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, viewportHeight);
     // Wrap the offsets (tiles repeat) so uv precision never degrades over a long session.
     u.uScrollMain.value.set(fract(-drift.x / SEA_TILE), fract(-drift.z / SEA_TILE));

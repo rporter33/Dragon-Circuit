@@ -42,8 +42,15 @@ export interface BankDef {
 export const BANK_WRAP = 3300;
 const WRAP_FADE = 450;
 /** Inside this fraction of a puff's radius the veil is total. */
-const VEIL_CORE = 0.3;
-const VEIL_EDGE = 0.92;
+const VEIL_CORE = 0.35;
+const VEIL_EDGE = 1.0;
+/**
+ * The bank's body as an ellipsoid (fractions of width / height) that veils on its own: puffs
+ * alone leave clear pockets between them, and the heart of a bank should be a solid white-out.
+ */
+const BODY_RX = 0.72;
+const BODY_RY = 0.5;
+const BODY_LIFT = 0.42;
 
 export function buildBanks(layout: WorldLayout, count: number, puffsPer: number, seed = 0xb4a7c): BankDef[] {
   const rng = new Rng(seed);
@@ -214,6 +221,13 @@ export class CloudBankField {
         k += n;
         continue;
       }
+      // The body: an ellipsoid around the bank's middle, thick at the heart, soft at the skin.
+      const grow = 0.55 + 0.45 * a;
+      const rx = bank.width * BODY_RX * grow;
+      const ry = bank.height * BODY_RY * grow;
+      const ey = (by + bank.height * BODY_LIFT * grow) / ry;
+      const e = Math.sqrt((bx * bx + bz * bz) / (rx * rx) + ey * ey);
+      if (e < 1) clear *= 1 - a * (1 - smoothstep(0.3, 1, e));
       for (let i = 0; i < n; i++, k++) {
         const r = this.radii[k];
         const dx = this.centers[k * 3] - p.x;

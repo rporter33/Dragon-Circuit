@@ -96,7 +96,7 @@ const PREDAWN: PaletteSpec = {
 const DAWN: PaletteSpec = {
   zenith: '#3a5a9c', horizon: '#e6a6a8', horizonSun: '#ffbe76', sunDisk: '#ffd29a', glow: 1.0,
   belt: 0.55, beltColor: '#d8a0bc', stars: 0.06,
-  key: '#ffb07a', keyI: 0.42, hemiSky: '#8c9ece', hemiGround: '#d2a29c', hemiI: 0.98,
+  key: '#ffb07a', keyI: 0.42, hemiSky: '#8c9ece', hemiGround: '#b29cb0', hemiI: 0.98,
   fog: '#caa2b6', fogSun: '#ffbe86', fogDensity: 0.0003, fogFalloff: 0.0021,
   cloudLit: '#ffd0b0', cloudShade: '#7e78aa',
   exposure: 1.12, saturation: 1.1, contrast: 1.04, lift: '#160a28', gain: '#fff0e4',
@@ -106,7 +106,7 @@ const DAWN: PaletteSpec = {
 const MORNING_GOLD: PaletteSpec = {
   zenith: '#4472bc', horizon: '#d2c6cc', horizonSun: '#ffd6a2', sunDisk: '#fff0d0', glow: 0.8,
   belt: 0.12, beltColor: '#d0a8c0', stars: 0,
-  key: '#ffd29e', keyI: 0.72, hemiSky: '#9cb4dc', hemiGround: '#dac2b2', hemiI: 1.0,
+  key: '#ffd29e', keyI: 0.72, hemiSky: '#9cb4dc', hemiGround: '#bab6c6', hemiI: 1.0,
   fog: '#c4c4d6', fogSun: '#ffd4a2', fogDensity: 0.00026, fogFalloff: 0.0022,
   cloudLit: '#fff0dc', cloudShade: '#8e9cc6',
   exposure: 1.04, saturation: 1.1, contrast: 1.05, lift: '#0a0818', gain: '#fff6ec',
@@ -116,8 +116,8 @@ const MORNING_GOLD: PaletteSpec = {
 const MORNING: PaletteSpec = {
   zenith: '#2c66c8', horizon: '#aecaec', horizonSun: '#f4e6d0', sunDisk: '#fff6e6', glow: 0.6,
   belt: 0, beltColor: '#000000', stars: 0,
-  key: '#ffe8c8', keyI: 0.92, hemiSky: '#a4c0e8', hemiGround: '#c2c8d2', hemiI: 1.0,
-  fog: '#a6c2e6', fogSun: '#f2e2c8', fogDensity: 0.00021, fogFalloff: 0.0022,
+  key: '#ffe8c8', keyI: 0.92, hemiSky: '#a4c0e8', hemiGround: '#b4bccc', hemiI: 1.0,
+  fog: '#a6c2e6', fogSun: '#f2e2c8', fogDensity: 0.00018, fogFalloff: 0.0022,
   cloudLit: '#fffaf2', cloudShade: '#88a2d0',
   exposure: 1.0, saturation: 1.14, contrast: 1.07, lift: '#02040c', gain: '#fffcf6',
   bloom: 0.28, bloomThreshold: 0.88, rim: 0.5,
@@ -126,8 +126,8 @@ const MORNING: PaletteSpec = {
 const NOON: PaletteSpec = {
   zenith: '#1f5cc8', horizon: '#a6c8ee', horizonSun: '#dcebf6', sunDisk: '#ffffff', glow: 0.5,
   belt: 0, beltColor: '#000000', stars: 0,
-  key: '#fff4e4', keyI: 1.0, hemiSky: '#a8c8f2', hemiGround: '#c0c8d4', hemiI: 1.05,
-  fog: '#9cbde6', fogSun: '#e4eef4', fogDensity: 0.00019, fogFalloff: 0.0022,
+  key: '#fff4e4', keyI: 1.0, hemiSky: '#a8c8f2', hemiGround: '#b2bccc', hemiI: 1.05,
+  fog: '#9cbde6', fogSun: '#e4eef4', fogDensity: 0.00016, fogFalloff: 0.0022,
   cloudLit: '#ffffff', cloudShade: '#86a2d2',
   exposure: 1.0, saturation: 1.15, contrast: 1.08, lift: '#00030a', gain: '#ffffff',
   bloom: 0.25, bloomThreshold: 0.9, rim: 0.42,
@@ -136,8 +136,8 @@ const NOON: PaletteSpec = {
 const AFTERNOON: PaletteSpec = {
   zenith: '#2260c4', horizon: '#aecaea', horizonSun: '#f6e4c4', sunDisk: '#fff8ea', glow: 0.62,
   belt: 0, beltColor: '#000000', stars: 0,
-  key: '#ffefd2', keyI: 0.95, hemiSky: '#a8c4ea', hemiGround: '#cac6c0', hemiI: 1.0,
-  fog: '#a2c0e4', fogSun: '#f4deb8', fogDensity: 0.00021, fogFalloff: 0.0022,
+  key: '#ffefd2', keyI: 0.95, hemiSky: '#a8c4ea', hemiGround: '#b8bcc8', hemiI: 1.0,
+  fog: '#a2c0e4', fogSun: '#f4deb8', fogDensity: 0.00018, fogFalloff: 0.0022,
   cloudLit: '#fff8ea', cloudShade: '#88a2ce',
   exposure: 1.0, saturation: 1.15, contrast: 1.08, lift: '#02030a', gain: '#fffaf0',
   bloom: 0.28, bloomThreshold: 0.88, rim: 0.5,
@@ -146,7 +146,7 @@ const AFTERNOON: PaletteSpec = {
 const GOLDEN: PaletteSpec = {
   zenith: '#3c5ea8', horizon: '#eec28e', horizonSun: '#ffb458', sunDisk: '#ffe2a2', glow: 1.0,
   belt: 0.1, beltColor: '#c8a0b8', stars: 0,
-  key: '#ffb566', keyI: 0.8, hemiSky: '#98a8cc', hemiGround: '#e6b48c', hemiI: 0.96,
+  key: '#ffbd74', keyI: 0.8, hemiSky: '#98a8cc', hemiGround: '#b8a2aa', hemiI: 0.96,
   fog: '#d4b49c', fogSun: '#ffba68', fogDensity: 0.00027, fogFalloff: 0.0022,
   cloudLit: '#ffd8a0', cloudShade: '#8c88b2',
   exposure: 1.05, saturation: 1.16, contrast: 1.06, lift: '#180a24', gain: '#fff0dc',
@@ -156,7 +156,7 @@ const GOLDEN: PaletteSpec = {
 const SUNSET: PaletteSpec = {
   zenith: '#2e448a', horizon: '#ffa06a', horizonSun: '#ff7e3e', sunDisk: '#ffb070', glow: 1.25,
   belt: 0.3, beltColor: '#c890b2', stars: 0,
-  key: '#ff8a4a', keyI: 0.52, hemiSky: '#7c82ba', hemiGround: '#da9274', hemiI: 0.92,
+  key: '#ff9456', keyI: 0.52, hemiSky: '#7c82ba', hemiGround: '#aa8c9e', hemiI: 0.92,
   fog: '#c88c8e', fogSun: '#ff9250', fogDensity: 0.0003, fogFalloff: 0.0022,
   cloudLit: '#ffb27a', cloudShade: '#6e689a',
   exposure: 1.1, saturation: 1.18, contrast: 1.05, lift: '#1c0a28', gain: '#ffe8d4',
@@ -166,7 +166,7 @@ const SUNSET: PaletteSpec = {
 const SUNDOWN: PaletteSpec = {
   zenith: '#24367c', horizon: '#e68a7c', horizonSun: '#ff7a4a', sunDisk: '#ff7040', glow: 1.1,
   belt: 0.7, beltColor: '#d48cb2', stars: 0.05,
-  key: '#d27c74', keyI: 0.2, hemiSky: '#6870ae', hemiGround: '#aa7a8c', hemiI: 0.92,
+  key: '#d27c74', keyI: 0.2, hemiSky: '#6870ae', hemiGround: '#90789a', hemiI: 0.92,
   fog: '#a0789a', fogSun: '#f08062', fogDensity: 0.0003, fogFalloff: 0.0022,
   cloudLit: '#f2a294', cloudShade: '#5a5892',
   exposure: 1.2, saturation: 1.12, contrast: 1.04, lift: '#180a2c', gain: '#f8e4e8',
@@ -303,7 +303,11 @@ export function applyWeather(p: SkyPalette, w: PaletteWeather): SkyPalette {
   toGrey(p.fogSun, o * 0.75);
   toGrey(p.key, o * 0.4);
   p.keyI *= 1 - 0.72 * o;
-  p.hemiI *= 1 + 0.22 * o;
+  // The toon ramp spreads a third of the key light onto faces turned away from it; under a grey
+  // lid that light comes from everywhere instead, so the hemisphere takes it over.
+  p.hemiI *= 1 + 1.6 * o;
+  p.exposure *= 1 + 0.06 * o;
+  toGrey(p.hemiGround, o * 0.5, 1.2);
   p.glow *= 1 - 0.85 * o;
   p.sunDisk.multiplyScalar(1 - 0.85 * o);
   p.belt *= 1 - o;

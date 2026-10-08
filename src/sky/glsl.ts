@@ -65,22 +65,39 @@ uniform vec3 uCloudLit;
 uniform vec3 uCloudShade;
 uniform vec3 uFlashPos;
 uniform float uFlash;
+// 0..1 share of the light that is direct sun (or moon): an overcast lid turns it into soft,
+// even skylight and the clouds lose their modelling.
+uniform float uCloudDirect;
+
+// Painter's cheat: cloud forms are shaded by a key light no higher than ~33°, so midday billows
+// keep their modelling instead of going flat white under a high sun.
+vec3 dwCloudLightDir() {
+  vec3 L = uSunDir;
+  float h = length(L.xz);
+  if (L.y > 0.55 && h > 1e-3) L = vec3(L.x / h * 0.835, 0.55, L.z / h * 0.835);
+  return L;
+}
 
 // n: surface normal, h01: height within the cloud layer (0 deep trough .. 1 crest),
 // cavity: local convexity (-: crevice, +: bulge), shadow: 0..1 sun visibility, rd: view direction.
 vec3 dwCloudShade(vec3 n, float h01, float cavity, float shadow, vec3 rd) {
-  float ndl = dot(n, uSunDir);
+  vec3 L = dwCloudLightDir();
+  float ndl = dot(n, L);
   // Clouds scatter: wrap the light past the terminator, then band it softly like brushwork.
-  float wrap = clamp(ndl * 0.75 + 0.3, 0.0, 1.0);
-  float band = dwSoftRamp(wrap, 0.08);
-  float ao = mix(0.36, 1.0, smoothstep(0.05, 0.8, h01)) * clamp(1.0 + cavity * 1.8, 0.4, 1.15);
-  // Skylight reaches the tops; flanks and crevices see less of it.
-  vec3 col = uCloudShade * ao * (0.7 + 0.4 * n.y);
-  col += (uCloudLit - uCloudShade * 0.5) * band * shadow * mix(0.55, 1.0, h01) * clamp(1.0 + cavity, 0.55, 1.1);
+  float wrap = clamp(ndl * 0.72 + 0.3, 0.0, 1.0);
+  float band = mix(0.14, 1.0, (dwSoftRamp(wrap, 0.13) - 0.32) / 0.68);
+  float ao = mix(0.48, 1.0, smoothstep(0.05, 0.85, h01)) * clamp(1.0 + cavity * 1.8, 0.45, 1.15);
+  // Skylight reaches the tops; flanks and crevices see less of it. Under a grey lid the sky is
+  // the light, so it brightens as the direct share falls.
+  float sky = ao * (0.6 + 0.4 * max(n.y, 0.0));
+  vec3 col = uCloudShade * sky * (1.0 + 0.5 * (1.0 - uCloudDirect));
+  col += uCloudLit * sky * (1.0 - uCloudDirect) * 0.45;
+  float direct = band * shadow * uCloudDirect * mix(0.62, 1.0, h01) * clamp(1.0 + cavity, 0.55, 1.1);
+  col += (uCloudLit - uCloudShade * 0.45) * direct;
   // Silver lining: looking toward the light, the thin silhouettes of crests glow.
   float toward = pow(max(dot(rd, uSunDir), 0.0), 6.0);
   float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 2.5);
-  col += uCloudLit * toward * (0.1 + 1.4 * rim) * shadow;
+  col += uCloudLit * toward * (0.1 + 1.4 * rim) * shadow * uCloudDirect;
   return col;
 }
 

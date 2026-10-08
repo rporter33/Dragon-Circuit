@@ -96,17 +96,21 @@ void main() {
   vec3 surf = vWorld + vFace * tex.b * vBank.w * 0.25;
   vec3 nBank = normalize((surf - vBank.xyz) * vec3(1.0, 1.5, 1.0) + vec3(0.0, vBank.w * 0.2, 0.0));
   // Thin, fading edges take the bank's normal: no dark outlines around puffs.
-  vec3 n = normalize(nBank * 0.65 + nPuff * 0.45 * smoothstep(0.15, 0.7, tex.a));
+  vec3 n = normalize(nBank * 0.75 + nPuff * 0.38 * smoothstep(0.15, 0.7, tex.a));
   vec3 rd = -vFace;
-  float ndl = dot(n, uSunDir);
-  float band = dwSoftRamp(clamp(ndl * 0.55 + 0.5, 0.0, 1.0), 0.13);
-  // Flat, shaded bases; sunlit crowns.
-  float height = mix(0.5, 1.0, smoothstep(0.0, 0.8, vShade));
-  vec3 col = uCloudShade * mix(0.82, 1.05, vShade);
-  col += (uCloudLit - uCloudShade * 0.5) * band * height;
+  vec3 L = dwCloudLightDir();
+  float ndl = dot(n, L);
+  float band = mix(0.1, 1.0, (dwSoftRamp(clamp(ndl * 0.6 + 0.42, 0.0, 1.0), 0.14) - 0.32) / 0.68);
+  // Flat, shaded bases; sunlit crowns. Skylight falls on the tops.
+  float height = mix(0.55, 1.0, smoothstep(0.0, 0.8, vShade));
+  float sky = mix(0.8, 1.05, vShade) * (0.78 + 0.22 * n.y);
+  float D = uCloudDirect;
+  vec3 col = uCloudShade * sky * (1.0 + 0.5 * (1.0 - D));
+  col += uCloudLit * sky * (1.0 - D) * 0.42;
+  col += (uCloudLit - uCloudShade * 0.45) * band * height * D;
   // Silver lining: thin edges glow when the sun is behind the cloud.
   float back = pow(max(dot(rd, uSunDir), 0.0), 6.0);
-  col += uCloudLit * back * (1.0 - tex.b) * 1.4;
+  col += uCloudLit * back * (1.0 - tex.b) * 1.4 * D;
   col += dwFlashGlow(vWorld) * 0.8;
   col = dwApplyFog(col, vWorld, cameraPosition);
   gl_FragColor = vec4(col, alpha);

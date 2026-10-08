@@ -62,6 +62,18 @@ describe('cloud banks', () => {
     }
   });
 
+  it('whites out the heart of a bank, between its puffs as well as inside them', () => {
+    const field = new CloudBankField(LAYOUT, banks);
+    field.update(new Vector3(), 0, 1, 1);
+    for (let b = 0; b < banks.length; b++) {
+      if (field.bankAlpha[b] < 0.95) continue;
+      const heart = new Vector3(field.bankPos[b * 3], field.bankPos[b * 3 + 1] + banks[b].height * 0.42, field.bankPos[b * 3 + 2]);
+      expect(field.veilAt(heart)).toBeGreaterThan(0.9);
+      // Well outside the bank's bounds: clear air.
+      expect(field.veilAt(heart.clone().add(new Vector3(banks[b].bound * 1.5, 0, 0)))).toBeLessThan(0.05);
+    }
+  });
+
   it('drifts with the wind and wraps around the world', () => {
     const field = new CloudBankField(LAYOUT, banks);
     field.update(new Vector3(), 0, 1, 1);
