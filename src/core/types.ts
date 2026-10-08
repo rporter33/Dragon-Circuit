@@ -485,6 +485,8 @@ export interface GameEvents {
   modeChange: { from: PlayerMode; to: PlayerMode };
 
   raceArmed: { raceId: string };
+  /** An armed race stood down without starting (flew past or away from the gate). */
+  raceDisarmed: { raceId: string };
   raceCountdown: { raceId: string; count: number };
   raceStart: { raceId: string };
   ringPassed: { raceId: string; index: number; total: number; splitMs: number; deltaMs: number | null; position: Vector3 };
