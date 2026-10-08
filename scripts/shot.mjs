@@ -38,7 +38,8 @@ page.on('console', (m) => {
 page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
 
 await page.goto(url, { waitUntil: 'load' });
-await page.waitForFunction(() => window.__dw?.ready === true, null, { timeout: 60000 });
+await page.waitForFunction(() => window.__dw?.ready === true, null, { timeout: 180000 });
+page.setDefaultTimeout(180000);
 
 for (const step of steps) {
   if (step.eval) await page.evaluate(step.eval);
@@ -54,7 +55,7 @@ for (const step of steps) {
   if (step.shot) {
     await page.evaluate(() => window.__dw.render());
     fs.mkdirSync(path.dirname(step.shot), { recursive: true });
-    await page.screenshot({ path: step.shot });
+    await page.screenshot({ path: step.shot, timeout: 180000 });
     console.log(`saved ${step.shot}`);
   }
   if (step.log) {
