@@ -316,7 +316,7 @@ export class Renderer {
     const g = this.grade.uTime;
     g.value = (g.value + Math.max(0, dt)) % 1000;
     const t = globalUniforms.uTime;
-    if (t.value > TIME_HARD_LIMIT || (t.value > TIME_WRAP && this.grade.uFade.value > 0.95)) t.value -= TIME_WRAP;
+    t.value = wrapShaderTime(t.value, this.grade.uFade.value > 0.95);
   }
 
   /** devicePixelRatio changes (moving to another monitor, OS zoom) don't fire 'resize'. */
@@ -330,6 +330,16 @@ export class Renderer {
     };
     mq.addEventListener('change', onChange);
   }
+}
+
+/**
+ * Shader time, kept small enough for float32 (TIME-01): past TIME_WRAP seconds it steps back by
+ * TIME_WRAP while the screen is faded out (the jump in animation phase is hidden), or at the
+ * latest at TIME_HARD_LIMIT. TIME_WRAP is a power of two, so the subtraction is exact.
+ */
+export function wrapShaderTime(t: number, hidden: boolean): number {
+  if (t > TIME_HARD_LIMIT || (hidden && t > TIME_WRAP)) return t - TIME_WRAP;
+  return t;
 }
 
 /** Sharpening for a drawing buffer the browser stretches by `upscale` (1 = native). */
