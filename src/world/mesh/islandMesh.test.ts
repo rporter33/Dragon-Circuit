@@ -103,7 +103,7 @@ describe('island meshes', () => {
   });
 
   it('paints top surfaces in agreement with surfaceAt (footsteps match what you see)', () => {
-    const w: TopWeights = { rock: 0, dirt: 0, stone: 0, grass: 0, track: 0 };
+    const w: TopWeights = { rock: 0, dirt: 0, stone: 0, grass: 0, track: 0, nearRock: 0, nearDirt: 0, nearStone: 0, nearTrack: 0 };
     for (const shape of [...sample, shapes.find((s) => s.def.kind === 'ruin')!]) {
       const m = mesh(shape, 0);
       const d = shape.def;

@@ -8,6 +8,13 @@
 //   surf.y  grass weight (brush-stroke hue and value variation)
 //   surf.z  paving weight (flagstone pattern)
 //   surf.w  hanging moss / root streak weight (just under a rim)
+//
+// Island top surfaces also carry an "over" material (aOver): the color of whatever non-grass
+// material is nearest (rock, dirt, paving) in rgb and its coverage in a, stored as 2 + coverage
+// so a geometry without the attribute (WebGL default a = 1) never reads as a top surface. The
+// shader thresholds the coverage with brush noise, so material edges stay crisp and ragged at
+// any mesh density instead of smearing across a triangle. There, surf.x and surf.z are the rock
+// and paving shares of the over material and surf.y = 1 marks grass-capable ground.
 
 import { BufferAttribute, BufferGeometry } from 'three';
 
@@ -23,6 +30,7 @@ export interface MeshData {
   normals: Float32Array;
   colors: Float32Array;
   surf: Float32Array;
+  over: Float32Array;
   indices: Uint32Array;
 }
 
@@ -30,6 +38,7 @@ export class MeshBuilder {
   positions: Float32Array;
   colors: Float32Array;
   surf: Float32Array;
+  over: Float32Array;
   indices: Uint32Array;
   vertexCount = 0;
   indexCount = 0;
@@ -38,6 +47,7 @@ export class MeshBuilder {
     this.positions = new Float32Array(vertexCapacity * 3);
     this.colors = new Float32Array(vertexCapacity * 3);
     this.surf = new Float32Array(vertexCapacity * 4);
+    this.over = new Float32Array(vertexCapacity * 4);
     this.indices = new Uint32Array(indexCapacity);
   }
 
@@ -52,6 +62,9 @@ export class MeshBuilder {
     const s = new Float32Array(cap * 4);
     s.set(this.surf);
     this.surf = s;
+    const o = new Float32Array(cap * 4);
+    o.set(this.over);
+    this.over = o;
   }
 
   /** Adds a vertex with a neutral color and empty surface mask; returns its index. */
@@ -65,6 +78,7 @@ export class MeshBuilder {
     this.colors[o] = this.colors[o + 1] = this.colors[o + 2] = 1;
     const s = i * 4;
     this.surf[s] = this.surf[s + 1] = this.surf[s + 2] = this.surf[s + 3] = 0;
+    this.over[s] = this.over[s + 1] = this.over[s + 2] = this.over[s + 3] = 0;
     return i;
   }
 
@@ -81,6 +95,15 @@ export class MeshBuilder {
     this.surf[o + 1] = grass;
     this.surf[o + 2] = pave;
     this.surf[o + 3] = moss;
+  }
+
+  /** Marks a top-surface vertex: the over material's color and its coverage (0..1). */
+  setOver(i: number, r: number, g: number, b: number, coverage: number): void {
+    const o = i * 4;
+    this.over[o] = r;
+    this.over[o + 1] = g;
+    this.over[o + 2] = b;
+    this.over[o + 3] = 2 + coverage;
   }
 
   x(i: number): number {
@@ -182,6 +205,7 @@ export class MeshBuilder {
       normals,
       colors: this.colors.slice(0, this.vertexCount * 3),
       surf: this.surf.slice(0, this.vertexCount * 4),
+      over: this.over.slice(0, this.vertexCount * 4),
       indices: this.indices.slice(0, this.indexCount),
     };
   }
@@ -194,6 +218,7 @@ export function toGeometry(data: MeshData): BufferGeometry {
   g.setAttribute('normal', new BufferAttribute(data.normals, 3));
   g.setAttribute('color', new BufferAttribute(data.colors, 3));
   g.setAttribute('aSurf', new BufferAttribute(data.surf, 4));
+  g.setAttribute('aOver', new BufferAttribute(data.over, 4));
   const vCount = data.positions.length / 3;
   g.setIndex(new BufferAttribute(vCount > 65535 ? data.indices : Uint16Array.from(data.indices), 1));
   g.computeBoundingSphere();

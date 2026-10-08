@@ -33,12 +33,12 @@ export const SPIRE_LODS: SpireLodSpec[] = [
 const BEVEL_IN = 0.6;
 const BEVEL_DROP = 0.45;
 
-const ROCK = new Color('#9a8f84');
-const ROCK_WARM = new Color('#a98a6a');
+const ROCK = new Color('#857c74');
+const ROCK_WARM = new Color('#94785d');
 const ROCK_COOL = new Color('#5d5a6a');
 const GRASS = new Color('#7aa646');
 const GRASS_DARK = new Color('#557f3a');
-const STONE_EDGE = new Color('#b9ad98');
+const STONE_EDGE = new Color('#9d9384');
 const tmp = new Color();
 
 const ceil4 = (v: number) => Math.max(4, Math.ceil(v / 4) * 4);
@@ -65,10 +65,12 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
   const mossN = noise2(d.seed + 5);
   // Vertical flutes: ridged noise sampled around a circle (seamless) and stretched along y.
   const fluteN = noise3(d.seed + 6);
-  const fluteF = Math.max(2.5, d.bellyRadius / 8);
+  const fluteF = Math.max(4, d.bellyRadius / 6);
   // Per vertex: 0 = platform, 1 = flank; and how deep in a crack it sits (0..1).
   const kind: number[] = [];
   const crackAmt: number[] = [];
+  /** How deep in a flute groove (0..1); grooves weather darker. */
+  const grooveAmt: number[] = [];
 
   const ringCount = (r: number) => Math.min(N, Math.max(6, ceil4((2 * Math.PI * r * 1.1) / spec.around)));
   /** A ring of n vertices at height y (world) with radius radial(theta). */
@@ -80,6 +82,7 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
       b.vertex(Math.cos(th) * r, y - d.topY, Math.sin(th) * r);
       kind.push(k);
       crackAmt.push(0);
+      grooveAmt.push(0);
     }
     return { start, count: n };
   };
@@ -89,6 +92,7 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
   const center = b.vertex(0, 0, 0);
   kind.push(0);
   crackAmt.push(0);
+  grooveAmt.push(0);
   let prev: Ring = { start: center, count: 1 };
   for (const t of [0.35, 0.7, 1]) {
     const ring = angleRing(ringCount(d.topRadius * t), d.topY, (th) => (topR(th) - BEVEL_IN) * t, 0);
@@ -118,10 +122,9 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
       // Ledges, scaled down on thin parts so needles keep their line.
       if (spec.ledges) r -= (0.1 + strataRecess(d.x + Math.cos(th) * r, y, d.z + Math.sin(th) * r)) * 0.6 * smoothstep(3, 14, base);
       // Weathered flutes running down the needle.
-      if (spec.level < 2) {
-        const fl = 1 - Math.abs(fluteN(Math.cos(th) * fluteF, Math.sin(th) * fluteF, y * 0.012));
-        r -= Math.min(2.5, base * 0.06) * (1 - fl * fl);
-      }
+      const fl = 1 - Math.abs(fluteN(Math.cos(th) * fluteF, Math.sin(th) * fluteF, y * 0.012));
+      const groove = 1 - fl * fl;
+      if (spec.level < 2) r -= Math.min(3.5, base * 0.1) * groove;
       // Cracks.
       let c = 0;
       for (const cr of cracks) {
@@ -137,6 +140,7 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
       b.vertex(Math.cos(th) * r, y - d.topY, Math.sin(th) * r);
       kind.push(1);
       crackAmt.push(c);
+      grooveAmt.push(groove);
     }
     const ring = { start, count: n };
     b.stitch(prev, ring);
@@ -146,6 +150,7 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
   const tip = b.vertex(0, d.tipY - d.topY, 0);
   kind.push(1);
   crackAmt.push(0);
+  grooveAmt.push(0);
   b.stitch(prev, { start: tip, count: 1 });
 
   // --- Paint --------------------------------------------------------------------------------------
@@ -171,7 +176,7 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
     const warm = smoothstep(0.35, 0.7, mossN(x * 0.01 + y * 0.004, z * 0.01 - y * 0.003) * 0.5 + 0.5);
     tmp.copy(ROCK).lerp(ROCK_WARM, warm * 0.7).lerp(ROCK_COOL, smoothstep(0.55, 0.0, along) * 0.8);
     const c = crackAmt[i];
-    tmp.multiplyScalar(1 - 0.45 * c);
+    tmp.multiplyScalar((1 - 0.45 * c) * (1 - 0.28 * grooveAmt[i]));
     // Moss gathers on ledges that face up and in streaks below the platform.
     const up = normals[i * 3 + 1];
     const ledgeMoss = smoothstep(0.35, 0.7, up) * smoothstep(0.1, 0.5, mossN(x * 0.05, y * 0.05 + z * 0.05));

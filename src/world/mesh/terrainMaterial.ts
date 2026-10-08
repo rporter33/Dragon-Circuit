@@ -4,7 +4,7 @@
 //
 // Driven by the per-vertex surface mask (aSurf, see MeshBuilder):
 //   x rock  -> sedimentary bands by world height (ochre / terracotta / cream / grey), seams,
-//              weathering streaks, grain
+//              weathering streaks, grain; vertical joints only where x is near 1 (cliffs)
 //   y grass -> anisotropic brush strokes, warm/cool hue drift
 //   z pave  -> irregular flagstones with mossy mortar
 //   w moss  -> hanging moss and root streaks just under a rim
@@ -79,11 +79,14 @@ float dwPacketCoord(float sy) {
 
 const VERTEX_PARS = /* glsl */ `
 attribute vec4 aSurf;
+attribute vec4 aOver;
 varying vec4 vSurf;
+varying vec4 vOver;
 `;
 
 const FRAGMENT_PARS = /* glsl */ `
 varying vec4 vSurf;
+varying vec4 vOver;
 ${NOISE_GLSL}
 
 // Sedimentary palette, as multipliers on the vertex color.
@@ -110,42 +113,67 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
   float fine = 1.0 - smoothstep(50.0, 200.0, dist);
   float mid = 1.0 - smoothstep(200.0, 900.0, dist);
 
+  // Everything that needs screen-space derivatives is computed here, in uniform control flow
+  // (derivatives inside the per-material branches below would be undefined at their borders).
+  vec3 dpx = dFdx(wp);
+  vec3 dpy = dFdy(wp);
+  float sy = dwStrataHeight(wp);
+  float v = dwPacketCoord(sy);
+  float u = dwStrataCoord(sy);
+  float dv = max(fwidth(v), 1e-4);
+  float du = max(fwidth(u), 1e-4);
+  // World-space size of a pixel on the ground plane (m).
+  float pxXZ = max(length(dpx.xz), length(dpy.xz));
+  float dCover = fwidth(vOver.a);
+
+  // --- Top surfaces: grass with an over material (rock, dirt, paving) -------------------------
+  // The over coverage is thresholded with brush noise: crisp, ragged edges right on the line
+  // where surfaceAt switches, at any mesh density.
+  float isTop = step(1.5, vOver.a);
+  float M = 0.0;
+  if (isTop > 0.5) {
+    float cover = vOver.a - 2.0;
+    float n = dwNoise2(wp.xz * 0.42) * 0.6 + dwNoise2(wp.xz * 1.6 + 7.0) * 0.4 - 0.5;
+    float m = cover + n * 0.55 * mid * smoothstep(0.0, 0.08, cover) * smoothstep(1.0, 0.92, cover);
+    float w = max(dCover * 1.2, 0.02);
+    M = smoothstep(0.5 - w, 0.5 + w, m);
+    col = mix(col, vOver.rgb, M);
+  }
+  float grassW = vSurf.y * (1.0 - M);
+  float rockW = mix(vSurf.x, vSurf.x * M, isTop);
+  float paveW = mix(vSurf.z, vSurf.z * M, isTop);
+
   // Broad painterly blotches on everything.
   float blot = dwNoise3(wp * 0.03);
-  col *= 0.9 + 0.2 * blot;
+  col *= 0.93 + 0.14 * blot;
 
   // --- Grass: soft dabs ------------------------------------------------------------------------
-  if (vSurf.y > 0.01) {
+  if (grassW > 0.01) {
     vec2 p = wp.xz;
     // Dabs share a slowly turning direction, like strokes laid down by one hand.
     float ang = dwNoise2(p * 0.008) * 3.2 + 0.6;
     vec2 dir = vec2(cos(ang), sin(ang));
     vec2 q = vec2(dot(p, dir), dot(p, vec2(-dir.y, dir.x)));
-    float dab = dwNoise2(q * vec2(0.3, 0.9));
-    float dab2 = dwNoise2(q * vec2(1.4, 4.2) + 17.0);
-    float dab3 = dwNoise2(q * vec2(3.5, 11.0) - 31.0);
+    float dab = dwNoise2(q * vec2(0.35, 0.75));
+    float dab2 = dwNoise2(q * vec2(1.6, 3.4) + 17.0);
+    float dab3 = dwNoise2(q * vec2(4.0, 8.5) - 31.0);
     float s = mix(0.5, dab * 0.5 + mix(0.5, dab2 * 0.6 + dab3 * 0.4, fine) * 0.5, mid);
-    vec3 g = col * (0.88 + 0.24 * s);
+    vec3 g = col * (0.92 + 0.16 * s);
     float hue = dwNoise2(p * 0.016 + 5.0);
-    g = mix(g, g * vec3(1.08, 1.04, 0.8), smoothstep(0.55, 0.85, hue) * 0.5);
-    g = mix(g, g * vec3(0.86, 0.98, 1.06), smoothstep(0.45, 0.15, hue) * 0.4);
-    col = mix(col, g, vSurf.y);
+    g = mix(g, g * vec3(1.08, 1.04, 0.82), smoothstep(0.55, 0.85, hue) * 0.35);
+    g = mix(g, g * vec3(0.86, 0.98, 1.06), smoothstep(0.45, 0.15, hue) * 0.3);
+    col = mix(col, g, grassW);
   }
 
   // --- Rock: strata bands ----------------------------------------------------------------------
-  if (vSurf.x > 0.01) {
-    float sy = dwStrataHeight(wp);
-    float v = dwPacketCoord(sy);
-    float u = dwStrataCoord(sy);
-    float dv = max(fwidth(v), 1e-4);
-    float du = max(fwidth(u), 1e-4);
+  if (rockW > 0.01) {
     float packet = floor(v);
     float pf = v - packet;
     float uf = fract(u);
     // Packets blur to their average once several fall inside one pixel (no moire at distance);
     // fine beds fade much sooner.
-    float aaP = smoothstep(0.2, 0.7, dv);
-    float aaU = smoothstep(0.15, 0.5, du);
+    float aaP = smoothstep(0.08, 0.35, dv);
+    float aaU = smoothstep(0.08, 0.3, du);
     vec3 tint = mix(dwStrataTint(packet), DW_STRATA_AVG, aaP);
     // Fine beds: small value steps within the packet.
     tint *= mix(0.95 + 0.1 * dwHash11(floor(u) * 1.37 + 4.1), 1.0, aaU);
@@ -153,16 +181,27 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
     // Bedding planes: a dark seam under each packet, fainter ones under each bed.
     float seamP = mix(0.62, 1.0, smoothstep(0.0, max(0.025, dv * 1.5), pf));
     rc *= mix(seamP, 1.0, aaP);
-    float seamU = mix(0.85, 1.0, smoothstep(0.0, max(0.06, du * 1.5), uf));
+    float seamU = mix(0.9, 1.0, smoothstep(0.0, max(0.06, du * 1.5), uf));
     rc *= mix(seamU, 1.0, aaU);
     // A lit lip along the top of each packet.
     rc *= 1.0 + 0.09 * smoothstep(0.9, 1.0, pf) * (1.0 - aaP);
-    // Vertical joints and weathering streaks on steep faces.
+    // Vertical joints: two sets of fracture planes, staggered at each packet boundary so they
+    // end at bedding planes like real jointed sandstone.
     float steep = smoothstep(0.35, 0.8, 1.0 - abs(wn.y));
-    float jn = dwNoise3(vec3(wp.x * 0.11, wp.y * 0.018, wp.z * 0.11));
-    float jw = max(fwidth(jn) * 1.5, 0.012);
-    float joint = 1.0 - smoothstep(0.0, jw, abs(jn - 0.5));
-    rc *= 1.0 - 0.35 * joint * steep * fine;
+    float joint = 0.0;
+    for (int k = 0; k < 2; k++) {
+      vec2 jdir = k == 0 ? vec2(0.921, 0.389) : vec2(-0.505, 0.863);
+      float spacing = k == 0 ? 9.0 : 14.0;
+      float t = dot(wp.xz, jdir) / spacing + dwHash11(packet * 1.93 + float(k) * 7.7);
+      float idx = floor(t + 0.5);
+      float dm = abs(t - idx) * spacing;
+      float on = step(0.6, dwHash11(idx * 3.17 + packet * 0.71 + float(k)));
+      float w = 0.07 + abs(dot(dpx.xz, jdir)) + abs(dot(dpy.xz, jdir));
+      joint = max(joint, on * (1.0 - smoothstep(w * 0.5, w, dm)));
+    }
+    // Only full-strength rock (island cliffs) is jointed; needles, arches and deep undersides
+    // carry a lower rock weight and stay unjointed.
+    rc *= 1.0 - 0.38 * joint * steep * mid * (1.0 - aaP) * smoothstep(0.6, 0.85, rockW);
     float streak = dwNoise3(vec3(wp.x * 0.35, wp.y * 0.03, wp.z * 0.35));
     rc *= 1.0 - 0.2 * smoothstep(0.5, 0.85, streak) * steep * mid;
     // Grain.
@@ -170,11 +209,11 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
     // Upward-facing rock catches moss in its cracks.
     float mossUp = smoothstep(0.6, 0.9, wn.y) * smoothstep(0.45, 0.7, dwNoise3(wp * 0.15));
     rc = mix(rc, DW_MOSS_LIGHT * 1.6, mossUp * 0.5);
-    col = mix(col, rc, vSurf.x);
+    col = mix(col, rc, rockW);
   }
 
   // --- Paving: irregular flagstones ------------------------------------------------------------
-  if (vSurf.z > 0.01) {
+  if (paveW > 0.01) {
     vec2 p = wp.xz / 1.6;
     vec2 ip = floor(p);
     vec2 fp = p - ip;
@@ -194,11 +233,11 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
     float h = dwHash12(cellId * 1.7 + 3.1);
     vec3 st = col * (0.84 + 0.24 * h) * mix(vec3(1.0), vec3(1.05, 1.0, 0.9), step(0.62, h));
     st *= 0.93 + 0.1 * dwNoise2(wp.xz * 1.3) * fine;
-    float ew = max(0.05, fwidth(edge) * 1.5);
+    float ew = max(0.05, pxXZ / 1.6 * 2.0);
     float mortar = (1.0 - smoothstep(ew, ew + 0.07, edge)) * mid;
     st = mix(st, DW_MORTAR + col * 0.25, mortar * 0.8);
     // At the paving's edge whole stones drop out, so it frays stone by stone into the turf.
-    float keep = step(dwHash12(cellId * 0.37 + 11.0) * 0.8 + 0.1, vSurf.z);
+    float keep = step(dwHash12(cellId * 0.37 + 11.0) * 0.8 + 0.1, paveW);
     col = mix(col, st, keep);
   }
 
@@ -228,7 +267,7 @@ let shared: MeshToonMaterial | null = null;
 export function patchTerrainShader(shader: WebGLProgramParametersWithUniforms): void {
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', '#include <common>\n' + VERTEX_PARS)
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurf = aSurf;');
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurf = aSurf;\nvOver = aOver;');
   shader.fragmentShader = shader.fragmentShader
     .replace('#include <common>', '#include <common>\nuniform float uWetness;\n' + FRAGMENT_PARS)
     .replace(

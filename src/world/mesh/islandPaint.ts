@@ -24,6 +24,15 @@ export interface TopWeights {
   grass: number;
   /** The part of `dirt` that is the Roost's worn track. */
   track: number;
+  /**
+   * How near each non-grass material is (wider transitions than the weights, never 0 right next
+   * to one). Picks the over material's color on pure-grass vertices so a triangle straddling an
+   * edge interpolates between two shades of the same material.
+   */
+  nearRock: number;
+  nearDirt: number;
+  nearStone: number;
+  nearTrack: number;
 }
 
 /**
@@ -62,10 +71,14 @@ export function topWeights(shape: IslandShape, x: number, z: number, s: number, 
   out.stone = stone;
   out.grass = remaining;
   out.track = track;
+  out.nearRock = Math.max(smoothstep(0.95, 0.66, ny), kind === 'rocky' || kind === 'islet' ? 0.5 : 0);
+  out.nearDirt = smoothstep(0.75, 0.965, s);
+  out.nearStone = kind === 'roost' || kind === 'ruin' ? smoothstep(shape.def.flatCenter * 0.55 + 0.12, shape.def.flatCenter * 0.55, s) : 0;
+  out.nearTrack = shape.track ? smoothstep(ROOST_TRACK_HALF_WIDTH + 6, ROOST_TRACK_HALF_WIDTH, shape.trackDistance(x, z)) : 0;
   return out;
 }
 
-const weights: TopWeights = { rock: 0, dirt: 0, stone: 0, grass: 0, track: 0 };
+const weights: TopWeights = { rock: 0, dirt: 0, stone: 0, grass: 0, track: 0, nearRock: 0, nearDirt: 0, nearStone: 0, nearTrack: 0 };
 
 interface KindPalette {
   grass: Color;
@@ -92,18 +105,18 @@ const BASE: KindPalette = {
   light: c('#a1b356'),
   dark: c('#3d7234'),
   dry: c('#958f55'),
-  accent: c('#e2cf6a'),
-  accent2: c('#ebe6cf'),
+  accent: c('#a8a845'),
+  accent2: c('#9aa65a'),
   accentAmount: 0.18,
   rock: c('#958c7c'),
 };
 
 const PALETTES: Record<IslandKind, KindPalette> = {
-  roost: { ...BASE, accentAmount: 0.12 },
-  meadow: { ...BASE, grass: c('#70a03f'), grassAlt: c('#8eac47'), accent: c('#ecdc8e'), accent2: c('#dcaabb'), accentAmount: 0.28 },
+  roost: { ...BASE, accentAmount: 0.2 },
+  meadow: { ...BASE, grass: c('#70a03f'), grassAlt: c('#8eac47'), accent: c('#a9a84a'), accent2: c('#8f9a62'), accentAmount: 0.3 },
   cascade: {
-    ...BASE, grass: c('#579a3c'), grassAlt: c('#468e4d'), light: c('#97bd55'), dark: c('#2d6c38'), accent: c('#8cc862'),
-    accent2: c('#e8e2c2'), accentAmount: 0.15,
+    ...BASE, grass: c('#579a3c'), grassAlt: c('#468e4d'), light: c('#97bd55'), dark: c('#2d6c38'), accent: c('#6ea54a'),
+    accent2: c('#7f9f58'), accentAmount: 0.2,
   },
   forest: {
     ...BASE, grass: c('#55853a'), grassAlt: c('#6a843a'), light: c('#93a554'), dark: c('#2f5a2e'), accent: c('#80704a'),
@@ -118,7 +131,7 @@ const PALETTES: Record<IslandKind, KindPalette> = {
     accent: c('#6e3f73'), accent2: c('#8a5582'), accentAmount: 0.5, rock: c('#8f897d'),
   },
   rocky: { ...BASE, grass: c('#7d9849'), grassAlt: c('#8e9a50'), light: c('#b2ad69'), dark: c('#55763c'), accentAmount: 0.1, rock: c('#8f8a80') },
-  ruin: { ...BASE, grass: c('#6f9a44'), grassAlt: c('#83a04b'), accent: c('#c4b6d6'), accentAmount: 0.12 },
+  ruin: { ...BASE, grass: c('#6f9a44'), grassAlt: c('#83a04b'), accentAmount: 0.15 },
   islet: { ...BASE, grass: c('#77a345'), accentAmount: 0.1, rock: c('#928c80') },
 };
 
@@ -213,7 +226,8 @@ export class IslandPainter {
     const d = shape.def;
     const pal = this.pal;
     const kind = d.kind;
-    const { rock, dirt, stone, grass, track } = topWeights(shape, x, z, s, ny, weights);
+    const w = topWeights(shape, x, z, s, ny, weights);
+    const { rock, dirt, stone, track } = w;
 
     // --- Grass ----------------------------------------------------------------------------------
     const big = fbm2(this.patchN, x * 0.011, z * 0.011, 3) * 0.5 + 0.5;
@@ -224,10 +238,10 @@ export class IslandPainter {
     const crest = smoothstep(0.5, 0.95, rel) * relief;
     const hollow = smoothstep(0.38, 0.05, rel) * relief;
     const g = tmp.copy(pal.grass).lerp(pal.grassAlt, smoothstep(0.3, 0.75, big));
-    g.lerp(pal.light, crest * 0.4 + 0.1 * small);
-    g.lerp(pal.dark, hollow * 0.45 + 0.15 * (1 - small) * (1 - crest));
+    g.lerp(pal.light, crest * 0.4 + 0.05 * small);
+    g.lerp(pal.dark, hollow * 0.45 + 0.08 * (1 - small) * (1 - crest));
     // Wildflower / heather drifts.
-    const acc = smoothstep(0.58, 0.8, this.patchN(x * 0.035 + 40, z * 0.035 - 17) * 0.5 + 0.5 + 0.15 * small);
+    const acc = smoothstep(0.62, 0.85, this.patchN(x * 0.035 + 40, z * 0.035 - 17) * 0.5 + 0.5 + 0.1 * small);
     if (acc > 0 && pal.accentAmount > 0) {
       tmp2.copy(pal.accent).lerp(pal.accent2, smoothstep(0.35, 0.65, small));
       g.lerp(tmp2, acc * pal.accentAmount);
@@ -246,31 +260,52 @@ export class IslandPainter {
     const rr = tmp2.r;
     const rg = tmp2.g;
     const rb = tmp2.b;
-    // Dirt: toward the rim the turf thins and dries until bare earth shows at the very lip;
-    // the track is trodden earth all the way.
+    // Dirt: toward the rim the turf thins and dries until bare earth shows at the very lip.
     tmp2.copy(DIRT).lerp(DIRT_LIGHT, small * 0.5);
-    tmp.setRGB(gr, gg, gb).lerp(pal.dry, 0.3).lerp(DIRT, 0.2 + 0.15 * small);
-    tmp2.lerp(tmp, (1 - smoothstep(0.982, 0.999, s)) * 0.9);
-    if (track > 0) tmp2.lerp(TRACK, track / Math.max(1e-6, dirt));
+    // Patchy, wind-dried turf over thin soil: varies with the same patches as the grass inside.
+    tmp.setRGB(gr, gg, gb).lerp(pal.dry, 0.35 + 0.35 * big).lerp(DIRT, 0.08 + 0.22 * small * (1 - big));
+    tmp2.lerp(tmp, (1 - smoothstep(0.985, 0.999, s)) * 0.92);
     const dr = tmp2.r;
     const dg = tmp2.g;
     const db = tmp2.b;
+    // The track: trodden earth all the way to the launch point.
+    tmp2.copy(TRACK).lerp(DIRT_LIGHT, small * 0.3);
+    const tr = tmp2.r;
+    const tg = tmp2.g;
+    const tb = tmp2.b;
     // Stone paving: a lighter worn walkway from the spawn to the stable door.
     tmp2.copy(STONE);
-    if (kind === 'roost' && stone > 0) {
+    if (kind === 'roost') {
       const sp = LAYOUT.spawn.position;
       const st = LAYOUT.stable;
-      const w = smoothstep(3.2, 1.8, segDist(x, z, sp[0], sp[2], st.x, st.z));
-      tmp2.lerp(WALKWAY, w * 0.8);
+      const walk = smoothstep(3.2, 1.8, segDist(x, z, sp[0], sp[2], st.x, st.z));
+      tmp2.lerp(WALKWAY, walk * 0.8);
     } else if (kind === 'ruin') {
       tmp2.lerp(pal.rock, 0.3 + 0.3 * small);
     }
 
-    const r = gr * grass + rr * rock + dr * dirt + tmp2.r * stone;
-    const gg2 = gg * grass + rg * rock + dg * dirt + tmp2.g * stone;
-    const bb = gb * grass + rb * rock + db * dirt + tmp2.b * stone;
-    b.setColor(i, r, gg2, bb);
-    // Exposed rock on top shows faint strata; grass gets brush strokes; paving gets flagstones.
-    b.setSurf(i, rock * 0.75, grass, stone, 0);
+    // The over material: actual weights where present, proximity otherwise (see TopWeights).
+    const rimDirt = dirt - track;
+    const eps = 0.02;
+    const wr = rock + eps * w.nearRock;
+    const wd = rimDirt + eps * w.nearDirt;
+    const wt = track + eps * w.nearTrack;
+    const ws = stone + eps * w.nearStone;
+    const sum = wr + wd + wt + ws;
+    if (sum > 1e-9) {
+      const k = 1 / sum;
+      b.setOver(
+        i,
+        (rr * wr + dr * wd + tr * wt + tmp2.r * ws) * k,
+        (rg * wr + dg * wd + tg * wt + tmp2.g * ws) * k,
+        (rb * wr + db * wd + tb * wt + tmp2.b * ws) * k,
+        rock + dirt + stone,
+      );
+    } else {
+      b.setOver(i, dr, dg, db, 0);
+    }
+    b.setColor(i, gr, gg, gb);
+    // Shares of the over material: rock shows faint strata, paving gets flagstones.
+    b.setSurf(i, (sum > 1e-9 ? wr / sum : 0) * 0.75, 1, sum > 1e-9 ? ws / sum : 0, 0);
   }
 }

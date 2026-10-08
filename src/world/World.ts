@@ -216,8 +216,8 @@ export class World implements WorldSystem {
       this.stats.lazyBuildMs += performance.now() - t0;
       if (!done) break;
       this.stats.lazyBuilds++;
-      // Without a budget, keep going until the view is complete; otherwise one job per frame.
-      this.job = unlimited ? this.nextMissing(cam, false) : null;
+      // Keep going while there is time (always, without a budget) and work left.
+      this.job = unlimited || performance.now() < deadline ? this.nextMissing(cam, false) : null;
     }
     this.debris.update(dt);
   }

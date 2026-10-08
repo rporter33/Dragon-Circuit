@@ -144,7 +144,7 @@ export class IslandShape {
     // Ridged noise sampled around a circle (seamless in theta), drifting slowly with the radius
     // so the creases run downhill instead of across.
     const f = this.ridgeFreq;
-    const ridge = ridged2(this.underN, Math.cos(theta) * f + s * 1.7, Math.sin(theta) * f - s * 1.3, 2);
+    const ridge = softRidged(this.underN, Math.cos(theta) * f + s * 1.7, Math.sin(theta) * f - s * 1.3);
     const lump = 0.5 + 0.5 * fbm2(this.underN, dx * this.lumpFreq + 31.7, dz * this.lumpFreq - 12.3, 2);
     const teeth = this.toothAt(dx, dz) * smoothstep(0.05, 0.35, profile);
     // Taper the dome-shaped profile toward a cone so the island hangs like an inverted peak.
@@ -312,6 +312,19 @@ export class ArchShape {
     const rho = Math.hypot(lx, ly);
     return Math.hypot(rho - radius, lz) - tube;
   }
+}
+
+/**
+ * Two octaves of ridged noise with rounded crests (a smooth |n|), in [0, 1]: hanging ridgelines
+ * that read as weathered rock rather than knife-edged crystal under toon shading.
+ */
+function softRidged(n: Noise2, x: number, y: number): number {
+  const a = n(x, y);
+  const b = n(x * 2.03 + 5.3, y * 2.03 - 2.1);
+  const ra = 1 - Math.sqrt(a * a + 0.03);
+  const rb = 1 - Math.sqrt(b * b + 0.03);
+  const top = 1 - Math.sqrt(0.03);
+  return (0.67 * ra * ra + 0.33 * rb * rb) / (top * top);
 }
 
 /** Integer-lattice hash in [0, 1) for jittered-grid features. */
