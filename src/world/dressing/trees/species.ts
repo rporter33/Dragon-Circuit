@@ -144,8 +144,8 @@ function broadleafLod(lod: number, opts: { giant: boolean; blossom: boolean }): 
   const swayY = (p: Vector3) => Math.pow(Math.max(0, p.y) / H, 2) * 0.35;
 
   // Trunk with a gentle S-bend.
-  const segs = lod === 0 ? 6 : 3;
-  const radial = lod === 0 ? 8 : lod === 1 ? 6 : 4;
+  const segs = lod === 0 ? 6 : lod === 3 ? 1 : 3;
+  const radial = lod === 0 ? 8 : lod === 1 ? 6 : lod === 2 ? 4 : 3;
   const tp = bezier(
     [new Vector3(0, -0.4, 0), new Vector3(-0.3, trunkH * 0.4, 0.2), new Vector3(0.4, trunkH * 0.75, -0.1), new Vector3(crown.x, trunkH + 1.2, crown.z)],
     segs,
@@ -182,7 +182,13 @@ function broadleafLod(lod: number, opts: { giant: boolean; blossom: boolean }): 
   const sparkle = opts.blossom ? new Color('#fff4f6') : new Color(opts.giant ? '#8fb853' : '#a3c95b');
   const fol = foliageColor(bottom, top, crown.y - R * 0.6, crown.y + R * 0.9, opts.blossom ? 91 : 93, 0.16, sparkle, crown, R * 1.05);
   const detail = lod === 0 ? 2 : lod === 1 ? 1 : 0;
-  const useBlobs = lod === 2 ? [blobs[0], blobs[2], blobs[5], blobs[blobs.length - 1]].map((s) => ({ ...s, r: s.r * 1.25 })) : blobs;
+  // Far away the crown is one soft lump (LOD3: a silhouette, 20 triangles).
+  const useBlobs =
+    lod === 3
+      ? [{ c: crown.clone().add(new Vector3(0, R * 0.15, 0)), r: R * 1.05, sy: opts.blossom ? 0.75 : 0.82 }]
+      : lod === 2
+        ? [blobs[0], blobs[2], blobs[5], blobs[blobs.length - 1]].map((s) => ({ ...s, r: s.r * 1.25 }))
+        : blobs;
   addCanopy(b, useBlobs, detail, opts.blossom ? 501 : 401, crown.clone().add(new Vector3(0, -R * 0.15, 0)), fol, (p) => 0.12 + swayY(p));
   return b.build(true);
 }
@@ -197,6 +203,15 @@ function coniferLod(lod: number): BufferGeometry {
   const H = 15;
   const bark = barkColor(new Color('#5a4434'), 37);
   const swayY = (p: Vector3) => Math.pow(Math.max(0, p.y) / H, 2) * 0.3;
+  if (lod === 3) {
+    // Silhouette: a single dark cone.
+    const g = welded(new ConeGeometry(3.5, 13.6, 5, 1, false));
+    b.add(g, xf(0, 1.4 + 6.8, 0), {
+      color: (p, n, out) => out.set('#2a5a3e').lerp(tmpC.set('#4f8d55'), Math.min(1, Math.max(0, p.y / 15))).multiplyScalar(n.y < -0.3 ? 0.7 : 1),
+      sway: (p) => 0.08 + swayY(p),
+    });
+    return b.build(true);
+  }
   const radial = lod === 0 ? 6 : 4;
   trunk(b, [new Vector3(0, -0.4, 0), new Vector3(0, H * 0.45, 0), new Vector3(0, H * 0.9, 0)], 0.36, 0.08, radial, bark, swayY);
   const tiers = lod === 0 ? 6 : lod === 1 ? 4 : 2;
@@ -263,9 +278,9 @@ function windbentLod(lod: number): BufferGeometry {
   const H = 7;
   const bark = barkColor(new Color('#6b5a4a'), 41);
   const swayY = (p: Vector3) => Math.pow(Math.max(0, p.y) / H, 2) * 0.3;
-  const segs = lod === 0 ? 8 : 4;
+  const segs = lod === 0 ? 8 : lod === 3 ? 2 : 4;
   const path = bezier([new Vector3(0, -0.4, 0), new Vector3(-0.4, 2.6, 0.2), new Vector3(0.6, 4.6, -0.1), new Vector3(3.2, 5.6, 0.1)], segs);
-  trunk(b, path, 0.38, 0.13, lod === 0 ? 7 : 5, bark, swayY);
+  trunk(b, path, 0.38, 0.13, lod === 0 ? 7 : lod === 3 ? 3 : 5, bark, swayY);
   if (lod === 0) {
     // A second, broken-off limb on the windward side.
     trunk(b, bezier([new Vector3(-0.2, 3.2, 0), new Vector3(-1.2, 4.0, 0.3), new Vector3(-1.6, 4.9, 0.2)], 3), 0.14, 0.05, 5, bark, swayY, 'limb');
@@ -282,7 +297,8 @@ function windbentLod(lod: number): BufferGeometry {
   ];
   for (const s of blobs) s.c.z += (rnd() - 0.5) * 0.4;
   const fol = foliageColor(new Color('#3f5f2e'), new Color('#a2b358'), 4.8, 7.2, 97, 0.15, new Color('#c2c56d'), new Vector3(3, 5.8, 0), 3.2);
-  addCanopy(b, lod === 2 ? blobs.slice(0, 3).map((s) => ({ ...s, r: s.r * 1.3 })) : blobs, lod === 0 ? 2 : lod === 1 ? 1 : 0, 601, crown, fol, (p) => 0.12 + swayY(p), 0.7);
+  const far = lod === 3 ? blobs.slice(0, 2).map((s) => ({ ...s, r: s.r * 1.55 })) : lod === 2 ? blobs.slice(0, 3).map((s) => ({ ...s, r: s.r * 1.3 })) : blobs;
+  addCanopy(b, far, lod === 0 ? 2 : lod === 1 ? 1 : 0, 601, crown, fol, (p) => 0.12 + swayY(p), 0.7);
   return b.build(true);
 }
 
@@ -294,7 +310,7 @@ function glowcapLod(lod: number): BufferGeometry {
   const rnd = mulberry32(0x9c0);
   const b = new GeoBuilder();
   const H = 11;
-  const seg = lod === 0 ? 22 : lod === 1 ? 12 : 7;
+  const seg = lod === 0 ? 22 : lod === 1 ? 12 : lod === 2 ? 7 : 5;
   const lean = (y: number) => Math.sin((y / H) * 1.4) * 1.1;
   const stemPts = [
     [1.5, 0], [1.05, 0.7], [0.82, 2.2], [0.7, 5], [0.72, 8], [0.85, H - 0.5], [0.95, H + 0.4],
@@ -385,7 +401,8 @@ function bushLod(lod: number): BufferGeometry {
     blobs.push({ c: new Vector3(Math.cos(a) * 0.9, 0.55 + rnd() * 0.4, Math.sin(a) * 0.9), r: 0.7 + rnd() * 0.35 });
   }
   const fol = foliageColor(new Color('#244a26'), new Color('#73a443'), 0, 2.1, 103, 0.15, new Color('#9cc25a'), new Vector3(0, 0.7, 0), 1.9);
-  addCanopy(b, blobs, lod === 0 ? 1 : 0, 701, new Vector3(0, 0.5, 0), fol, (p) => Math.max(0, p.y) * 0.08);
+  const use = lod === 3 ? [{ c: new Vector3(0, 0.75, 0), r: 1.55, sy: 0.8 }] : blobs;
+  addCanopy(b, use, lod === 0 ? 1 : 0, 701, new Vector3(0, 0.5, 0), fol, (p) => Math.max(0, p.y) * 0.08);
   return b.build(true);
 }
 
@@ -509,21 +526,24 @@ export interface SpeciesSpec {
   build: (lod: number) => BufferGeometry;
   height: number;
   trunkRadius: number;
-  /** Distances (m, at scale 1) where LOD0→1, LOD1→2 and LOD2→culled switch. */
-  lodDist: [number, number, number];
+  /**
+   * Distances (m, at scale 1, at 'high' quality) where each LOD hands over to the next; the
+   * last entry is where it is culled. Three or four LODs.
+   */
+  lodDist: number[];
   /** Material flavor. */
   material: 'foliage' | 'glow' | 'rock' | 'card';
   castShadow: boolean;
 }
 
 export const SPECIES: Record<SpeciesId, SpeciesSpec> = {
-  broadleaf: { id: 'broadleaf', build: (l) => broadleafLod(l, { giant: false, blossom: false }), height: 11, trunkRadius: 0.45, lodDist: [75, 270, 9000], material: 'foliage', castShadow: true },
-  giant: { id: 'giant', build: (l) => broadleafLod(l, { giant: true, blossom: false }), height: 20, trunkRadius: 1.15, lodDist: [100, 380, 9000], material: 'foliage', castShadow: true },
-  blossom: { id: 'blossom', build: (l) => broadleafLod(l, { giant: false, blossom: true }), height: 8, trunkRadius: 0.34, lodDist: [75, 250, 9000], material: 'foliage', castShadow: true },
-  conifer: { id: 'conifer', build: coniferLod, height: 15, trunkRadius: 0.36, lodDist: [80, 300, 9000], material: 'foliage', castShadow: true },
-  windbent: { id: 'windbent', build: windbentLod, height: 7, trunkRadius: 0.38, lodDist: [70, 260, 9000], material: 'foliage', castShadow: true },
-  glowcap: { id: 'glowcap', build: glowcapLod, height: 14, trunkRadius: 1.1, lodDist: [110, 380, 9000], material: 'glow', castShadow: true },
-  bush: { id: 'bush', build: bushLod, height: 2, trunkRadius: 0, lodDist: [55, 260, 700], material: 'foliage', castShadow: true },
+  broadleaf: { id: 'broadleaf', build: (l) => broadleafLod(l, { giant: false, blossom: false }), height: 11, trunkRadius: 0.45, lodDist: [75, 270, 620, 9000], material: 'foliage', castShadow: true },
+  giant: { id: 'giant', build: (l) => broadleafLod(l, { giant: true, blossom: false }), height: 20, trunkRadius: 1.15, lodDist: [100, 380, 850, 9000], material: 'foliage', castShadow: true },
+  blossom: { id: 'blossom', build: (l) => broadleafLod(l, { giant: false, blossom: true }), height: 8, trunkRadius: 0.34, lodDist: [75, 250, 560, 9000], material: 'foliage', castShadow: true },
+  conifer: { id: 'conifer', build: coniferLod, height: 15, trunkRadius: 0.36, lodDist: [80, 300, 650, 9000], material: 'foliage', castShadow: true },
+  windbent: { id: 'windbent', build: windbentLod, height: 7, trunkRadius: 0.38, lodDist: [70, 260, 560, 9000], material: 'foliage', castShadow: true },
+  glowcap: { id: 'glowcap', build: glowcapLod, height: 14, trunkRadius: 1.1, lodDist: [110, 380, 850, 9000], material: 'glow', castShadow: true },
+  bush: { id: 'bush', build: bushLod, height: 2, trunkRadius: 0, lodDist: [55, 260, 420, 700], material: 'foliage', castShadow: true },
   boulder: { id: 'boulder', build: boulderLod, height: 1.5, trunkRadius: 0, lodDist: [60, 300, 1600], material: 'rock', castShadow: true },
   log: { id: 'log', build: logLod, height: 1, trunkRadius: 0, lodDist: [55, 240, 500], material: 'rock', castShadow: true },
   shrooms: { id: 'shrooms', build: shroomsLod, height: 0.9, trunkRadius: 0, lodDist: [40, 160, 400], material: 'glow', castShadow: false },

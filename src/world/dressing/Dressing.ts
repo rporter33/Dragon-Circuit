@@ -89,7 +89,7 @@ export class Dressing implements DressingSystem {
     this.water = new Waterfalls(this.terrain, plans, this.quality);
     this.group.add(this.water.group);
     this.rootPlan = planRoots(this.terrain);
-    this.roots = new HangingRoots(this.terrain, this.rootPlan, defer);
+    this.roots = new HangingRoots(this.terrain, this.rootPlan, defer, this.quality);
     this.group.add(this.roots.group);
     this.buildForest();
     this.grass = new GrassField(this.terrain, this.exclusions, this.quality, { async: deps.asyncStreaming ?? true });
@@ -144,6 +144,7 @@ export class Dressing implements DressingSystem {
     while (this.tasks.length && performance.now() - t0 < 4) this.tasks.shift()!();
     this.grass.update(camera, focus);
     this.forest.update(camera);
+    this.roots.update(camera);
   }
 
   setQuality(q: QualityProfile): void {
@@ -153,6 +154,7 @@ export class Dressing implements DressingSystem {
     if (rebuild) this.buildForest();
     else this.forest.setQuality(q);
     this.water.setQuality(q);
+    this.roots.setQuality(q);
   }
 
   private colliderDebug: Group | null = null;

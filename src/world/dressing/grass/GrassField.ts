@@ -38,6 +38,8 @@ import type { FieldWorkerRequest } from './fieldWorker';
 const NEAR_SYNC = 48;
 /** Max chunk requests in flight to the worker. */
 const MAX_PENDING = 8;
+/** Chunks whose nearest point is farther than this draw the 4-triangle far tuft. */
+const FAR_TUFT = 34;
 
 interface LayerSlot {
   mesh: Mesh;
@@ -46,6 +48,8 @@ interface LayerSlot {
   shape: InstancedBufferAttribute;
   base: InstancedBufferAttribute;
   tip: InstancedBufferAttribute;
+  /** Drawing the far (simplified) base geometry. */
+  far: boolean;
 }
 
 interface Slot {
@@ -86,6 +90,7 @@ export class GrassField {
   private grassMat: Material;
   private flowerMat: Material;
   private tuftBase: BufferGeometry;
+  private tuftFar: BufferGeometry;
   private flowerBase: BufferGeometry;
   private slots = new Map<number, Slot>();
   private free: Slot[] = [];
@@ -116,6 +121,7 @@ export class GrassField {
     this.grassMat = grassMaterial(this.uniforms);
     this.flowerMat = flowerMaterial(this.uniforms);
     this.tuftBase = tuftGeometry();
+    this.tuftFar = tuftGeometry(true);
     this.flowerBase = flowerGeometry();
     this.scratch = this.allocScratch();
     this.uniforms.uDwRadius.value = quality.grassRadius;
@@ -209,7 +215,15 @@ export class GrassField {
     mesh.receiveShadow = true;
     mesh.castShadow = false;
     mesh.matrixAutoUpdate = false;
-    return { mesh, geo, pos, shape, base: baseA, tip };
+    return { mesh, geo, pos, shape, base: baseA, tip, far: false };
+  }
+
+  /** Swap a layer's shared base geometry (near or far tuft); instance data stays. */
+  private setBase(layer: LayerSlot, base: BufferGeometry, far: boolean): void {
+    if (layer.far === far) return;
+    layer.far = far;
+    for (const [n, a] of Object.entries(base.attributes)) layer.geo.setAttribute(n, a);
+    layer.geo.setIndex(base.getIndex());
   }
 
   private acquire(): Slot {
@@ -414,6 +428,8 @@ export class GrassField {
       const s = this.slots.get(w.k);
       if (!s || !s.data) continue;
       const keep = keepFraction(w.d);
+      const far = w.d > FAR_TUFT;
+      this.setBase(s.grass, far ? this.tuftFar : this.tuftBase, far);
       s.grass.geo.instanceCount = prefixCount(s.data.tufts, keep);
       s.flowers.geo.instanceCount = prefixCount(s.data.flowers, keepFraction(w.d * 0.75));
       tufts += s.grass.geo.instanceCount;

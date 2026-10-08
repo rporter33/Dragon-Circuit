@@ -99,8 +99,8 @@ describe('Dressing system', () => {
     cam.updateMatrixWorld();
     dressing.update(1 / 30, cam, cam.position);
     const f = dressing.forest.stats;
-    expect(f.byLod[0] + f.byLod[1] + f.byLod[2]).toBeGreaterThan(500);
-    expect(f.drawCalls).toBeLessThanOrEqual(33);
+    expect(f.byLod.reduce((a, n) => a + n, 0)).toBeGreaterThan(500);
+    expect(f.drawCalls).toBeLessThanOrEqual(40);
   }, SLOW);
 
   it('rebuilds cleanly on a quality change', () => {
