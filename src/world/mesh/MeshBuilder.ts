@@ -16,7 +16,7 @@
 // any mesh density instead of smearing across a triangle. There, surf.x and surf.z are the rock
 // and paving shares of the over material and surf.y = 1 marks grass-capable ground.
 
-import { BufferAttribute, BufferGeometry } from 'three';
+import { Box3, BufferAttribute, BufferGeometry, Sphere, Vector3 } from 'three';
 
 /** A closed loop of `count` vertices starting at index `start`, evenly spaced in angle from 0. */
 export interface Ring {
@@ -32,7 +32,12 @@ export interface MeshData {
   surf: Float32Array;
   over: Float32Array;
   indices: Uint32Array;
+  /** Axis-aligned bounds of the positions: [minX, minY, minZ, maxX, maxY, maxZ]. */
+  bounds: [number, number, number, number, number, number];
 }
+
+/** Work units between yields in the sliced passes (triangles or vertices). */
+export const SLICE = 4096;
 
 export class MeshBuilder {
   positions: Float32Array;
@@ -164,6 +169,15 @@ export class MeshBuilder {
 
   /** Area-weighted smooth vertex normals over the indexed mesh. */
   computeNormals(): Float32Array {
+    const gen = this.normalsSliced();
+    for (;;) {
+      const r = gen.next();
+      if (r.done) return r.value;
+    }
+  }
+
+  /** computeNormals, yielding every SLICE triangles so callers can time-slice it. */
+  *normalsSliced(): Generator<void, Float32Array> {
     const n = new Float32Array(this.vertexCount * 3);
     const p = this.positions;
     const idx = this.indices;
@@ -189,6 +203,7 @@ export class MeshBuilder {
       n[c] += nx;
       n[c + 1] += ny;
       n[c + 2] += nz;
+      if (k % (SLICE * 3) === 0 && k > 0) yield;
     }
     for (let i = 0; i < n.length; i += 3) {
       const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1;
@@ -200,6 +215,15 @@ export class MeshBuilder {
   }
 
   finish(normals: Float32Array = this.computeNormals()): MeshData {
+    const bounds: MeshData['bounds'] = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    const p = this.positions;
+    for (let i = 0; i < this.vertexCount * 3; i += 3) {
+      for (let k = 0; k < 3; k++) {
+        const v = p[i + k];
+        if (v < bounds[k]) bounds[k] = v;
+        if (v > bounds[k + 3]) bounds[k + 3] = v;
+      }
+    }
     return {
       positions: this.positions.slice(0, this.vertexCount * 3),
       normals,
@@ -207,6 +231,7 @@ export class MeshBuilder {
       surf: this.surf.slice(0, this.vertexCount * 4),
       over: this.over.slice(0, this.vertexCount * 4),
       indices: this.indices.slice(0, this.indexCount),
+      bounds,
     };
   }
 }
@@ -221,8 +246,9 @@ export function toGeometry(data: MeshData): BufferGeometry {
   g.setAttribute('aOver', new BufferAttribute(data.over, 4));
   const vCount = data.positions.length / 3;
   g.setIndex(new BufferAttribute(vCount > 65535 ? data.indices : Uint16Array.from(data.indices), 1));
-  g.computeBoundingSphere();
-  g.computeBoundingBox();
+  const [x0, y0, z0, x1, y1, z1] = data.bounds;
+  g.boundingBox = new Box3(new Vector3(x0, y0, z0), new Vector3(x1, y1, z1));
+  g.boundingSphere = g.boundingBox.getBoundingSphere(new Sphere());
   return g;
 }
 

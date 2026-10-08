@@ -8,7 +8,7 @@ import type { SpireShape } from '../islandShape';
 import { smoothstep } from '../../core/math';
 import { noise2, noise3 } from '../../core/noise';
 import { mulberry32 } from '../../core/rng';
-import { MeshBuilder, type MeshData, type Ring } from './MeshBuilder';
+import { MeshBuilder, SLICE, type MeshData, type Ring } from './MeshBuilder';
 import { strataRecess } from './strata';
 
 export interface SpireLodSpec {
@@ -145,7 +145,7 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
     const ring = { start, count: n };
     b.stitch(prev, ring);
     prev = ring;
-    if (k % 6 === 0) yield;
+    if (k % 4 === 0) yield;
   }
   const tip = b.vertex(0, d.tipY - d.topY, 0);
   kind.push(1);
@@ -154,8 +154,9 @@ export function* buildSpireMesh(shape: SpireShape, spec: SpireLodSpec): Generato
   b.stitch(prev, { start: tip, count: 1 });
 
   // --- Paint --------------------------------------------------------------------------------------
-  const normals = b.computeNormals();
+  const normals = yield* b.normalsSliced();
   for (let i = 0; i < b.vertexCount; i++) {
+    if (i % (SLICE / 4) === SLICE / 4 - 1) yield;
     const x = b.x(i) + d.x;
     const y = b.y(i) + d.topY;
     const z = b.z(i) + d.z;

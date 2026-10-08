@@ -9,7 +9,7 @@ import type { ArchShape } from '../islandShape';
 import type { Terrain } from '../terrain';
 import { clamp, smoothstep } from '../../core/math';
 import { noise3 } from '../../core/noise';
-import { MeshBuilder, type MeshData, type Ring } from './MeshBuilder';
+import { MeshBuilder, SLICE, type MeshData, type Ring } from './MeshBuilder';
 import { hash11 } from './strata';
 
 export interface ArchLodSpec {
@@ -212,7 +212,7 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
     const ring = tubeRing(a0 + ((a1 - a0) * m) / M, 1, 0);
     firstRing ??= ring;
     link(ring);
-    if (m % 16 === 15) yield;
+    if (m % 8 === 7) yield;
   }
 
   if (shape.full) {
@@ -227,9 +227,10 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
   }
 
   // --- Paint --------------------------------------------------------------------------------------
-  const normals = b.computeNormals();
+  const normals = yield* b.normalsSliced();
   const pale = d.landmark === 'eye';
   for (let i = 0; i < b.vertexCount; i++) {
+    if (i % (SLICE / 4) === SLICE / 4 - 1) yield;
     const x = b.x(i) + c.x;
     const y = b.y(i) + c.y;
     const z = b.z(i) + c.z;

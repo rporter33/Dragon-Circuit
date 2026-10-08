@@ -15,7 +15,7 @@
 // Builders are generators that yield between rings so the World can time-slice them.
 
 import type { IslandShape } from '../islandShape';
-import { MeshBuilder, type MeshData, type Ring } from './MeshBuilder';
+import { MeshBuilder, SLICE, type MeshData, type Ring } from './MeshBuilder';
 import { IslandPainter, Region } from './islandPaint';
 import { strataRecess } from './strata';
 
@@ -283,7 +283,7 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
         (i, y) => -ledge(i, y),
         Region.Cliff,
       );
-      if (k % 4 === 0) yield;
+      if (k % 2 === 0) yield;
     }
   }
   const footRing = prev;
@@ -329,11 +329,11 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
   b.stitch(prev, { start: tip, count: 1 });
 
   // --- Paint ------------------------------------------------------------------------------------
-  const normals = b.computeNormals();
+  const normals = yield* b.normalsSliced();
   const painter = new IslandPainter(shape);
   for (let i = 0; i < b.vertexCount; i++) {
     painter.paint(b, i, region[i] as Region, aux[i], normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
-    if ((i & 2047) === 2047) yield;
+    if (i % (SLICE / 4) === SLICE / 4 - 1) yield;
   }
   return { data: b.finish(normals), rimRing, footRing, topVertexCount };
 }
