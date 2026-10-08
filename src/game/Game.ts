@@ -110,6 +110,8 @@ export class Game implements GameActions {
       events: this.events,
       breed: this.save.data.wyvern.breed,
       settings: () => this.settings,
+      // The saddle as the model builds it (falls back to an estimate until Wyvern.seatOffset exists).
+      seat: (out) => (this.wyvern as { seatOffset?: (o: Vector3) => Vector3 } | undefined)?.seatOffset?.(out) ?? null,
     });
     this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings, this.events);
     this.wyvern = new Wyvern(this.save.data.wyvern, { terrain: this.world.terrain });

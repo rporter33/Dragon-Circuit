@@ -36,8 +36,8 @@ import { createRiderPose, createWyvernPose } from './poses';
 import { standingOrientation, yawOf } from './ground';
 import { RiderFoot } from './foot';
 import { Companion } from './companion';
-import { nearStable } from './prompts';
 import { PLAYER_TUNING as P } from './tuning';
+import { FixedHome, type HomeAnchor } from './home';
 
 export interface PlayerDeps {
   terrain: Terrain;
@@ -46,6 +46,13 @@ export interface PlayerDeps {
   breed: BreedId;
   /** Read for settings.holdToFlap. Optional: hold-to-flap when absent. */
   settings?: () => Settings;
+  /**
+   * The saddle origin (where the rider's hips rest) in the wyvern's body frame, from the model
+   * (Wyvern.seatOffset). Return null (or omit) to use the standHeight-proportional estimate.
+   */
+  seat?: (out: Vector3) => Vector3 | null;
+  /** Where home (the stable, the last-resort respawn) is. Defaults to the Roost. */
+  home?: HomeAnchor;
 }
 
 // Scratch.
@@ -55,6 +62,7 @@ const _fwd = new Vector3();
 const _up = new Vector3();
 const _left = new Vector3();
 const _q = new Quaternion();
+const _seat = new Vector3();
 const UP = new Vector3(0, 1, 0);
 const NEUTRAL: FlightInput = { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flare: 0 };
 
@@ -78,6 +86,8 @@ export class Player implements PlayerSystem {
   /** The wyvern on the ground (riderless or carrying the rider) and the rider on foot. */
   readonly companion = new Companion();
   readonly foot = new RiderFoot();
+  /** Where the stable is and where to fall back to (the Roost today; one day an airship). */
+  readonly home: HomeAnchor;
 
   private deps: PlayerDeps;
   private simTime = 0;
@@ -127,9 +137,23 @@ export class Player implements PlayerSystem {
   private flightIn: FlightInput = { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flare: 0 };
   /** Seconds of automatic half-tuck left after walking off a cliff. */
   private autoTuck = 0;
+  /** Seconds of committed launch strokes left after a takeoff leap (one press climbs away). */
+  private launchHold = 0;
+
+  // Rest: landing refills the meter; a moment's rest after a flight makes the wyvern Rested.
+  /** 0..1 of the Rested bonus left. */
+  private restedLeft = 0;
+  /** Seconds on the ground since the last flight. */
+  private groundTime = 0;
+  /** A real flight happened since the last time it rested (rest is earned by flying). */
+  private flownSinceRest = false;
+  /** Seconds into the wing ruffle (< 0: not playing). */
+  private ruffleT = -1;
+  private restedToasts = 0;
 
   // Transitions.
   private takeoffTimer = -1;
+  private mountDuration: number = P.mountTime;
   private airTime = 0;
   private launchGait: WyvernGait = 'idle';
   private noLand = 0;
@@ -160,9 +184,8 @@ export class Player implements PlayerSystem {
     this.deps = deps;
     this.breed = BREEDS[deps.breed];
     this.model = new FlightModel(this.breed);
-    const ws = deps.terrain.layout.wyvernSpawn;
-    deps.terrain.standingPoint(ws.position[0], ws.position[2], this.lastSafe);
-    this.lastSafeYaw = ws.yaw;
+    this.home = deps.home ?? new FixedHome(deps.terrain.layout, deps.terrain);
+    this.lastSafeYaw = this.home.respawn(this.lastSafe);
   }
 
   get flight(): FlightState {
@@ -194,6 +217,17 @@ export class Player implements PlayerSystem {
     return this.lastSafe;
   }
 
+  /** 0..1 of the Rested bonus left (0 = not rested). */
+  get rested(): number {
+    return this.restedLeft;
+  }
+
+  /** True when the wyvern is close enough (and settled enough) for the rider to mount. */
+  get canMount(): boolean {
+    const d = this.wyvernDistance;
+    return d <= P.mountRange || (d <= P.mountReach && this.companion.state === 'idle');
+  }
+
   // --- Setup ----------------------------------------------------------------------------------
 
   setBreed(id: BreedId): void {
@@ -209,14 +243,13 @@ export class Player implements PlayerSystem {
 
   /** New game: the rider on foot at the spawn, the wyvern standing on the Roost beside the stable. */
   placeAtSpawn(): void {
-    const layout = this.deps.terrain.layout;
-    const sp = layout.spawn;
-    const ws = layout.wyvernSpawn;
+    const home = this.home;
     this.resetTransitions();
-    this.foot.place(_v.set(sp.position[0], 1e5, sp.position[2]), sp.yaw, this.deps.terrain);
+    const riderYaw = home.riderStart(_v);
+    this.foot.place(_v.setY(1e5), riderYaw, this.deps.terrain);
     const w = this.companion.walker;
-    w.position.set(ws.position[0], 1e5, ws.position[2]);
-    w.yaw = ws.yaw;
+    w.yaw = home.wyvernStart(w.position);
+    w.position.y = 1e5;
     w.speed = 0;
     w.settle(this.deps.terrain, this.breed.standHeight, 1e5);
     this.companion.standStill();
@@ -224,9 +257,12 @@ export class Player implements PlayerSystem {
     this.companion.leash = Math.hypot(w.position.x - this.foot.position.x, w.position.z - this.foot.position.z) + 15;
     this.model.state.stamina = 1;
     this.model.state.winded = false;
+    this.restedLeft = 0;
+    this.flownSinceRest = false;
+    this.ruffleT = -1;
     this.syncModelFromGround();
     this.lastSafe.set(w.position.x, w.groundY, w.position.z);
-    this.lastSafeYaw = ws.yaw;
+    this.lastSafeYaw = w.yaw;
     this.setMode('onFoot');
     this.syncRiderFromFoot();
     this.snapInterpolation();
@@ -347,6 +383,7 @@ export class Player implements PlayerSystem {
     this.prevFlap = input.flight.flap;
     this.position.copy(this.model.state.position);
     this.controllable = this.mode === 'flying' || this.mode === 'landed' || this.mode === 'onFoot';
+    this.updateRest(dt);
     this.updateSafeGround(dt);
     this.updateChannels(dt);
     this.updateLookTarget(dt);
@@ -357,9 +394,7 @@ export class Player implements PlayerSystem {
   private updateFlying(dt: number, input: InputFrame): void {
     const s = this.model.state;
     this.buildFlightInput(dt, input.flight);
-    this.model.regenMultiplier = 1;
     this.model.step(dt, this.flightIn, this.deps.env, this.deps.events);
-    if (this.flapQueued > 0 && s.winded) this.flapQueued = 0;
     this.airTime += dt;
     this.copyFlightAnim();
     this.setGait(this.airTime < P.takeoffGaitTime ? this.launchGait : 'idle');
@@ -381,14 +416,25 @@ export class Player implements PlayerSystem {
       if (f.flap > 0.1 || f.flare > 0.1) this.autoTuck = 0;
       else fi.tuck = Math.max(fi.tuck, 0.55);
     }
+    // A takeoff commits to its first strokes: one press of "take off" climbs away; a flare or a
+    // tuck takes the wings back.
+    if (this.launchHold > 0) {
+      this.launchHold -= dt;
+      // The strokes go on until it is nearly at cruise speed (at least the first `launchCommit` s).
+      const flying = this.model.state.airspeed > 0.9 * this.model.derived.vCruise;
+      if (f.flare > 0.1 || f.tuck > 0.1 || (flying && this.airTime > P.launchCommit)) this.launchHold = 0;
+    }
+    const launch = this.launchHold > 0 ? 1 : 0;
     const hold = this.deps.settings?.().holdToFlap ?? true;
     if (hold) {
-      fi.flap = f.flap;
+      fi.flap = Math.max(f.flap, launch);
       return;
     }
     // Tap mode: every press queues exactly one wingbeat (buffered until the current one ends).
-    if (f.flap > 0.35 && this.prevFlap <= 0.35) {
-      this.flapQueued = Math.max(0.6, f.flap);
+    // The input layer already turns a squeeze into a clean pulse, so any rising edge counts, and a
+    // soft squeeze makes a soft (cheap) beat.
+    if (f.flap > 0.05 && this.prevFlap <= 0.05) {
+      this.flapQueued = Math.max(0.3, f.flap);
       this.beatsAtQueue = this.model.beats;
       this.queueAge = 0;
     } else if (this.flapQueued > 0 && f.flap > this.flapQueued) {
@@ -398,7 +444,7 @@ export class Player implements PlayerSystem {
       this.queueAge += dt;
       if (this.model.beats !== this.beatsAtQueue || this.queueAge > 1.2) this.flapQueued = 0;
     }
-    fi.flap = this.flapQueued;
+    fi.flap = Math.max(this.flapQueued, launch);
   }
 
   private copyFlightAnim(): void {
@@ -441,7 +487,10 @@ export class Player implements PlayerSystem {
       if (vn < 0) s.velocity.addScaledVector(n, -vn);
       return;
     }
-    if (along < P.landSpeed && sink < P.landSink) {
+    // Flaring into the ground is a landing, however heavy: the legs take it (a deep crouch, a
+    // camera kick), no bounce, no crash.
+    const sinkLimit = s.flare > 0.5 ? P.landSinkFlared : P.landSink;
+    if (along < P.landSpeed && sink < sinkLimit) {
       this.touchdown(g, sink);
       return;
     }
@@ -487,8 +536,7 @@ export class Player implements PlayerSystem {
 
   private updateLanded(dt: number, input: InputFrame, interact: boolean): void {
     const w = this.companion.walker;
-    const s = this.model.state;
-    this.model.regenStamina(dt, P.groundRegen);
+    this.groundRegen(dt);
     this.landBlend = Math.min(1, this.landBlend + dt / P.landBlendTime);
 
     if (this.takeoffTimer >= 0) {
@@ -501,24 +549,24 @@ export class Player implements PlayerSystem {
     } else {
       const flapPressed = input.flight.flap > 0.5 && this.prevFlap <= 0.5;
       if (flapPressed) {
-        if (s.winded) this.deps.events.emit('flapRefused', {});
-        else {
-          this.takeoffTimer = 0;
-          this.setGait('takeoff');
-        }
-      } else if (interact && this.landBlend >= 1 && !nearStable(this.riderPos, this.deps.terrain.layout)) {
+        this.takeoffTimer = 0;
+        this.setGait('takeoff');
+      } else if (interact && this.landBlend >= 1 && !this.home.nearStable(this.riderPos)) {
         this.startDismount();
         return;
       }
       const dir = this.cameraRelative(input.foot.moveX, input.foot.moveY, _v);
       const mag = Math.min(1, dir.length());
-      const res = w.step(dt, mag > 0.05 ? dir : null, mag * this.breed.groundSpeed, this.breed, this.deps.terrain, true);
+      // A key is all or nothing: on the keyboard the wyvern walks, and Shift gallops (the pad's
+      // stick gives every speed in between).
+      const pace = input.device === 'keyboard' && !input.foot.sprint ? P.keyboardWalk : 1;
+      const res = w.step(dt, mag > 0.05 ? dir : null, mag * pace * this.breed.groundSpeed, this.breed, this.deps.terrain, true);
       if (res === 'edge') {
         this.walkOff();
         return;
       }
-      this.wyvernFootsteps();
     }
+    this.wyvernFootsteps(dt, this.takeoffTimer < 0);
     this.stillTime = w.speed < 0.3 && this.takeoffTimer < 0 ? this.stillTime + dt : 0;
     if (this.takeoffTimer < 0) {
       const landing = this.gait === 'landing' && (this.simTime - this.gaitStart < P.landGaitTime || w.speed > this.breed.groundSpeed * 1.05);
@@ -537,6 +585,7 @@ export class Player implements PlayerSystem {
     this.model.reset(_v2.copy(w.position).addScaledVector(UP, 0.15), q, vel);
     this.model.forceBeat(1);
     this.model.setGrace(P.launchGrace, true);
+    this.launchHold = P.launchCommitMax;
     this.takeoffTimer = -1;
     this.airTime = 0;
     this.noLand = 0.3;
@@ -591,7 +640,7 @@ export class Player implements PlayerSystem {
   }
 
   private updateDismounting(dt: number): void {
-    this.model.regenStamina(dt, P.groundRegen);
+    this.groundRegen(dt);
     this.companion.walker.step(dt, null, 0, this.breed, this.deps.terrain, false);
     this.syncModelFromGround();
     this.groundAnim(0);
@@ -615,7 +664,7 @@ export class Player implements PlayerSystem {
   private updateOnFoot(dt: number, input: InputFrame, interact: boolean, jump: boolean): void {
     const t = this.deps.terrain;
     const ev = this.deps.events;
-    this.model.regenStamina(dt, P.groundRegen);
+    this.groundRegen(dt);
     const f = input.foot;
     const r = this.foot.step(dt, { moveX: f.moveX, moveY: f.moveY, sprint: f.sprint, jump }, this.cameraYaw, t);
     if (r.footstep) ev.emit('footstep', { position: this.foot.position.clone(), surface: this.foot.surface, heavy: false });
@@ -631,11 +680,11 @@ export class Player implements PlayerSystem {
       }
     }
     if (interact) {
-      if (this.wyvernDistance <= P.mountRange) {
+      if (this.canMount) {
         this.startMount();
         return;
       }
-      if (!nearStable(this.foot.position, t.layout)) {
+      if (!this.home.nearStable(this.foot.position)) {
         // Too far to mount: wave and the wyvern comes.
         this.waveTimer = P.waveTime;
         this.companion.called = true;
@@ -653,6 +702,8 @@ export class Player implements PlayerSystem {
 
   private startMount(): void {
     this.transFrom.copy(this.foot.position);
+    // A wyvern standing a few steps away: the rider covers the gap at a jog before climbing on.
+    this.mountDuration = P.mountTime + Math.max(0, this.wyvernDistance - P.mountRange) / P.runSpeed;
     this.companion.walker.speed = 0;
     this.companion.called = false;
     this.companion.standStill();
@@ -661,12 +712,12 @@ export class Player implements PlayerSystem {
   }
 
   private updateMounting(dt: number): void {
-    this.model.regenStamina(dt, P.groundRegen);
+    this.groundRegen(dt);
     this.companion.walker.step(dt, null, 0, this.breed, this.deps.terrain, false);
     this.syncModelFromGround();
     this.groundAnim(0);
     this.setGait('idle');
-    const t = clamp01(this.modeTime / P.mountTime);
+    const t = clamp01(this.modeTime / this.mountDuration);
     // Feet travel from the ground up to where they hang when the hips are on the seat.
     this.seatPosition(_v2).addScaledVector(UP, -P.riderHip);
     this.arc(this.transFrom, _v2, smoothstep(0, 1, t), 1.1, this.riderPos);
@@ -765,6 +816,11 @@ export class Player implements PlayerSystem {
   }
 
   private placeRespawn(): void {
+    // The last safe ground, if it is still there (a moving home may have carried it off);
+    // otherwise home's own fallback.
+    const t = this.deps.terrain;
+    const g = t.groundAt(this.lastSafe.x, this.lastSafe.z, this.lastSafe.y + 3);
+    if (!g || Math.abs(g.y - this.lastSafe.y) > 3) this.lastSafeYaw = this.home.respawn(this.lastSafe);
     const yaw = this.lastSafeYaw;
     const p = _v2.copy(this.lastSafe).addScaledVector(UP, P.respawnHeight + this.breed.standHeight);
     const q = standingOrientation(yaw, UP, 0, 0, _q);
@@ -800,6 +856,48 @@ export class Player implements PlayerSystem {
     this.lastSafeYaw = yaw;
   }
 
+  // --- Rest -------------------------------------------------------------------------------------
+
+  /** On the ground: the meter refills quickly (a landing tops it up in about two seconds). */
+  private groundRegen(dt: number): void {
+    this.model.regenStamina(dt, 1, P.groundRefill);
+  }
+
+  /**
+   * Rest and the Rested bonus: after a flight, a moment on the ground (mounted or not) makes the
+   * wyvern Rested for a while — more stamina capacity and faster regen — and it shakes out its
+   * wings. Never a penalty: the bonus simply fades away.
+   */
+  private updateRest(dt: number): void {
+    const c = this.companion.state;
+    const grounded =
+      this.mode === 'landed' || ((this.mode === 'onFoot' || this.mode === 'mounting' || this.mode === 'dismounting') && (c === 'idle' || c === 'follow'));
+    if (this.mode === 'flying' && this.airTime > P.restFlight) this.flownSinceRest = true;
+    if (grounded) {
+      this.groundTime += dt;
+      if (this.groundTime >= P.restTime && this.flownSinceRest) this.grantRested();
+    } else this.groundTime = 0;
+    this.restedLeft = Math.max(0, this.restedLeft - dt / P.restedDuration);
+    const bonus = smoothstep(0, P.restedFade, this.restedLeft);
+    this.model.capacity = 1 + P.restedCapacity * bonus;
+    this.model.regenMultiplier = 1 + P.restedRegen * bonus;
+    if (this.ruffleT >= 0) {
+      this.ruffleT += dt;
+      // Taking off mid-shake ends it; it plays once, on the ground.
+      if (this.ruffleT > P.ruffleTime || this.mode === 'flying' || this.mode === 'falling') this.ruffleT = -1;
+    }
+  }
+
+  private grantRested(): void {
+    this.restedLeft = 1;
+    this.flownSinceRest = false;
+    this.ruffleT = 0;
+    if (this.restedToasts < P.restedToasts) {
+      this.restedToasts++;
+      this.deps.events.emit('toast', { text: 'Rested — your wyvern shakes out its wings', sub: 'Its stamina lasts longer for a while', icon: 'info' });
+    }
+  }
+
   // --- Shared helpers ---------------------------------------------------------------------------
 
   private setMode(mode: PlayerMode): void {
@@ -818,6 +916,7 @@ export class Player implements PlayerSystem {
     this.respawnPlaced = false;
     this.flapQueued = 0;
     this.autoTuck = 0;
+    this.launchHold = 0;
     this.landBlend = 1;
     this.noLand = 0;
     this.waveTimer = 0;
@@ -844,11 +943,14 @@ export class Player implements PlayerSystem {
     return speed < this.breed.groundSpeed * P.walkFraction ? 'walk' : 'run';
   }
 
-  private wyvernFootsteps(): void {
+  /** Footsteps on the visible footfalls: hind feet are heavy, the wing knuckles lighter. */
+  private wyvernFootsteps(dt: number, moving: boolean): void {
     const w = this.companion.walker;
-    const run = w.speed > this.breed.groundSpeed * P.walkFraction;
-    if (w.footstep(this.breed.standHeight * (run ? 1.3 : 0.9))) {
-      this.deps.events.emit('footstep', { position: w.position.clone().setY(w.groundY), surface: w.surface, heavy: true });
+    const contacts = w.gaitStep(dt, this.breed, moving);
+    if (contacts === 0) return;
+    for (let i = 0; i < 4; i++) {
+      if (!(contacts & (1 << i))) continue;
+      this.deps.events.emit('footstep', { position: w.footPosition(i, this.breed.standHeight, new Vector3()), surface: w.surface, heavy: i < 2 });
     }
   }
 
@@ -915,20 +1017,27 @@ export class Player implements PlayerSystem {
     s.flapPhase = 0;
   }
 
+  /** The saddle seat in the wyvern's body frame: the model's, or an estimate from standHeight. */
+  private seatLocal(out: Vector3): Vector3 {
+    const fromModel = this.deps.seat?.(out);
+    if (fromModel) return fromModel;
+    const sh = this.breed.standHeight;
+    return out.set(0, SEAT_UP * sh, SEAT_FWD * sh);
+  }
+
   /** World position of the saddle seat for the wyvern's current physics pose. */
   private seatPosition(out: Vector3): Vector3 {
     const s = this.model.state;
-    const sh = this.breed.standHeight;
-    return out.set(0, SEAT_UP * sh, SEAT_FWD * sh).applyQuaternion(s.orientation).add(s.position);
+    return this.seatLocal(out).applyQuaternion(s.orientation).add(s.position);
   }
 
   /** Body center that puts the seat under a rider whose feet are at `feet` (level, facing yaw). */
   private bodyUnderSeat(feet: Vector3, yaw: number, out: Vector3): Vector3 {
-    const sh = this.breed.standHeight;
-    return out
-      .copy(feet)
-      .addScaledVector(UP, P.riderHip - SEAT_UP * sh)
-      .add(_left.set(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(-SEAT_FWD * sh));
+    const seat = this.seatLocal(_seat);
+    const sn = Math.sin(yaw);
+    const cs = Math.cos(yaw);
+    // Seat (body frame: x left, z forward) turned to the world by yaw, then subtracted.
+    return out.set(feet.x - (cs * seat.x + sn * seat.z), feet.y + P.riderHip - seat.y, feet.z - (-sn * seat.x + cs * seat.z));
   }
 
   private syncRiderToSeat(): void {
@@ -1067,6 +1176,8 @@ export class Player implements PlayerSystem {
     wp.fatigue = this.fatigue;
     wp.gait = this.gait;
     wp.gaitTime = this.simTime - this.gaitStart;
+    wp.gaitPhase = this.companion.walker.gaitPhase;
+    wp.ruffle = this.ruffleT >= 0 ? clamp01(this.ruffleT / P.ruffleTime) : 0;
     wp.groundSpeed = this.airborne ? 0 : this.groundSpeed;
     wp.groundY = this.groundY;
     if (this.lookFresh) {
@@ -1081,7 +1192,7 @@ export class Player implements PlayerSystem {
     const rp = this.riderPose;
     rp.mounted = this.riderMounted;
     if (this.riderMounted) {
-      rp.position.set(0, SEAT_UP * this.breed.standHeight, SEAT_FWD * this.breed.standHeight).applyQuaternion(wp.orientation).add(wp.position);
+      this.seatLocal(rp.position).applyQuaternion(wp.orientation).add(wp.position);
       rp.yaw = yawOf(_fwd.set(0, 0, 1).applyQuaternion(wp.orientation));
     } else {
       rp.position.lerpVectors(this.prevRiderPos, this.riderPos, a);

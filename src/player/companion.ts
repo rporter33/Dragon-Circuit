@@ -5,7 +5,7 @@
 import { Quaternion, Vector3 } from 'three';
 import type { BreedStats, GameEvents, TerrainQuery, WyvernGait } from '../core/types';
 import type { EventBus } from '../core/events';
-import { clamp, clamp01, lerp, smoothstep } from '../core/math';
+import { angleDelta, clamp, clamp01, lerp, smoothstep } from '../core/math';
 import { GroundWalker, standingOrientation, yawOf } from './ground';
 import { PLAYER_TUNING as P } from './tuning';
 
@@ -130,7 +130,10 @@ export class Companion {
     switch (this.state) {
       case 'idle':
       case 'follow': {
-        const wantsToCome = riderGrounded && (dist > this.leash || (this.called && dist > P.followStop));
+        // Called, it comes right up to its rider (within mounting reach); otherwise it keeps a
+        // polite distance.
+        const stopAt = this.called ? P.calledStop : P.followStop;
+        const wantsToCome = riderGrounded && (dist > this.leash || (this.called && dist > stopAt));
         if (this.state === 'idle' && wantsToCome) {
           this.state = 'follow';
           this.stateTime = 0;
@@ -141,11 +144,14 @@ export class Companion {
           if (!riderGrounded) {
             // Wait for the rider to land somewhere.
             w.step(dt, null, 0, breed, terrain, false);
-          } else if (dist <= P.followStop) {
-            this.called = false;
-            this.leash = P.followDistance;
-            w.step(dt, null, 0, breed, terrain, false);
-            if (w.speed === 0) {
+          } else if (dist <= stopAt) {
+            // Pull up and turn to face the rider before settling.
+            _dir.set(dx, 0, dz);
+            w.step(dt, _dir, 0, breed, terrain, false);
+            const facing = Math.abs(angleDelta(w.yaw, Math.atan2(dx, dz))) < 0.35;
+            if (w.speed === 0 && (facing || !this.called || this.stateTime > 6)) {
+              this.called = false;
+              this.leash = P.followDistance;
               this.state = 'idle';
               this.stateTime = 0;
             }
@@ -167,8 +173,10 @@ export class Companion {
           this.anim.flare = 0;
           this.anim.gait = w.speed < 0.3 ? 'idle' : w.speed < breed.groundSpeed * P.walkFraction ? 'walk' : 'run';
           standingOrientation(w.yaw, w.normal, 0.35, 0, this.orientation);
-          if (w.footstep(sh * (w.speed > breed.groundSpeed * P.walkFraction ? 1.3 : 0.9))) {
-            events?.emit('footstep', { position: w.position.clone().setY(w.groundY), surface: w.surface, heavy: true });
+          // Footsteps on the visible footfalls (hind feet heavy, wing knuckles lighter).
+          const contacts = w.gaitStep(dt, breed);
+          for (let i = 0; contacts !== 0 && i < 4; i++) {
+            if (contacts & (1 << i)) events?.emit('footstep', { position: w.footPosition(i, sh, new Vector3()), surface: w.surface, heavy: i < 2 });
           }
         }
         break;
@@ -216,9 +224,11 @@ export class Companion {
     if (_dir.lengthSq() < 1e-4) _dir.set(1, 0, 0);
     _dir.normalize();
     const base = Math.atan2(_dir.x, _dir.z);
+    // Land within mounting reach of the rider (a little further out for a big wyvern's wings).
+    const ring = P.calledStop + 0.5 + breed.standHeight * 0.3;
     for (let k = 0; k < 8; k++) {
       const ang = base + (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 4);
-      _a.set(rider.x + Math.sin(ang) * 7, rider.y, rider.z + Math.cos(ang) * 7);
+      _a.set(rider.x + Math.sin(ang) * ring, rider.y, rider.z + Math.cos(ang) * ring);
       const g = terrain.groundAt(_a.x, _a.z, rider.y + 3);
       if (!g || g.normal.y < P.maxSlopeY || Math.abs(g.y - rider.y) > 3) continue;
       _a.y = g.y;

@@ -324,6 +324,12 @@ export interface WyvernPose {
   groundSpeed: number;
   /** Seconds since mode/gait changed, for one-shot animations (takeoff leap, landing crouch). */
   gaitTime: number;
+  /**
+   * 0..1 position in the ground gait cycle (four foot contacts per cycle, the timing of
+   * creatures/wyvern/gait.ts). The player emits a footstep at each contact on this clock, so an
+   * animation that follows it puts every foot down on its sound. Absent: animate freely.
+   */
+  gaitPhase?: number;
   /** Where the head wants to look (world space), e.g. toward the camera's view or next ring. */
   lookTarget: Vector3;
   /** Ground height directly below the body (for leg placement and landing poses); null over open air. */

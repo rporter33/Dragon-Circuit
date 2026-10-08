@@ -387,7 +387,11 @@ export interface GameView {
   prompt: { action: PromptAction; text: string } | null;
 }
 
-export type PromptAction = 'flap' | 'flare' | 'tuck' | 'interact' | 'mount' | 'dismount' | 'jump' | 'restart' | 'stable';
+/**
+ * The control a prompt asks for (the HUD draws its glyph). 'rest' asks for no button at all
+ * (glide or land to recover stamina): draw a stamina/wing mark or nothing.
+ */
+export type PromptAction = 'flap' | 'flare' | 'tuck' | 'interact' | 'mount' | 'dismount' | 'jump' | 'restart' | 'stable' | 'rest';
 
 export interface UiSystem {
   readonly screen: GameScreen;

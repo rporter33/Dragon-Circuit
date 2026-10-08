@@ -11,6 +11,8 @@ export const PLAYER_TUNING = {
   landSpeed: 18,
   /** Max sink rate into the surface for a clean touchdown (m/s). */
   landSink: 6.5,
+  /** ...and while flaring: a heavy flared arrival is still a landing (no bounce, no crash). */
+  landSinkFlared: 12,
   /** Ground flatter than this (normal.y) can be landed on. */
   landNormalY: 0.65,
   /** Deceleration while skidding on the legs (m/s²). */
@@ -32,16 +34,46 @@ export const PLAYER_TUNING = {
   wyvernBrake: 8,
   /** Below this fraction of groundSpeed the gait is a walk. */
   walkFraction: 0.55,
-  /** Stamina regenerates this many times faster on the ground. */
-  groundRegen: 2.5,
+  /** Keyboard keys are all or nothing: W walks at this fraction of groundSpeed, Shift gallops. */
+  keyboardWalk: 0.5,
+
+  // --- Rest ----------------------------------------------------------------------------------
+  /**
+   * On any island the stamina meter refills at this rate (fraction per second, after the usual
+   * short pause), so a landing tops it up in about two seconds.
+   */
+  groundRefill: 0.7,
+  /** Seconds on the ground after a flight before the wyvern is Rested. */
+  restTime: 2,
+  /** A flight counts (and earns the next rest) after this long in the air (s). */
+  restFlight: 4,
+  /** How long Rested lasts (s), the extra stamina capacity it gives, and its regen bonus. */
+  restedDuration: 90,
+  restedCapacity: 0.4,
+  restedRegen: 0.5,
+  /** The bonus fades out over the last this-fraction of its duration. */
+  restedFade: 0.1,
+  /** Seconds the wing shake-out (WyvernPose.ruffle) takes. */
+  ruffleTime: 1.4,
+  /** The "Rested" toast is shown only the first few times in a session. */
+  restedToasts: 3,
 
   // --- Takeoff -------------------------------------------------------------------------------
   crouchTime: 0.25,
   leapUp: 5.5,
   leapForward: 7,
   leapPitch: 10 * DEG,
-  /** Launch strokes last until flying speed (≈1.25 × stall), at most this long (s). */
-  launchGrace: 4,
+  /**
+   * Launch strokes last until flying speed (≈1.25 × stall), at most this long (s): long enough
+   * for the ironback, which needs about 5 s to get there.
+   */
+  launchGrace: 7,
+  /**
+   * One press of "take off" keeps beating the wings until the wyvern has flying speed (at least
+   * `launchCommit` s, at most `launchCommitMax`); after that the trigger is in charge.
+   */
+  launchCommit: 1.2,
+  launchCommitMax: 5,
   /** Walking off a cliff while mounted. */
   walkOffGrace: 2.5,
   walkOffHop: 2.2,
@@ -67,11 +99,15 @@ export const PLAYER_TUNING = {
   catchDelay: 0.8,
   catchGrace: 1.8,
   mountRange: 5,
+  /** A wyvern standing still this close is near enough to mount (the rider jogs over). */
+  mountReach: 6.5,
   mountTime: 0.7,
   dismountTime: 0.6,
   /** The wyvern follows a rider who wanders further than this, stopping this close. */
   followDistance: 30,
   followStop: 8,
+  /** A called wyvern comes closer than that: right up to its rider, facing them. */
+  calledStop: 3.5,
   /** Seconds a wave (calling the wyvern) lasts. */
   waveTime: 1.4,
 
