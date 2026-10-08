@@ -22,7 +22,7 @@ import {
   type Scene,
 } from 'three';
 import type { GameEventBus } from '../core/events';
-import type { CylinderCollider } from '../core/types';
+import type { Collider } from '../core/types';
 import type { CollectibleSystem, PlayerSystem, SaveData, SaveStore } from '../game/contracts';
 import type { QualityProfile } from '../render/quality';
 import type { Terrain } from '../world/terrain';
@@ -46,7 +46,7 @@ export interface CollectiblesDeps {
   save: SaveStore & { data: SaveData };
   terrain: Terrain;
   /** The world dressing: its launch deck carries a feather. */
-  dressing?: { deckAt(x: number, z: number, fromY: number): { y: number } | null; readonly colliders?: readonly CylinderCollider[] };
+  dressing?: { deckAt(x: number, z: number, fromY: number): { y: number } | null; readonly colliders?: readonly Collider[] };
   quality: QualityProfile;
 }
 

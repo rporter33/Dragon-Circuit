@@ -3,7 +3,7 @@
 // collision), so they are small, sparse and kept clear of every solid. One InstancedMesh; the
 // gentle bob is done in the vertex shader from uTime, so animating them costs no CPU.
 
-import { Color, IcosahedronGeometry, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry, type MeshToonMaterial } from 'three';
+import { Color, Group, IcosahedronGeometry, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry, type MeshToonMaterial } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { QualityProfile } from '../../render/quality';
 import type { Terrain } from '../terrain';
@@ -124,9 +124,9 @@ const ROCK_DARK = new Color('#77707d');
 const MOSS = new Color('#5c8c3e');
 const tmpC = new Color();
 
-/** A lumpy unit rock with a flattish, mossy top. */
-function rockGeometry(): BufferGeometry {
-  const ico = mergeVertices(new IcosahedronGeometry(1, 2));
+/** A lumpy unit rock with a flattish, mossy top (detail 2: 320 triangles; 0: 20 for far away). */
+function rockGeometry(detail = 2): BufferGeometry {
+  const ico = mergeVertices(new IcosahedronGeometry(1, detail));
   const pos = ico.getAttribute('position');
   const idx = ico.getIndex()!;
   const n = noise3(4242);
@@ -186,15 +186,28 @@ function debrisMaterial(): MeshToonMaterial {
   return m;
 }
 
+/** Pieces nearer than this (m) draw the detailed rock; the rest a 20-triangle one. */
+const NEAR: Record<QualityProfile['level'], number> = { low: 150, medium: 220, high: 300, ultra: 420 };
+
 export class Debris {
+  /** Near pieces (detailed); `far` holds the rest. Both live under `group`. */
   readonly mesh: InstancedMesh;
+  readonly far: InstancedMesh;
+  readonly group = new Group();
   readonly pieces: DebrisPiece[];
+  private matrices: Matrix4[] = [];
+  private active = 0;
+  private near: number;
+  private lastPos = new Vector3(Infinity, 0, 0);
 
   constructor(terrain: Terrain, quality: QualityProfile) {
     this.pieces = placeDebris(terrain);
-    this.mesh = new InstancedMesh(rockGeometry(), debrisMaterial(), this.pieces.length);
+    const mat = debrisMaterial();
+    this.mesh = new InstancedMesh(rockGeometry(2), mat, this.pieces.length);
+    this.far = new InstancedMesh(rockGeometry(0), mat, this.pieces.length);
     this.mesh.name = 'debris';
-    const m = new Matrix4();
+    this.far.name = 'debris-far';
+    this.group.name = 'debris-group';
     const q = new Quaternion();
     const e = new Vector3();
     const s = new Vector3();
@@ -205,21 +218,49 @@ export class Debris {
       tilt.setFromAxisAngle(e.set(1, 0, 0), p.tilt);
       q.multiply(tilt);
       s.set(p.size * p.stretch[0], p.size * p.stretch[1], p.size * p.stretch[2]);
-      m.compose(pos.set(...p.position), q, s);
+      const m = new Matrix4().compose(pos.set(...p.position), q, s);
+      this.matrices.push(m);
       this.mesh.setMatrixAt(i, m);
+      this.far.setMatrixAt(i, m);
     });
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.mesh.computeBoundingSphere();
-    this.mesh.castShadow = false;
-    this.mesh.receiveShadow = true;
+    for (const im of [this.mesh, this.far]) {
+      im.instanceMatrix.needsUpdate = true;
+      im.computeBoundingSphere();
+      im.castShadow = false;
+      im.receiveShadow = true;
+      im.frustumCulled = false;
+      this.group.add(im);
+    }
+    this.near = NEAR[quality.level];
     this.setQuality(quality);
   }
 
-  update(_dt: number): void {
-    // Animated entirely in the vertex shader.
+  /** Re-bucket pieces into near/far when the camera has moved a fair way. */
+  update(_dt: number, camera?: { position: Vector3 }): void {
+    if (!camera || camera.position.distanceToSquared(this.lastPos) < 400) return;
+    this.lastPos.copy(camera.position);
+    const c = camera.position;
+    const near2 = this.near * this.near;
+    let n = 0;
+    let f = 0;
+    for (let i = 0; i < this.active; i++) {
+      const p = this.pieces[i].position;
+      const d2 = (p[0] - c.x) ** 2 + (p[1] - c.y) ** 2 + (p[2] - c.z) ** 2;
+      if (d2 < near2) this.mesh.setMatrixAt(n++, this.matrices[i]);
+      else this.far.setMatrixAt(f++, this.matrices[i]);
+    }
+    this.mesh.count = n;
+    this.far.count = f;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    this.far.instanceMatrix.needsUpdate = true;
   }
 
   setQuality(q: QualityProfile): void {
-    this.mesh.count = Math.round(this.pieces.length * Math.min(1, Math.max(0.3, q.propDensity)));
+    this.active = Math.round(this.pieces.length * Math.min(1, Math.max(0.3, q.propDensity)));
+    this.near = NEAR[q.level];
+    // Until the first re-bucket everything draws detailed (manual captures still get a bucket).
+    this.mesh.count = this.active;
+    this.far.count = 0;
+    this.lastPos.set(Infinity, 0, 0);
   }
 }

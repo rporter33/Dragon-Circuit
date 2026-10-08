@@ -8,7 +8,7 @@ import type {
   BreedId,
   BreedStats,
   CosmeticSlot,
-  CylinderCollider,
+  Collider,
   FlightEnvironment,
   FlightState,
   InputDevice,
@@ -116,8 +116,11 @@ export interface WorldSystem {
  */
 export interface DressingSystem {
   readonly group: Group;
-  /** Solid cylinders (building walls, towers, big trunks) to keep walkers out of. */
-  readonly colliders: readonly CylinderCollider[];
+  /**
+   * Collision shapes of everything built (building and roof boxes, tower and post cylinders, soft
+   * hay and cloth). Widened from cylinders only: check `kind` (absent = cylinder).
+   */
+  readonly colliders: readonly Collider[];
   /**
    * Walkable built surfaces that the terrain doesn't cover (the Roost's launch deck juts out over
    * the void): the deck top under (x, z) at or below fromY + 2, or null.

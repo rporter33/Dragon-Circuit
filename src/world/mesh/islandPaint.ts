@@ -12,6 +12,7 @@ import { LAYOUT } from '../layout';
 import { clamp01, smoothstep } from '../../core/math';
 import { fbm2, noise2, type Noise2 } from '../../core/noise';
 import type { MeshBuilder } from './MeshBuilder';
+import { gullyAt, gullyFade } from './strata';
 
 /** Which part of the island surface a vertex belongs to. */
 export const Region = { Top: 0, Brow: 1, Lip: 2, Cliff: 3, Under: 4 } as const;
@@ -50,8 +51,8 @@ export function topWeights(shape: IslandShape, x: number, z: number, s: number, 
   let dirt = remaining * smoothstep(edge - 0.015, edge + 0.015, s); // 50% on the rim dirt edge
   remaining -= dirt;
   let stone = 0;
-  if (kind === 'roost' || kind === 'ruin') {
-    const sr = shape.def.flatCenter * 0.55;
+  const sr = shape.pavedEdge(x, z);
+  if (sr > 0) {
     stone = remaining * smoothstep(sr + 0.012, sr - 0.012, s);
     remaining -= stone;
   }
@@ -74,7 +75,7 @@ export function topWeights(shape: IslandShape, x: number, z: number, s: number, 
   out.track = track;
   out.nearRock = Math.max(smoothstep(0.95, 0.66, ny), kind === 'rocky' || kind === 'islet' ? 0.5 : 0);
   out.nearDirt = smoothstep(0.75, edge + 0.015, s);
-  out.nearStone = kind === 'roost' || kind === 'ruin' ? smoothstep(shape.def.flatCenter * 0.55 + 0.12, shape.def.flatCenter * 0.55, s) : 0;
+  out.nearStone = sr > 0 ? smoothstep(sr + 0.12, sr, s) : 0;
   out.nearTrack = shape.track ? smoothstep(ROOST_TRACK_HALF_WIDTH + 6, ROOST_TRACK_HALF_WIDTH, shape.trackDistance(x, z)) : 0;
   return out;
 }
@@ -174,7 +175,7 @@ export class IslandPainter {
     this.pal = PALETTES[shape.def.kind];
     this.patchN = noise2(shape.def.seed + 101);
     this.detailN = noise2(shape.def.seed + 102);
-    this.stoneR = shape.def.kind === 'roost' || shape.def.kind === 'ruin' ? shape.def.flatCenter * 0.55 : -1;
+    this.stoneR = shape.def.kind === 'roost' || shape.def.kind === 'ruin' ? 1 : -1;
   }
 
   paint(b: MeshBuilder, i: number, region: Region, aux: number, nx: number, ny: number, nz: number): void {
@@ -205,6 +206,10 @@ export class IslandPainter {
         const moss = Math.max((1 - smoothstep(0.5, 6, aux)) * 0.85, (1 - smoothstep(2, 22, aux)) * this.pal.mossiness);
         const n = this.detailN(x * 0.03, z * 0.03) * 0.5 + 0.5;
         tmp.copy(CLIFF).lerp(UNDER_NEAR, 0.15 + 0.25 * n + 0.3 * smoothstep(4, 16, aux));
+        // Gullies sit in their own shade; the buttresses between them catch the light.
+        const th = Math.atan2(z - d.z, x - d.x);
+        const g = gullyAt(Math.cos(th), Math.sin(th), this.shape.outlineRadius(th), d.seed) * smoothstep(1, 4, aux);
+        tmp.multiplyScalar(1.08 - 0.42 * g);
         b.setColor(i, tmp.r, tmp.g, tmp.b);
         b.setSurf(i, 1, 0, 0, moss);
         return;
@@ -216,6 +221,10 @@ export class IslandPainter {
         const n = this.patchN(x * 0.02 + 7, z * 0.02 - 3) * 0.5 + 0.5;
         tmp.copy(UNDER_NEAR).lerp(UNDER_MID, smoothstep(0, 0.5, deepT));
         tmp.lerp(UNDER_DEEP, smoothstep(0.4, 1, deepT) * (0.75 + 0.25 * n));
+        // The cliff's gullies run on down the upper underside, in shade.
+        const th = Math.atan2(z - d.z, x - d.x);
+        const g = gullyAt(Math.cos(th), Math.sin(th), this.shape.outlineRadius(th), d.seed) * gullyFade(aux, d.depth);
+        tmp.multiplyScalar(1.06 - 0.36 * g);
         // Cool, faintly lit by the cloud sea below.
         const moss = Math.max((1 - smoothstep(4, 14, total)) * 0.7, (1 - smoothstep(10, 40, total)) * 0.8 * this.pal.mossiness);
         b.setColor(i, tmp.r, tmp.g, tmp.b);
@@ -253,7 +262,10 @@ export class IslandPainter {
     // Grass dries out toward the windy rim.
     g.lerp(pal.dry, smoothstep(0.8, 0.95, s) * 0.3);
     // On paving's edge the turf is trampled and darker.
-    if (this.stoneR > 0) g.lerp(pal.dark, smoothstep(this.stoneR + 0.06, this.stoneR, s) * 0.3);
+    if (this.stoneR > 0) {
+      const edge = shape.pavedEdge(x, z);
+      g.lerp(pal.dark, smoothstep(edge + 0.06, edge, s) * 0.3);
+    }
     const gr = g.r;
     const gg = g.g;
     const gb = g.b;
