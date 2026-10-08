@@ -148,6 +148,11 @@ export interface PlayerSystem {
   readonly controllable: boolean;
   /** 0..1 full-screen fade the player state wants (respawn, catch-on-fall). */
   readonly fade: number;
+  /**
+   * The Rested bonus earned by landing and resting on an island: 0..1 of its duration remaining
+   * (0 = not rested). The HUD shows a mark while it lasts. Optional until the player implements it.
+   */
+  readonly rested?: number;
 }
 
 // ---------------------------------------------------------------------------------------------

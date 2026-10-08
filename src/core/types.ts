@@ -328,6 +328,11 @@ export interface WyvernPose {
   lookTarget: Vector3;
   /** Ground height directly below the body (for leg placement and landing poses); null over open air. */
   groundY: number | null;
+  /**
+   * 0..1 progress of a "shake out the wings" ruffle (played when the wyvern becomes Rested after
+   * a landing); 0 or absent when not playing.
+   */
+  ruffle?: number;
 }
 
 export type RiderAction =
