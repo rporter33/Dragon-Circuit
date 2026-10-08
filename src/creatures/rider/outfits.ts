@@ -267,8 +267,8 @@ function courier(look: RiderLook, pal: RiderPalette, d: RigDims): OutfitStyle {
     extras(ctx) {
       // Front skirt of the coat: two panels that part over the legs. The back is cloth (tails).
       const col = (u: number, v: number, inner: boolean) => (inner ? pal.secondaryDark : v > 0.9 ? pal.primaryDark : pal.primary);
-      skirtPanel(ctx, { th0: HALF + 0.06, th1: HALF + 1.62, yTop: 0.99 * d.h, yBot: 0.5 * d.h, inflate: 0.016, flare: 0.1, thickness: 0.01, follow: 0.85, color: col, rows: 7 });
-      skirtPanel(ctx, { th0: HALF - 1.62, th1: HALF - 0.06, yTop: 0.99 * d.h, yBot: 0.5 * d.h, inflate: 0.016, flare: 0.1, thickness: 0.01, follow: 0.85, color: col, rows: 7 });
+      skirtPanel(ctx, { th0: HALF + 0.06, th1: HALF + 1.62, yTop: 0.99 * d.h, yBot: 0.5 * d.h, inflate: 0.016, flare: 0.1, thickness: 0.01, follow: 0.92, color: col, rows: 7 });
+      skirtPanel(ctx, { th0: HALF - 1.62, th1: HALF - 0.06, yTop: 0.99 * d.h, yBot: 0.5 * d.h, inflate: 0.016, flare: 0.1, thickness: 0.01, follow: 0.92, color: col, rows: 7 });
       // Sash.
       torsoBand(ctx, 0.985 * d.h, 1.035 * d.h, 0.024, pal.secondary);
       // Double row of buttons.
@@ -399,7 +399,7 @@ function cartographer(look: RiderLook, pal: RiderPalette, d: RigDims): OutfitSty
       bounds: [],
     },
     leg: {
-      color: (s) => (s > bootTop ? pal.leather : pal.cloth),
+      color: (s) => (s > bootTop ? pal.leather : pal.trousers),
       inflate: (s) => (s > bootTop ? 0.009 : 0.006),
       bounds: [bootTop],
     },
@@ -408,10 +408,10 @@ function cartographer(look: RiderLook, pal: RiderPalette, d: RigDims): OutfitSty
     extras(ctx) {
       // Four long robe panels with slits at the sides, front and back.
       const panels: [number, number, number][] = [
-        [HALF + 0.05, HALF + 1.52, 0.75],
-        [HALF - 1.52, HALF - 0.05, 0.75],
-        [-HALF + 0.05, -HALF + 1.52, 0.5],
-        [-HALF - 1.52, -HALF - 0.05, 0.5],
+        [HALF + 0.05, HALF + 1.52, 0.92],
+        [HALF - 1.52, HALF - 0.05, 0.92],
+        [-HALF + 0.05, -HALF + 1.52, 0.6],
+        [-HALF - 1.52, -HALF - 0.05, 0.6],
       ];
       for (const [a, b, f] of panels) {
         skirtPanel(ctx, { th0: a, th1: b, yTop: 1.0 * d.h, yBot: 0.36 * d.h, inflate: 0.016, flare: 0.13, thickness: 0.009, follow: f, rows: 8, color: (u, v, inner) => (inner ? pal.primaryDark : embroidery(u, v)) });

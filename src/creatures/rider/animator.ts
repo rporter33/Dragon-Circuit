@@ -217,7 +217,8 @@ export class RiderAnimator {
       const impact = Math.min(1, Math.max(0.35, -this.prevVelY / 9));
       this.landKick = Math.max(this.landKick, impact);
     }
-    if (a === 'land' && this.prevAction !== 'land') this.landKick = Math.max(this.landKick, 0.9);
+    // A hard landing: crouch deep and rise over the land action.
+    if (a === 'land') this.landKick = Math.max(this.landKick, 0.95 * (1 - smooth(0.05, 0.42, t)));
     this.wasAir = airborne;
     this.prevVelY = v.y;
     this.landKick = Math.max(0, this.landKick - dt * 2.6);

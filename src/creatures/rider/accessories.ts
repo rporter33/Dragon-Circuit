@@ -319,7 +319,7 @@ export function coatSpecs(ctx: BodyCtx, look: RiderLook): ClothSpec[] {
     const cols = 4;
     for (let c = 0; c < cols; c++) {
       // From beside the back seam out to the side of the hip.
-      const th = -Math.PI / 2 + s * (0.07 + (1.45 * c) / (cols - 1));
+      const th = -Math.PI / 2 + s * (0.06 + (1.05 * c) / (cols - 1));
       top.push(torsoPoint(ctx, y, th, 0.024, new Vector3()));
     }
     out.push(

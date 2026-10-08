@@ -109,7 +109,7 @@ export interface RigDims {
 export function rigDims(build: RiderLook['build']): RigDims {
   const k = build === 'slight' ? { h: 0.965, w: 0.88, g: 0.84 } : build === 'broad' ? { h: 1.025, w: 1.14, g: 1.2 } : { h: 1, w: 1, g: 1 };
   const { h, w, g } = k;
-  const headScale = build === 'slight' ? 0.98 : build === 'broad' ? 1.02 : 1;
+  const headScale = (build === 'slight' ? 0.98 : build === 'broad' ? 1.02 : 1) * 1.07;
   return {
     build,
     h,

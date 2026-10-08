@@ -124,8 +124,9 @@ function makeStandIn(game: Game, at: Vector3, yaw = 0): { saddle: Object3D; body
   const horn = new Mesh(new CapsuleGeometry(0.035, 0.22, 4, 8), toonMaterial({ color: '#7a3a2a' }));
   horn.position.set(0, hw + 0.4, 0.65);
   body.add(horn);
-  const seat = new Mesh(new CapsuleGeometry(0.5, 0.5, 4, 16).scale(1.05, 0.25, 1.1).rotateX(Math.PI / 2), toonMaterial({ color: '#7a3a2a' }));
-  seat.position.set(0, hw + 0.02, 0.2);
+  // A saddle pad hugging the top of the back.
+  const seat = new Mesh(new CapsuleGeometry(0.32, 0.35, 4, 16).rotateX(Math.PI / 2).scale(1.0, 0.22, 0.85), toonMaterial({ color: '#7a3a2a' }));
+  seat.position.set(0, hw + 0.01, 0.15);
   body.add(seat);
   game.scene.add(body);
   body.updateMatrixWorld(true);

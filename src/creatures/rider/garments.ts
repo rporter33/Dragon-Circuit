@@ -167,11 +167,11 @@ export function skirtSection(ctx: BodyCtx, y: number, yTop: number, flare: numbe
   const drop = Math.max(0, Math.min(yTop, hipY) - y);
   const s = ctx.bp.thighL.y - y;
   const leg = ctx.legAt(Math.max(0, s));
-  const legX = ctx.bp.thighL.x + leg.rx + 0.01;
+  const legX = ctx.bp.thighL.x + leg.rx + 0.02;
   return {
     rx: Math.max(t.rx + flare * drop, legX + flare * drop * 0.6),
-    rf: Math.max(t.rf + flare * drop * 0.8, leg.rf + 0.012 + flare * drop * 0.5),
-    rb: Math.max(t.rb + flare * drop * 0.8, leg.rb + 0.012 + flare * drop * 0.5),
+    rf: Math.max(t.rf + flare * drop * 0.8, leg.rf + 0.03 + flare * drop * 0.5),
+    rb: Math.max(t.rb + flare * drop * 0.8, leg.rb + 0.025 + flare * drop * 0.5),
     cz: t.cz,
   };
 }
@@ -203,7 +203,7 @@ export function skirtPanel(ctx: BodyCtx, o: PanelOpts): void {
       const th = o.th0 + (o.th1 - o.th0) * u;
       const cs = Math.cos(th);
       const sn = Math.sin(th);
-      const k = (sn < 0 ? follow * 0.55 : follow) * Math.pow(smooth(0, 1, v), 0.8);
+      const k = (sn < 0 ? follow * 0.6 : follow) * Math.pow(smooth(0, 1, v), 0.6);
       const left = Math.min(1, Math.max(0, 0.5 + cs / 1.2));
       const wl = k * left;
       const wr = k * (1 - left);

@@ -21,7 +21,7 @@ export function coversCrown(headgear: string): boolean {
  * A band around the head following the skull: front height yF and back height yB (unit-sphere
  * y), lifted `inflate` off the scalp.
  */
-function headBand(ctx: BodyCtx, yF: number, yB: number, inflate: number, halfH: number, color: Color | ((phi: number) => Color), glow = 0): void {
+function headBand(ctx: BodyCtx, yF: number, yB: number, inflate: number, halfH: number, color: Color | ((phi: number) => Color), glow = 0, inflateBack = inflate): void {
   const { head } = ctx;
   const hb = sk(B.head);
   const seg = 28;
@@ -29,10 +29,10 @@ function headBand(ctx: BodyCtx, yF: number, yB: number, inflate: number, halfH: 
   b.begin();
   // Four rows around the head: inner-bottom, outer-bottom, outer-top, inner-top.
   const layers: [number, number][] = [
-    [-halfH, inflate * 0.55],
-    [-halfH, inflate],
-    [halfH, inflate],
-    [halfH, inflate * 0.55],
+    [-halfH, 0.55],
+    [-halfH, 1],
+    [halfH, 1],
+    [halfH, 0.55],
   ];
   const rows: number[][] = [];
   const p = new Vector3();
@@ -45,7 +45,8 @@ function headBand(ctx: BodyCtx, yF: number, yB: number, inflate: number, halfH: 
       const y = yF + (yB - yF) * back + dy / head.radii.y;
       const r = Math.sqrt(Math.max(0.02, 1 - y * y));
       dir.set(Math.sin(phi) * r, y, Math.cos(phi) * r);
-      head.surface(dir, p, inf);
+      const frontK = Math.pow(Math.max(0, Math.cos(phi)), 1.5);
+      head.surface(dir, p, inf * (inflateBack + (inflate - inflateBack) * frontK));
       row.push(b.vertex(p, typeof color === 'function' ? color(phi > Math.PI ? phi - 2 * Math.PI : phi) : color, hb, glow));
     }
     rows.push(row);
@@ -106,65 +107,122 @@ export function buildHeadgear(ctx: BodyCtx, look: RiderLook): void {
       break;
     }
     case 'cap': {
-      // Aviator cap: leather dome down over the ears with flaps, a fleece edge.
-      const leather = mixSrgb(pal.leather, pal.leatherDark, 0.2);
-      b.ellipsoid(head.center, head.radii.clone().addScalar(t * 0.5 + 0.012), hb, (u) => (Math.abs(u.x) < 0.05 && u.y > 0 ? tone(leather, 0.8) : leather), {
-        lat: 14,
-        lon: 22,
-        deform: (u) => {
+      // Aviator cap: a stitched leather dome down over the ears, flaps with fleece edges, a
+      // dangling chin strap.
+      const leather = mixSrgb(pal.leather, pal.leatherDark, 0.35);
+      const seam = tone(leather, 0.72);
+      const brim = (phi: number) => {
+        const a = Math.abs(phi);
+        return a < 0.75 ? 0.4 : a < 1.25 ? 0.4 - (a - 0.75) * 0.9 : a < 2.2 ? -0.05 - (a - 1.25) * 0.5 : -0.52 + (a - 2.2) * 0.1;
+      };
+      b.ellipsoid(
+        head.center,
+        head.radii.clone().addScalar(t * 0.5 + 0.013),
+        hb,
+        (u) => {
           const phi = Math.atan2(u.x, u.z);
-          const a = Math.abs(phi);
-          // Brim line: high over the brow, down over the ears, nape at the back.
-          const line = a < 0.7 ? 0.42 : a < 1.9 ? 0.42 - (a - 0.7) * 1.05 : -0.84 + (a - 1.9) * 0.3;
-          const inside = 1 - Math.min(1, Math.max(0, (u.y - line) / 0.05));
-          shapeHead(u);
-          u.multiplyScalar(1 - inside * 0.25);
+          // Seams: one down the middle, one each side.
+          const seamLine = Math.abs(u.x) < 0.035 || Math.abs(Math.abs(phi) - 1.15) < 0.05;
+          return seamLine && u.y > brim(phi) + 0.08 ? seam : leather;
         },
-      });
-      // Fleece trim along the brow.
-      headBand(ctx, 0.43, 0.05, t + 0.02, 0.008, (phi) => (Math.abs(phi) < 0.7 || Math.abs(phi) > 2.4 ? pal.cream : leather));
-      // Chin strap.
+        {
+          lat: 16,
+          lon: 24,
+          deform: (u) => {
+            const phi = Math.atan2(u.x, u.z);
+            const inside = 1 - Math.min(1, Math.max(0, (u.y - brim(phi)) / 0.05));
+            shapeHead(u);
+            u.multiplyScalar(1 - inside * 0.25);
+          },
+        },
+      );
+      // Fleece roll along the brim over the brow.
+      headBand(ctx, 0.41, 0.36, t + 0.018, 0.009, (phi) => (Math.abs(phi) < 0.9 ? tone(leather, 1.15) : leather));
+      // Ear flaps.
       for (const s of [1, -1]) {
-        const a = head.surface(new Vector3(s, -0.35, 0.05), new Vector3(), t + 0.014);
-        const c = head.surface(new Vector3(s * 0.5, -0.92, 0.25), new Vector3(), 0.006);
-        b.bar(a, c, ZV, 0.004, 0.012, hb, tone(leather, 0.85), { exp: 3 });
+        const top = head.surface(new Vector3(s, -0.05, -0.05), new Vector3(), t + 0.018);
+        const n = top.clone().sub(head.center).setY(0).normalize();
+        b.sheet(
+          3,
+          4,
+          (u, v, p, nn) => {
+            const w = 0.075 * (1 - 0.3 * v * v);
+            const y = 0.05 - v * 0.85;
+            const along = (u - 0.5) * 2 * w;
+            const dir = new Vector3(s, y, -0.02 + along * 6);
+            head.surface(dir, p, t + 0.018 + 0.012 * v);
+            nn.copy(p).sub(head.center).normalize();
+          },
+          0.007,
+          () => hb,
+          (u, v, inner) => (inner || v > 0.9 ? pal.cream : leather),
+        );
+        void n;
       }
+      // Chin strap hanging loose from one flap.
+      const a = head.surface(new Vector3(-0.92, -0.62, 0.1), new Vector3(), 0.02);
+      const c = a.clone().add(new Vector3(0.018, -0.06, 0.02));
+      b.bar(a, c, ZV, 0.004, 0.009, hb, tone(leather, 0.85), { exp: 3 });
+      b.ellipsoid(c, new Vector3(0.008, 0.008, 0.005), hb, pal.brass, { lat: 4, lon: 6 });
       break;
     }
     case 'hood': {
-      // Deep hood: a thick shell open at the face, peaked at the back, draped onto the shoulders.
+      // Deep hood: a thick shell framing the face in a soft oval, peaked at the back, settling
+      // into a cowl over the shoulders. Lined in a deeper tone, with a rolled rim at the face.
       const cape = pal.cape;
-      const lining = tone(cape, 0.6);
+      const lining = tone(cape, 0.55);
       const center = head.center;
-      b.sheet(
-        16,
-        10,
-        (u, v, p, n) => {
-          // u wraps around the head from the left cheek over the back to the right cheek.
-          const phi = 0.55 + u * (2 * Math.PI - 1.1);
-          const pol = 0.05 + v * 2.45; // from the crown down past the jaw
-          const dir = new Vector3(Math.sin(phi) * Math.sin(pol), Math.cos(pol), Math.cos(phi) * Math.sin(pol));
-          const inf = 0.026 + 0.03 * Math.max(0, v - 0.55) + 0.012 * (1 - Math.abs(Math.cos(phi)));
-          const sx = head.radii.x + inf + 0.035 * Math.max(0, v - 0.6);
-          const sy = head.radii.y + inf;
-          const sz = head.radii.z + inf;
-          p.set(dir.x * sx, dir.y * sy, dir.z * sz).add(center);
-          // A soft peak at the back of the crown.
-          const peak = Math.max(0, -Math.cos(phi)) * Math.exp(-((pol - 0.7) ** 2) / 0.08);
-          p.addScaledVector(new Vector3(0, 0.4, -1).normalize(), 0.05 * peak);
-          // The lower drape falls onto the shoulders.
-          if (v > 0.7) p.y -= (v - 0.7) * 0.18;
-          n.copy(dir);
-        },
-        0.012,
-        (u, v) => (v < 0.65 ? sk(B.head) : sk2(B.head, B.chest, Math.min(1, (v - 0.65) / 0.35) * 0.8)),
-        (u, v, inner) => (inner ? lining : u < 0.04 || u > 0.96 ? tone(cape, 0.85) : cape),
-      );
+      const hoodAt = (u: number, v: number, p: Vector3, n: Vector3) => {
+        // Opening half-angle around the face by height: covers the brow, opens around the
+        // face, closes again under the chin.
+        const pol = 0.02 + v * 2.42;
+        const open = 0.2 + 0.55 * Math.sin(Math.min(Math.PI, Math.max(0, (pol - 0.25) / 1.7) * Math.PI)) - (0.1 * Math.max(0, v - 0.85)) / 0.15;
+        const phi = open + u * (2 * Math.PI - 2 * open);
+        const dir = new Vector3(Math.sin(phi) * Math.sin(pol), Math.cos(pol), Math.cos(phi) * Math.sin(pol));
+        const rim = Math.max(0, Math.cos(phi));
+        const inf = 0.032 + 0.016 * (1 - rim) + (0.05 * Math.max(0, v - 0.62)) / 0.38;
+        p.set(dir.x * (head.radii.x + inf), dir.y * (head.radii.y + inf), dir.z * (head.radii.z + inf) + 0.018 * rim * (v < 0.6 ? 1 : 0)).add(center);
+        // Peak at the back of the crown.
+        const back = Math.max(0, -Math.cos(phi));
+        p.addScaledVector(new Vector3(0, 0.25, -1).normalize(), 0.085 * back * back * Math.exp(-((pol - 0.8) ** 2) / 0.1));
+        // The cowl: below the jaw the cloth falls outward and down onto the shoulders.
+        if (v > 0.58) {
+          const k = (v - 0.58) / 0.42;
+          p.y -= k * k * 0.07;
+          p.x += Math.sin(phi) * k * 0.11;
+          p.z += Math.cos(phi) * k * 0.04 - 0.03 * k;
+        }
+        n.copy(dir);
+      };
+      const hoodSkin = (u: number, v: number) => (v < 0.6 ? sk(B.head) : sk2(B.head, B.chest, Math.min(1, (v - 0.6) / 0.4) * 0.85));
+      b.sheet(18, 12, hoodAt, 0.012, hoodSkin, (u, v, inner) => (inner ? lining : cape));
+      // Rolled rim around the face opening: up the left edge, over the brow, down the right.
+      const rim: RingSpec[] = [];
+      const p = new Vector3();
+      const n = new Vector3();
+      const pts: [number, number][] = [];
+      for (let i = 0; i <= 8; i++) pts.push([0, 0.62 - (0.62 * i) / 8]);
+      for (let i = 1; i <= 8; i++) pts.push([1, (0.62 * i) / 8]);
+      for (const [u, v] of pts) {
+        hoodAt(u, v, p, n);
+        rim.push({ c: p.clone(), ax: n.clone(), ay: new Vector3(0, 0, 1), rx: 0.011, ry: 0.011, skin: hoodSkin(u, v), color: tone(cape, 0.85) });
+      }
+      // Ring axes perpendicular to the path.
+      for (let i = 0; i < rim.length; i++) {
+        const a = rim[Math.max(0, i - 1)].c;
+        const c = rim[Math.min(rim.length - 1, i + 1)].c;
+        const tan = c.clone().sub(a).normalize();
+        const nn = rim[i].ax.clone().addScaledVector(tan, -rim[i].ax.dot(tan)).normalize();
+        rim[i].ax = nn;
+        rim[i].ay = new Vector3().crossVectors(tan, nn).normalize();
+      }
+      b.loft(rim, 8, { capStart: true, capEnd: true });
       break;
     }
     case 'helm': {
       const steel = pal.steel;
-      b.ellipsoid(head.center, head.radii.clone().addScalar(t * 0.4 + 0.016), hb, (u) => (Math.abs(u.x) < 0.05 && u.y > -0.2 ? tone(steel, 1.15) : steel), {
+      const bright = tone(steel, 1.12);
+      b.ellipsoid(head.center, head.radii.clone().addScalar(t * 0.4 + 0.016), hb, (u) => (Math.abs(u.x) < 0.06 && u.y > -0.2 ? bright : steel), {
         lat: 14,
         lon: 22,
         deform: (u) => {
@@ -174,19 +232,23 @@ export function buildHeadgear(ctx: BodyCtx, look: RiderLook): void {
           const inside = 1 - Math.min(1, Math.max(0, (u.y - line) / 0.04));
           shapeHead(u);
           u.multiplyScalar(1 - inside * 0.25);
+          // A low crest ridge front to back.
+          if (inside < 0.5) u.multiplyScalar(1 + 0.05 * Math.exp(-(u.x * u.x) / 0.004) * Math.max(0, u.y));
         },
       });
-      headBand(ctx, 0.36, -0.2, t + 0.022, 0.011, pal.secondary);
-      // Swept wings: four blades fanned back from each temple.
+      headBand(ctx, 0.36, -0.2, t + 0.022, 0.012, pal.secondary);
+      // Swept wings: five feather blades fanned back from each temple.
       for (const s of [1, -1]) {
         const root = head.surface(new Vector3(s * 0.95, 0.3, -0.05), new Vector3(), t + 0.02);
-        for (let i = 0; i < 4; i++) {
-          const a = 0.5 + i * 0.28;
-          const dir = new Vector3(s * 0.32, Math.cos(a) * 0.95, -Math.sin(a)).normalize();
-          const len = 0.11 - i * 0.017;
-          b.bar(root.clone().addScaledVector(dir, 0.005), root.clone().addScaledVector(dir, len), new Vector3(s, 0, 0), 0.011 - i * 0.0012, 0.0035, hb, i === 0 ? tone(steel, 1.12) : steel, { exp: 2.2 });
+        for (let i = 0; i < 5; i++) {
+          const a = 0.38 + i * 0.25;
+          const dir = new Vector3(s * 0.38, Math.cos(a) * 0.95, -Math.sin(a) * 1.05).normalize();
+          const len = 0.17 - i * 0.022;
+          const base = root.clone().addScaledVector(dir, 0.006);
+          const tip = root.clone().addScaledVector(dir, len);
+          b.bar(base, tip, new Vector3(s, 0.2, 0), 0.016 - i * 0.0018, 0.0035, hb, i % 2 === 0 ? bright : steel, { exp: 2.2 });
         }
-        b.ellipsoid(root, new Vector3(0.016, 0.016, 0.012), hb, pal.secondary, { lat: 5, lon: 8 });
+        b.ellipsoid(root, new Vector3(0.02, 0.02, 0.014), hb, pal.secondary, { lat: 5, lon: 8 });
       }
       // Nasal ridge.
       const top = head.surface(new Vector3(0, 0.5, 0.86), new Vector3(), t + 0.022);
@@ -196,12 +258,19 @@ export function buildHeadgear(ctx: BodyCtx, look: RiderLook): void {
     }
     case 'circlet': {
       const gold = mixSrgb(brass, new Color('#fff0b0'), 0.25);
-      headBand(ctx, 0.42, 0.18, t + 0.004, 0.0045, gold);
-      const c = head.surface(new Vector3(0, 0.46, 0.89), new Vector3(), t + 0.01);
+      // Sits over the fringe at the front.
+      headBand(ctx, 0.42, 0.18, t + 0.024, 0.007, gold, 0, t + 0.004);
+      const c = head.surface(new Vector3(0, 0.44, 0.9), new Vector3(), t + 0.03);
       const n = c.clone().sub(head.center).normalize();
       const q = new Quaternion().setFromUnitVectors(ZV, n);
-      b.ellipsoid(c, new Vector3(0.014, 0.018, 0.008), hb, gold, { rot: q, lat: 5, lon: 10 });
-      b.ellipsoid(c.clone().addScaledVector(n, 0.005), new Vector3(0.0095, 0.013, 0.0065), hb, pal.glow, { rot: q, lat: 6, lon: 10, glow: 1 });
+      b.ellipsoid(c, new Vector3(0.02, 0.025, 0.009), hb, gold, { rot: q, lat: 5, lon: 10 });
+      b.ellipsoid(c.clone().addScaledVector(n, 0.006), new Vector3(0.013, 0.017, 0.008), hb, pal.glow, { rot: q, lat: 6, lon: 10, glow: 1 });
+      // Little wings of gold either side of the stone.
+      for (const sgn of [1, -1]) {
+        const a = head.surface(new Vector3(sgn * 0.12, 0.45, 0.88), new Vector3(), t + 0.029);
+        const e = head.surface(new Vector3(sgn * 0.34, 0.5, 0.82), new Vector3(), t + 0.028);
+        b.bar(a, e, n, 0.005, 0.0025, hb, gold, { exp: 2 });
+      }
       break;
     }
     case 'none':
