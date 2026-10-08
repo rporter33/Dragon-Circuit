@@ -16,7 +16,9 @@ export class Trauma {
   }
 
   update(dt: number): void {
-    this.value = Math.max(0, this.value - this.decay * dt);
+    // A bad frame time (the first rAF after a long startup can be negative) must never grow it.
+    if (!(dt > 0)) return;
+    this.value = Math.max(0, Math.min(1, this.value - this.decay * dt));
   }
 
   /** What the camera actually shows: quadratic, so it falls off smoothly. */
@@ -72,7 +74,7 @@ export class CameraShake {
   }
 
   update(dt: number, out: ShakeOffsets): ShakeOffsets {
-    this.t += dt;
+    if (dt > 0) this.t += dt;
     this.trauma.update(dt);
     const n = this.n;
     const t = this.t;
