@@ -9,6 +9,8 @@
 //   ?cam=x,y,z&look=x,y,z   pin the camera
 //   ?freeze=1               pause the simulation (presentation still updates)
 //   ?manual=1               no rAF loop: drive frames with window.__dw.advance(seconds)
+//   ?debug=1                install window.__dw in a production build (dev builds always do)
+//   ?warmup=1               run the boot shader warmup under ?manual=1 (skipped by default)
 
 import type { QualityLevel, WeatherKind } from '../core/types';
 

@@ -82,6 +82,8 @@ export class Renderer {
   private dynamicScale = 1;
   private size = new Vector2();
   private pixelRatio = 1;
+  /** devicePixelRatio the buffers were last sized for. */
+  private dpr = 1;
   private needsRecompile = false;
   private recompiling: { done: boolean; started: number } | null = null;
 
@@ -157,6 +159,7 @@ export class Renderer {
     const w = Math.max(1, window.innerWidth);
     const h = Math.max(1, window.innerHeight);
     const dpr = window.devicePixelRatio || 1;
+    this.dpr = dpr;
     const pr = Math.min(dpr, this.quality.pixelRatioCap) * this.resolutionScale * this.dynamicScale;
     this.pixelRatio = pr;
     this.gl.setPixelRatio(pr);
@@ -211,6 +214,8 @@ export class Renderer {
 
   render(scene: Scene, camera: Camera, dt: number): void {
     this.advanceTime(dt);
+    // Backstop for the matchMedia watch (some environments never fire it).
+    if ((window.devicePixelRatio || 1) !== this.dpr) this.resize();
     if (this.needsRecompile) this.startRecompile(scene, camera);
     const r = this.recompiling;
     if (r) {

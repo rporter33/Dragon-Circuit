@@ -3,6 +3,7 @@
 
 import { Game } from './game/Game';
 import type { DebugHandle } from './debug/hooks';
+import { loadShowcases } from './debug/showcase';
 
 const app = document.getElementById('app')!;
 const ui = document.getElementById('ui')!;
@@ -51,7 +52,7 @@ function showFatal(err: unknown): void {
 
 async function start(): Promise<void> {
   try {
-    if (params.has('view')) await (await import('./debug/showcase')).loadShowcases();
+    if (params.has('view')) await loadShowcases();
     const constructStart = performance.now();
     const game = new Game(app, ui);
     const constructEnd = performance.now();
@@ -73,6 +74,12 @@ async function start(): Promise<void> {
     if (handle) handle.boot = { scriptStart, constructStart, constructEnd, warmupEnd, warmup };
 
     game.start();
+    if (game.debug.manual) {
+      // Automation draws on demand and captures right away: no fade to wait out.
+      boot?.remove();
+      if (handle) handle.boot.firstFrame = performance.now();
+      return;
+    }
     // Let the first frames land before revealing the world.
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
