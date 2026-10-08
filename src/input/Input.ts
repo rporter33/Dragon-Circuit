@@ -208,6 +208,15 @@ export class Input implements InputSystem, RumbleSink {
     this.mixer.add(p, delayMs);
   }
 
+  /**
+   * Mark this frame's presses as handled so nothing later in the same frame acts on them again
+   * (e.g. the press that opened the pause menu must not also close it).
+   */
+  consume(): void {
+    const p = this.frame.pressed as unknown as Record<string, boolean>;
+    for (const k in p) p[k] = false;
+  }
+
   /** True while play wants the mouse captured (click the view to capture it). */
   get pointerLockWanted(): boolean {
     return this.wantLock;

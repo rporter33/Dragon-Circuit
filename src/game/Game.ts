@@ -286,7 +286,10 @@ export class Game implements GameActions {
 
   private handlePlayInput(): void {
     const p = this.input.frame.pressed;
-    if (p.pause) this.pause();
+    if (p.pause) {
+      this.pause();
+      this.input.consume(); // the press that opened the menu must not also close it this frame
+    }
     if (p.restart && this.races.activeId) this.restartRace();
     if (p.interact && this.player.mode === 'onFoot' && this.nearStable()) this.openStable();
   }
