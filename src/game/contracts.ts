@@ -7,6 +7,7 @@ import type { GameEventBus } from '../core/events';
 import type {
   BreedId,
   BreedStats,
+  CylinderCollider,
   FlightEnvironment,
   FlightState,
   InputDevice,
@@ -93,6 +94,23 @@ export interface WorldSystem {
   setQuality(q: QualityProfile): void;
 }
 
+/**
+ * Vegetation, water and structures on top of the islands (world/dressing). Visual, except for
+ * the optional collision hints below.
+ */
+export interface DressingSystem {
+  readonly group: Group;
+  /** Solid cylinders (building walls, towers, big trunks) to keep walkers out of. */
+  readonly colliders: readonly CylinderCollider[];
+  /**
+   * Walkable built surfaces that the terrain doesn't cover (the Roost's launch deck juts out over
+   * the void): the deck top under (x, z) at or below fromY + 2, or null.
+   */
+  deckAt(x: number, z: number, fromY: number): { y: number; surface: 'wood' | 'stone' } | null;
+  update(dt: number, camera: PerspectiveCamera, focus: Vector3): void;
+  setQuality(q: QualityProfile): void;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Player
 // ---------------------------------------------------------------------------------------------
@@ -145,6 +163,11 @@ export interface CameraSystem {
   snap(player: PlayerSystem): void;
   /** Debug: hold the camera at a fixed pose (null releases). */
   setOverride(pose: { position: Vector3; target: Vector3 } | null): void;
+  /**
+   * Stable screen: frame the wyvern, the rider, or both (default). The UI calls this as the
+   * player moves between wyvern and rider customization; the camera glides to the new subject.
+   */
+  setStableFocus?(subject: 'wyvern' | 'rider' | 'both'): void;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -1,32 +1,236 @@
-// Rigid-body flight. (Baseline implementation; the flight module owner refines it but keeps the
-// public surface: constructor(breed), state, setBreed, reset, step.)
+// Rigid-body wyvern flight: "weighty sim-lite".
+//
+// The model is a point mass with an orientation, flown by aerodynamic forces computed from the
+// breed's physical numbers (mass, wing area, lift slope, drag polar). Nothing here knows about
+// the player, the camera or rendering, so AI rivals and ghosts can run the same physics.
+//
+// Forces (world frame, all from the AIR-relative velocity so wind, gusts and thermals matter):
+//   lift   = ½ρV²·S·CL(α)    perpendicular to the airflow and the wingspan
+//   drag   = ½ρV²·(body + S·cd0 + S·K·CL² + flare + stall + folded wings)   — the induced term
+//            K·CL² is why a hard turn bleeds speed
+//   flap   = a committed wingbeat: a power curve on the downstroke adds thrust + lift
+//   gravity
+// Energy is never invented: a dive trades height for speed and a zoom trades it back, minus drag.
+//
+// Rotation is a rate-command system with inertia. Each axis has a TARGET body rate:
+//   pitch: follow the flight path (weathervane) + steer the angle of attack toward the stick's
+//          command (hands-off it trims to a gentle, speed-stable cruise α)
+//   yaw:   follow the flight path, cancel sideslip (automatic turn coordination) + rudder
+//   roll:  stick × the breed's max roll rate (+ a subtle auto-level when the stick is centered)
+// and the body chases those targets with an angular acceleration capped by the breed's control
+// authority × dynamic pressure, so controls go mushy near stall speed and crisp at speed, and
+// heavy breeds visibly take longer to roll in and out.
+//
+// Integration is semi-implicit Euler at a fixed dt (the game runs 120 Hz). Everything is
+// deterministic for a given input stream: no randomness, no wall-clock time.
 
 import { Quaternion, Vector3 } from 'three';
-import type { BreedStats, FlightEnvironment, FlightInput, FlightState } from '../core/types';
+import type { BreedStats, FlightEnvironment, FlightInput, FlightState, GroundHit } from '../core/types';
 import type { GameEventBus } from '../core/events';
-import { clamp, clamp01, damp } from '../core/math';
+import { clamp, clamp01, damp, DEG, lerp, smoothstep } from '../core/math';
 
 export const GRAVITY = 9.81;
 export const AIR_DENSITY = 1.1;
+
+/**
+ * Shared tuning constants. Per-breed character comes from BreedStats; these shape how the
+ * physics is turned into a game that feels heavy but never cruel.
+ */
+export const FLIGHT_TUNING = {
+  /** Wing chord incidence relative to the body axis (the body flies slightly nose-down of the wing). */
+  incidence: 2.5 * DEG,
+  /** Wing spread when fully tucked. */
+  tuckedSpread: 0.22,
+  /** Fraction of lifting area left at zero spread. */
+  areaAtZeroSpread: 0.12,
+  /** Drag coefficient (per m² of wing) of folded wing membrane bunched against the body. */
+  cdFolded: 0.0385,
+  /** Body drag area = bodyDrag × mass^(2/3) (m²). Cross-section grows with mass^(2/3). */
+  bodyDrag: 0.00333,
+  /** Extra drag coefficient (per m² of wing) of wings spread as an air brake. */
+  cdFlare: 0.45,
+  /** Extra drag coefficient of separated flow when fully stalled. */
+  cdStall: 0.3,
+  /** Side-force area (fraction of wing area) that turns sideslip into a sideways push. */
+  sideArea: 0.12,
+  /** Hands-off trim lift coefficient as a fraction of clMax (sets the cruise speed ~1.67 × stall). */
+  cruiseClFraction: 0.36,
+  /**
+   * Above cruise speed the hands-off trim gets gentler: trim CL ∝ (q_cruise / q)^k, so letting go
+   * after a dive is a firm pull-out rather than a violent one (k = 1 would hold 1 g at any speed;
+   * k = 0 is a fixed α). Below cruise the trim α is fixed, so lift falls with q and a slow
+   * wyvern lowers its nose: classic speed stability, which keeps powered climbs from hanging.
+   */
+  trimExponent: 0.55,
+  /**
+   * While beating its wings the wyvern trims for its best-climb speed instead of cruise (trim CL
+   * × this, ≈ 0.86 × cruise speed), so holding flap with the stick centered climbs away.
+   */
+  climbTrim: 1.35,
+  /** How hard the pitch loop chases the commanded angle of attack (1/s). */
+  alphaGain: 4.2,
+  /**
+   * Phugoid damper: extra load factor per g of along-path acceleration (smoothed). Speeding up
+   * (diving) adds a little lift, slowing down (climbing) eases it, so a released stick settles
+   * into a steady glide instead of porpoising. Zero in any steady state, so it never biases trim.
+   */
+  phugoidDamp: 1.3,
+  /**
+   * Stick → α: most of the travel (up to `stallStick`) reaches just short of the critical angle;
+   * the last part reaches `alphaOverStall` past it — a light buffet that says "this is the
+   * limit". Full stick alone never breaks the stall (keyboard pitch is all-or-nothing); running
+   * out of airspeed does (see `slowStall`).
+   */
+  stallStick: 0.85,
+  alphaOverStall: 0.6 * DEG,
+  /**
+   * Below this × stall speed the flow starts to let go (pre-stall buffet), fully by another
+   * `slowStallBand` × stall speed lower. Beating the wings keeps it attached down to
+   * `slowStallFlapping` × stall speed.
+   */
+  slowStall: 1.1,
+  slowStallFlapping: 0.55,
+  slowStallBand: 0.15,
+  /** Full forward stick. */
+  alphaMin: -10 * DEG,
+  /** α the flare pulls toward. */
+  flareAlpha: 32 * DEG,
+  /** Load-factor limits the wyvern will pull (it simply won't strain its wings harder). */
+  nMaxLight: 5.5,
+  nMaxHeavy: 4.2,
+  nMaxFlare: 1.35,
+  nMin: -1.6,
+  /** Reference airspeed for control authority (m/s). */
+  authoritySpeed: 23,
+  authorityMin: 0.14,
+  authorityMax: 1.5,
+  /** Rate tracking gain = angularDamping × this (1/s). */
+  trackGainScale: 2.4,
+  /**
+   * Slow flight while beating the wings (a takeoff, a climb-out): the airflow is too weak to
+   * weathervane the body, so the wyvern holds a nose-up climbing attitude instead, plus stick.
+   */
+  slowClimbAttitude: 9 * DEG,
+  slowStickAttitude: 25 * DEG,
+  attitudeGain: 3,
+  /** Beating below this × stall speed, the wyvern holds its climb-out attitude. */
+  climbOutSpeed: 1.3,
+  /** Max pitch rate = pitchAuthority × this (rad/s). */
+  pitchRateScale: 0.46,
+  /** Rudder yaw rate at full deflection = yawAuthority × this (rad/s). */
+  rudderRateScale: 0.42,
+  /** How hard the yaw loop cancels sideslip (1/s). */
+  betaGain: 3.2,
+  /**
+   * Auto-level: roll rate per radian of bank once the stick has rested centered for a moment
+   * (subtle: a held bank decays over several seconds, it never fights the player).
+   */
+  autoLevelGain: 0.2,
+  autoLevelMaxRate: 0.12,
+  autoLevelDelay: 0.6,
+  /** Stall dynamics. */
+  stallBand: 6 * DEG,
+  /** Hysteresis: once the flow has let go it doesn't reattach until α is this far below critical. */
+  stallHysteresis: 3.5 * DEG,
+  stallRise: 3.5,
+  stallFall: 2.2,
+  noseDropAccel: 2.4,
+  noseDropRate: 0.9,
+  wingDropAccel: 2.6,
+  buffetAccel: 2.2,
+  /** Flapping. */
+  flapTiltUp: 10 * DEG,
+  /** Thrust fades with airspeed: zero at vFlapMax = this × cruise speed. */
+  flapMaxSpeedFactor: 2.3,
+  /**
+   * Below cruise speed the stroke loses bite (the wing can't load up in slow air), down to this
+   * fraction at a standstill — except during the launch grace. Stops powered zooms from hanging.
+   */
+  flapSlowThrust: 0.55,
+  /**
+   * Flap lift scales with airspeed (the stroke adds to the airflow already over the wing), from
+   * this fraction at a standstill up to full at cruise...
+   */
+  flapLiftAtRest: 0,
+  /** ...except during the launch grace, when a standing takeoff gets this much lift at rest. */
+  flapLiftLaunch: 2.0,
+  /** Launch strokes (during the grace) are the strongest a wyvern makes: thrust × this. */
+  launchThrust: 1.6,
+  /** Upstroke recovery: a small fraction of peak lift lost. */
+  upstrokeLoss: 0.1,
+  /** A beat started from a glide begins this far through the upstroke (a short wind-up). */
+  windupPhase: 0.82,
+  /** Seconds after the last beat before stamina starts to come back. */
+  regenDelay: 0.55,
+  /** Winded until stamina recovers to this. */
+  windedRecover: 0.35,
+  /** Ground effect: induced drag reduction near the ground. */
+  groundEffectLift: 0.12,
+  /** Collision. */
+  bodyRadiusFactor: 0.55,
+  tipRadius: 0.55,
+  tipSpanFactor: 0.92,
+  restitution: 0.18,
+  scrapeFriction: 0.45,
+  scrapeDecel: 5,
+  stunImpact: 9,
+  stunTime: 0.6,
+  hitEventMin: 2.5,
+} as const;
+
+const T = FLIGHT_TUNING;
+
+/** Per-breed quantities derived once from BreedStats. */
+export interface FlightDerived {
+  weight: number;
+  /** 1 g stall speed, wings spread (m/s). */
+  vStall: number;
+  /** Hands-off glide speed in still air (m/s). */
+  vCruise: number;
+  clCruise: number;
+  qCruise: number;
+  bodyCdA: number;
+  bodyRadius: number;
+  halfSpan: number;
+  nMax: number;
+  maxPitchRate: number;
+  maxYawRate: number;
+  qRef: number;
+  vFlapMax: number;
+}
+
+export function deriveFlight(b: BreedStats): FlightDerived {
+  const weight = b.mass * GRAVITY;
+  const vStall = Math.sqrt((2 * weight) / (AIR_DENSITY * b.wingArea * b.clMax));
+  const clCruise = b.clMax * T.cruiseClFraction;
+  const vCruise = Math.sqrt((2 * weight) / (AIR_DENSITY * b.wingArea * clCruise));
+  // Heavier breeds won't pull as many g.
+  const heavy = clamp01((b.mass - 450) / 500);
+  return {
+    weight,
+    vStall,
+    vCruise,
+    clCruise,
+    qCruise: 0.5 * AIR_DENSITY * vCruise * vCruise,
+    bodyCdA: T.bodyDrag * Math.pow(b.mass, 2 / 3),
+    bodyRadius: b.standHeight * T.bodyRadiusFactor,
+    halfSpan: b.wingspan / 2,
+    nMax: lerp(T.nMaxLight, T.nMaxHeavy, heavy),
+    maxPitchRate: b.pitchAuthority * T.pitchRateScale,
+    maxYawRate: b.yawAuthority * T.rudderRateScale,
+    qRef: 0.5 * AIR_DENSITY * T.authoritySpeed * T.authoritySpeed,
+    vFlapMax: vCruise * T.flapMaxSpeedFactor,
+  };
+}
 
 export interface FlightStepResult {
   contact: boolean;
   contactNormal: Vector3;
   /** Speed lost into the surface this step (m/s). */
   impact: number;
+  /** A wingbeat began this step. */
+  beatStarted: boolean;
 }
-
-const fwd = new Vector3();
-const up = new Vector3();
-const left = new Vector3();
-const airVel = new Vector3();
-const wind = new Vector3();
-const force = new Vector3();
-const tmp = new Vector3();
-const push = new Vector3();
-const normal = new Vector3();
-const dq = new Quaternion();
-const axis = new Vector3();
 
 export function createFlightState(): FlightState {
   return {
@@ -48,141 +252,609 @@ export function createFlightState(): FlightState {
   };
 }
 
+// Scratch vectors (module-level: the model never re-enters itself).
+const fwd = new Vector3();
+const up = new Vector3();
+const left = new Vector3();
+const wind = new Vector3();
+const airVel = new Vector3();
+const vhat = new Vector3();
+const liftDir = new Vector3();
+const force = new Vector3();
+const aeroAcc = new Vector3();
+const pathRate = new Vector3();
+const target = new Vector3();
+const tmp = new Vector3();
+const tmp2 = new Vector3();
+const push = new Vector3();
+const nrm = new Vector3();
+const prevPos = new Vector3();
+const probe = new Vector3();
+const invQ = new Quaternion();
+const dq = new Quaternion();
+
+/** Smooth saturation: linear near zero, approaching ±limit without a kink. */
+function softClamp(x: number, lo: number, hi: number): number {
+  const knee = 0.85;
+  if (x > hi * knee) {
+    const room = hi * (1 - knee);
+    return hi * knee + room * Math.tanh((x - hi * knee) / room);
+  }
+  if (x < lo * knee) {
+    const room = lo * (1 - knee);
+    return lo * knee + room * Math.tanh((x - lo * knee) / room);
+  }
+  return x;
+}
+
 export class FlightModel {
   breed: BreedStats;
+  derived: FlightDerived;
   state: FlightState = createFlightState();
-  private result: FlightStepResult = { contact: false, contactNormal: new Vector3(), impact: 0 };
-  private flapping = false;
+  /** Ground under the body found during the last step (null over open air). */
+  ground: GroundHit | null = null;
+  /** Stamina regeneration multiplier (the player raises it while landed). */
+  regenMultiplier = 1;
+  /** Count of wingbeats started (lets a caller detect beats without events). */
+  beats = 0;
+
+  private result: FlightStepResult = { contact: false, contactNormal: new Vector3(), impact: 0, beatStarted: false };
+  private time = 0;
+  private beatActive = false;
+  private beatStrength = 0;
+  private sinceBeat = 99;
+  private prevFlapInput = 0;
+  private refuseCooldown = 0;
+  /** Unscaled stall depth (lift collapse); state.stall is the felt/visible stall. */
+  private stallRaw = 0;
+  private stalled = false;
+  private tucked = false;
+  private wingDropSign = 1;
+  private stallCount = 0;
+  private stun = 0;
+  private grace = 0;
+  /** A takeoff grace ends early once the wyvern reaches flying speed. */
+  private graceUntilFlying = false;
+  private graceAge = 0;
+  private vDotSmooth = 0;
+  /** Seconds the roll stick has rested near center (for the auto-level). */
+  private rollRest = 0;
+  /** The current beat began with a wind-up (wings rising) and still owes its downstroke. */
+  private windup = false;
+  private hitCooldown = 0;
+  private smoothG = 1;
+  private dt = 1 / 120;
+  /** The event bus the last step reported to (so reset() can close open stall/tuck events). */
+  private bus: GameEventBus | undefined;
+  /** Cycle-averaged lift of the current beat (N), which the hands-off trim doesn't ask the wing for. */
+  private flapLiftMean = 0;
 
   constructor(breed: BreedStats) {
     this.breed = breed;
+    this.derived = deriveFlight(breed);
   }
 
   setBreed(breed: BreedStats): void {
     this.breed = breed;
+    this.derived = deriveFlight(breed);
   }
 
+  /** Place the body. Keeps stamina; clears rates, stall and any beat in progress. */
   reset(position: Vector3, orientation: Quaternion, velocity?: Vector3): void {
     const s = this.state;
     s.position.copy(position);
-    s.orientation.copy(orientation);
-    s.velocity.copy(velocity ?? new Vector3(0, 0, 20).applyQuaternion(orientation));
+    s.orientation.copy(orientation).normalize();
+    if (velocity) s.velocity.copy(velocity);
+    else s.velocity.set(0, 0, this.derived.vCruise).applyQuaternion(s.orientation);
     s.angularVelocity.set(0, 0, 0);
     s.flapPhase = 0;
     s.flapStrength = 0;
+    s.wingSpread = 1;
+    s.flare = 0;
     s.stall = 0;
+    s.airspeed = s.velocity.length();
+    s.angleOfAttack = 0;
+    s.gLoad = 1;
     s.timeSinceContact = 99;
+    this.beatActive = false;
+    this.beatStrength = 0;
+    this.windup = false;
+    this.vDotSmooth = 0;
+    this.stallRaw = 0;
+    // Listeners saw a stall/tuck start: tell them it's over.
+    if (this.stalled) this.bus?.emit('stallEnd', {});
+    if (this.tucked) this.bus?.emit('tuckEnd', {});
+    this.stalled = false;
+    this.tucked = false;
+    this.stun = 0;
+    this.smoothG = 1;
+    this.ground = null;
+  }
+
+  /**
+   * A few seconds of forgiveness after leaving the ground (takeoff, cliff jump, catch, respawn):
+   * the stall can't build and the controls keep a floor of authority while airspeed builds.
+   */
+  setGrace(seconds: number, untilFlying = false): void {
+    this.grace = Math.max(this.grace, seconds);
+    this.graceUntilFlying = untilFlying;
+    this.graceAge = 0;
+  }
+
+  /** Start a wingbeat immediately at the top of the stroke (takeoff leap). Costs stamina. */
+  forceBeat(strength: number): boolean {
+    const s = this.state;
+    if (s.winded || s.stamina <= 0) return false;
+    this.beatActive = true;
+    this.beatStrength = clamp01(strength);
+    this.windup = false;
+    s.flapPhase = 0;
+    this.sinceBeat = 0;
+    this.beats++;
+    return true;
+  }
+
+  /** Stamina recovery while not simulating flight (standing on the ground). */
+  regenStamina(dt: number, multiplier: number): void {
+    const s = this.state;
+    this.sinceBeat += dt;
+    this.beatActive = false;
+    s.flapStrength = damp(s.flapStrength, 0, 4, dt);
+    if (this.sinceBeat < T.regenDelay) return;
+    s.stamina = clamp01(s.stamina + this.breed.staminaRegen * multiplier * dt);
+    if (s.winded && s.stamina >= T.windedRecover) s.winded = false;
+  }
+
+  /** True while a committed wingbeat is in progress. */
+  get flapping(): boolean {
+    return this.beatActive;
+  }
+
+  /** Seconds of control stun left after a big impact. */
+  get stunned(): number {
+    return this.stun;
+  }
+
+  /** Remaining launch grace (s). */
+  get graceLeft(): number {
+    return this.grace;
   }
 
   step(dt: number, input: FlightInput, env: FlightEnvironment, events?: GameEventBus): FlightStepResult {
     const b = this.breed;
+    const d = this.derived;
     const s = this.state;
+    const r = this.result;
+    r.contact = false;
+    r.impact = 0;
+    r.beatStarted = false;
+    this.bus = events;
+    this.dt = dt;
+    this.time += dt;
+    this.grace = Math.max(0, this.grace - dt);
+    this.hitCooldown = Math.max(0, this.hitCooldown - dt);
+    this.refuseCooldown = Math.max(0, this.refuseCooldown - dt);
+    s.timeSinceContact += dt;
+
+    // --- Controls (a big impact damps them for a moment) ------------------------------------
+    this.stun = Math.max(0, this.stun - dt);
+    const ctl = 1 - 0.85 * clamp01(this.stun / T.stunTime);
+    const pitchIn = clamp(input.pitch, -1, 1) * ctl;
+    const rollIn = clamp(input.roll, -1, 1) * ctl;
+    const yawIn = clamp(input.yaw, -1, 1) * ctl;
+    const tuckIn = clamp01(input.tuck);
+    const flareIn = clamp01(input.flare) * (1 - tuckIn);
+    const flapIn = clamp01(input.flap);
+
+    // --- Body axes and the air-relative velocity --------------------------------------------
     fwd.set(0, 0, 1).applyQuaternion(s.orientation);
     up.set(0, 1, 0).applyQuaternion(s.orientation);
     left.set(1, 0, 0).applyQuaternion(s.orientation);
-
     env.windAt(s.position, wind);
     airVel.copy(s.velocity).sub(wind);
     const V = airVel.length();
     s.airspeed = V;
-
-    // Wing configuration.
-    s.wingSpread = damp(s.wingSpread, 1 - 0.72 * input.tuck, 6, dt);
-    s.flare = damp(s.flare, input.flare, 5, dt);
-    const area = b.wingArea * (0.25 + 0.75 * s.wingSpread);
-
-    // Angle of attack in the body's symmetry plane.
     const vf = airVel.dot(fwd);
     const vu = airVel.dot(up);
-    const alpha = Math.atan2(-vu, Math.max(1e-3, vf)) + s.flare * 0.25;
+    const vl = airVel.dot(left);
+    const alpha = Math.atan2(-vu, vf);
+    const beta = Math.atan2(vl, Math.hypot(vf, vu));
     s.angleOfAttack = alpha;
-    const stallT = clamp01((Math.abs(alpha) - b.stallAngle) / (8 * Math.PI / 180));
-    s.stall = damp(s.stall, stallT, 8, dt);
-    let cl = clamp(b.liftSlope * alpha, -b.clMax, b.clMax) * (1 - 0.65 * s.stall);
     const q = 0.5 * AIR_DENSITY * V * V;
+    this.graceAge += dt;
+    if (this.graceUntilFlying && this.grace > 0.35 && this.graceAge > 0.8 && V > 1.25 * d.vStall) this.grace = 0.35;
 
-    force.set(0, -GRAVITY * b.mass, 0);
-    if (V > 0.5) {
-      // Lift: perpendicular to the airflow, in the plane of airflow and the wing's up axis.
-      tmp.copy(airVel).multiplyScalar(1 / V);
-      const liftDir = up.clone().addScaledVector(tmp, -up.dot(tmp)).normalize();
-      force.addScaledVector(liftDir, q * area * cl);
-      const cd = b.cd0 * (0.6 + 0.4 * s.wingSpread) + b.inducedK * cl * cl + s.flare * 0.55 + s.stall * 0.3;
-      const bodyDragArea = 1.1;
-      force.addScaledVector(tmp, -(q * area * cd + q * bodyDragArea * 0.5));
+    // --- Wing configuration -------------------------------------------------------------------
+    const spreadTarget = 1 - (1 - T.tuckedSpread) * tuckIn;
+    // Folding is quicker than opening against the airflow.
+    s.wingSpread = damp(s.wingSpread, spreadTarget, spreadTarget < s.wingSpread ? 9 : 5, dt);
+    s.flare = damp(s.flare, flareIn, 5, dt);
+    if (!this.tucked && tuckIn > 0.5) {
+      this.tucked = true;
+      events?.emit('tuckStart', {});
+    } else if (this.tucked && tuckIn < 0.3) {
+      this.tucked = false;
+      events?.emit('tuckEnd', {});
+    }
+    const sf = T.areaAtZeroSpread + (1 - T.areaAtZeroSpread) * s.wingSpread;
+    const area = b.wingArea * sf;
+
+    // --- Ground effect --------------------------------------------------------------------------
+    this.ground = env.terrain.groundAt(s.position.x, s.position.z, s.position.y);
+    let geInduced = 1;
+    let geLift = 0;
+    if (this.ground) {
+      // Classic (16h/b)² / (1 + (16h/b)²) induced-drag factor, using the wing's height.
+      const h = Math.max(0.1, s.position.y - this.ground.y);
+      const x = (16 * h) / b.wingspan;
+      geInduced = (x * x) / (1 + x * x);
+      geLift = T.groundEffectLift * (1 - geInduced);
     }
 
-    // Flapping.
-    const wantsFlap = input.flap > 0.1 && !s.winded;
-    if (input.flap > 0.1 && s.winded) events?.emit('flapRefused', {});
-    if (wantsFlap || (this.flapping && s.flapPhase < 0.999)) {
+    // --- Lift coefficient and stall -----------------------------------------------------------
+    const aw = alpha + T.incidence;
+    const clAttached = softClamp(b.liftSlope * aw, -b.clMax * 0.65, b.clMax);
+    // Separated flow behaves like a flat plate.
+    const clSeparated = 0.9 * Math.sin(2 * aw);
+    const reattach = T.stallHysteresis * smoothstep(0.15, 0.45, this.stallRaw);
+    const stallAngle = (aw >= 0 ? b.stallAngle : b.stallAngle * 0.75) - reattach;
+    let drive = clamp01((Math.abs(aw) - stallAngle) / T.stallBand);
+    // Too slow to fly: the wing can't hold the body up and the flow lets go. Beating the wings
+    // keeps the flow attached a little longer, but not at a near-standstill.
+    const slowEdge = s.flapStrength < 0.3 ? T.slowStall : T.slowStallFlapping;
+    if (V < d.vStall * slowEdge) {
+      drive = Math.max(drive, clamp01((d.vStall * slowEdge - V) / (d.vStall * T.slowStallBand)));
+    }
+    if (this.grace > 0) drive *= 1 - smoothstep(0, 0.6, this.grace);
+    this.stallRaw = damp(this.stallRaw, drive, drive > this.stallRaw ? T.stallRise : T.stallFall, dt);
+    // A flare is a deliberate stall: the lift still collapses but the wyvern stays composed.
+    s.stall = this.stallRaw * (1 - s.flare);
+    const cl = lerp(clAttached, clSeparated, this.stallRaw) * (1 + geLift);
+    if (!this.stalled && s.stall > 0.5) {
+      this.stalled = true;
+      this.stallCount++;
+      // The wing that is already dropping (or the one the yaw is swinging back) lets go first;
+      // with no hint, alternate so the tendency is deterministic but not always the same side.
+      const w = s.angularVelocity;
+      const hint = w.z * 2 - w.y + beta;
+      this.wingDropSign = Math.abs(hint) > 0.02 ? Math.sign(hint) : this.stallCount % 2 === 0 ? 1 : -1;
+      events?.emit('stallStart', {});
+    } else if (this.stalled && s.stall < 0.2) {
+      this.stalled = false;
+      events?.emit('stallEnd', {});
+    }
+
+    // --- Aerodynamic forces -------------------------------------------------------------------
+    force.set(0, -d.weight, 0);
+    if (V > 0.2) {
+      vhat.copy(airVel).multiplyScalar(1 / V);
+      liftDir.crossVectors(vhat, left);
+      const ll = liftDir.length();
+      if (ll > 1e-4) force.addScaledVector(liftDir, (q * area * cl) / ll);
+      const sinB = Math.sin(beta);
+      const dragArea =
+        d.bodyCdA * (1 + 2 * sinB * sinB) +
+        b.wingArea * (b.cd0 * sf + T.cdFolded * (1 - s.wingSpread) + T.cdFlare * s.flare) +
+        area * (b.inducedK * geInduced * cl * cl + T.cdStall * this.stallRaw);
+      force.addScaledVector(vhat, -q * dragArea);
+      // Sideslip pushes the body sideways (the keel effect that lets the rudder turn you).
+      force.addScaledVector(left, -q * b.wingArea * T.sideArea * sinB);
+    }
+    // The flight path's curvature from aerodynamics + gravity only (flap pulses are left out so
+    // the nose doesn't bob with every beat; the α loop absorbs them).
+    aeroAcc.copy(force).multiplyScalar(1 / b.mass);
+
+    // --- Flapping: committed strokes ---------------------------------------------------------
+    this.sinceBeat += dt;
+    let strokeForce = 0;
+    const wantsBeat = flapIn > 0.1 && tuckIn < 0.5;
+    if (!this.beatActive && wantsBeat) {
+      if (s.winded || s.stamina <= 0) {
+        if (this.prevFlapInput <= 0.1 || this.refuseCooldown <= 0) {
+          events?.emit('flapRefused', {});
+          this.refuseCooldown = 0.7;
+        }
+      } else {
+        this.beatActive = true;
+        this.beatStrength = flapIn;
+        // From a glide the wings rise briefly before the first downstroke.
+        this.windup = this.sinceBeat > 0.15;
+        s.flapPhase = this.windup ? T.windupPhase : 0;
+        this.beats++;
+        r.beatStarted = true;
+      }
+    }
+    if (this.beatActive) {
       const prev = s.flapPhase;
       s.flapPhase += b.flapRate * dt;
-      if (prev < 0.5 && s.flapPhase >= 0.5) events?.emit('flap', { strength: s.flapStrength, position: s.position });
+      // Pressing harder mid-downstroke deepens the beat; easing off doesn't cancel it.
+      if (s.flapPhase < 0.5) this.beatStrength = Math.max(this.beatStrength, flapIn);
+      if (prev < 0.5 && s.flapPhase >= 0.5) {
+        events?.emit('flap', { strength: this.beatStrength, position: s.position.clone() });
+      }
       if (s.flapPhase >= 1) {
-        s.flapPhase = wantsFlap ? s.flapPhase - 1 : 0;
-        this.flapping = wantsFlap;
-      } else this.flapping = true;
-      const stroke = s.flapPhase < 0.5 ? Math.sin(s.flapPhase * Math.PI * 2) : -0.15 * Math.sin((s.flapPhase - 0.5) * Math.PI * 2);
-      const power = Math.max(input.flap, 0.6);
-      force.addScaledVector(fwd, b.flapThrust * stroke * power * 1.6);
-      force.addScaledVector(up, b.flapLift * stroke * power * 1.6);
-      s.stamina -= dt / b.staminaSeconds;
-      s.flapStrength = damp(s.flapStrength, power, 6, dt);
-    } else {
-      s.flapStrength = damp(s.flapStrength, 0, 3, dt);
-      s.stamina += b.staminaRegen * dt;
+        s.flapPhase -= 1;
+        if (this.windup) {
+          // The wind-up is over; the committed downstroke follows whatever the trigger does.
+          this.windup = false;
+        } else if (wantsBeat && !s.winded && s.stamina > 0) {
+          this.beatStrength = flapIn;
+          this.beats++;
+          r.beatStarted = true;
+        } else {
+          this.beatActive = false;
+          s.flapPhase = 0;
+        }
+      }
+      if (this.beatActive) {
+        // Power curve: a rounded pulse over the downstroke, a small loss on the upstroke.
+        const ph = s.flapPhase;
+        const sn = Math.sin(ph * 2 * Math.PI);
+        strokeForce = (ph < 0.5 ? sn * sn : T.upstrokeLoss * sn) * this.beatStrength;
+        s.stamina -= (this.beatStrength * dt) / b.staminaSeconds;
+        this.sinceBeat = 0;
+        if (s.stamina <= 0) {
+          s.stamina = 0;
+          s.winded = true;
+        }
+      }
     }
-    s.stamina = clamp01(s.stamina);
-    if (s.stamina <= 0) s.winded = true;
-    if (s.winded && s.stamina > 0.35) s.winded = false;
+    const graceT = smoothstep(0, 0.5, this.grace);
+    const speed01 = clamp01(V / d.vCruise);
+    const liftScale = Math.max(lerp(T.flapLiftAtRest, 1, speed01), lerp(T.flapLiftLaunch, 1, speed01) * graceT);
+    const spreadLift = 0.35 + 0.65 * s.wingSpread;
+    // The sin² downstroke averages 1/4 of its peak over a whole beat.
+    this.flapLiftMean = this.beatActive ? 0.25 * b.flapLift * this.beatStrength * spreadLift * liftScale : 0;
+    if (strokeForce !== 0) {
+      const slow = lerp(T.flapSlowThrust, 1, Math.max(graceT, speed01));
+      const thrustFade = slow * clamp01(1 - Math.max(0, vf) / d.vFlapMax);
+      const thrust = b.flapThrust * Math.max(0, strokeForce) * thrustFade * lerp(1, T.launchThrust, graceT);
+      // Stroke plane tilted up: thrust along forward-and-up, lift along the body's up.
+      force.addScaledVector(fwd, thrust * Math.cos(T.flapTiltUp)).addScaledVector(up, thrust * Math.sin(T.flapTiltUp));
+      const flapLift = b.flapLift * strokeForce * liftScale * spreadLift;
+      force.addScaledVector(up, flapLift);
+    }
+    if (!this.beatActive && this.sinceBeat > T.regenDelay) {
+      s.stamina = clamp01(s.stamina + b.staminaRegen * this.regenMultiplier * dt);
+    }
+    if (s.winded && s.stamina >= T.windedRecover) s.winded = false;
+    s.flapStrength = damp(s.flapStrength, this.beatActive ? this.beatStrength : 0, this.beatActive ? 10 : 3, dt);
+    this.prevFlapInput = flapIn;
 
-    // Linear integration.
+    // --- Linear integration ---------------------------------------------------------------------
+    // Along-path acceleration, smoothed over a beat, for the phugoid damper.
+    if (V > 0.5) this.vDotSmooth = damp(this.vDotSmooth, force.dot(airVel) / (V * b.mass), 2.5, dt);
     s.velocity.addScaledVector(force, dt / b.mass);
-    s.gLoad = force.clone().add(tmp.set(0, GRAVITY * b.mass, 0)).dot(up) / (b.mass * GRAVITY);
-    s.position.addScaledVector(s.velocity, dt);
+    // Felt load factor: everything but gravity, along the body's up axis.
+    const nRaw = (force.y + d.weight) * up.y + force.x * up.x + force.z * up.z;
+    this.smoothG = damp(this.smoothG, nRaw / d.weight, 12, dt);
+    s.gLoad = this.smoothG;
 
-    // Rotation: control torques scale with dynamic pressure, aerodynamic stability turns the
-    // nose into the airflow.
-    const authority = clamp(V / 22, 0.15, 1.6) * (0.4 + 0.6 * s.wingSpread);
+    // --- Rotation: rate targets chased with limited authority ------------------------------
+    this.rotate(dt, V, q, alpha, beta, pitchIn, rollIn, yawIn, area);
+
+    // --- Position and terrain ---------------------------------------------------------------
+    prevPos.copy(s.position);
+    s.position.addScaledVector(s.velocity, dt);
+    this.collide(env, events);
+    return r;
+  }
+
+  private rotate(
+    dt: number,
+    V: number,
+    q: number,
+    alpha: number,
+    beta: number,
+    pitchIn: number,
+    rollIn: number,
+    yawIn: number,
+    area: number,
+  ): void {
+    const b = this.breed;
+    const d = this.derived;
+    const s = this.state;
     const w = s.angularVelocity;
-    w.x += (-input.pitch * b.pitchAuthority * authority) * dt;
-    w.z += (input.roll * b.rollAuthority * authority) * dt;
-    w.y += (-input.yaw * b.yawAuthority * authority) * dt;
-    if (V > 2) {
-      // Weathervane: torque toward the velocity vector.
-      const sideslip = airVel.dot(left) / V;
-      w.y += sideslip * 2.2 * authority * dt * 6;
-      w.x -= (vu / V) * 1.8 * authority * dt * 6;
+    invQ.copy(s.orientation).invert();
+
+    // Angular velocity of the flight path itself (world → body frame): the rate the body needs
+    // just to keep its nose on the airflow.
+    pathRate.set(0, 0, 0);
+    if (V > 1) {
+      pathRate.crossVectors(airVel, aeroAcc).multiplyScalar(1 / (V * V));
+      pathRate.applyQuaternion(invQ);
     }
-    // Stall drops the nose.
-    w.x += s.stall * 2.5 * dt;
-    w.multiplyScalar(Math.exp(-b.angularDamping * dt));
-    w.z = clamp(w.z, -b.maxRollRate, b.maxRollRate);
-    const angle = w.length() * dt;
-    if (angle > 1e-6) {
-      axis.copy(w).normalize();
-      dq.setFromAxisAngle(axis, angle);
+
+    // Pitch: the commanded angle of attack. Hands-off trim gets gentler with speed so a dive
+    // doesn't end in a violent pull-up, and a slow wyvern lowers its nose on its own.
+    const qSafe = Math.max(q, 1);
+    const clBase = d.clCruise * lerp(1, T.climbTrim, clamp01(s.flapStrength / 0.7));
+    const qBase = (d.qCruise * d.clCruise) / clBase;
+    let clTrim = qSafe > qBase ? Math.max(0.05, clBase * Math.pow(qBase / qSafe, T.trimExponent)) : clBase;
+    // While beating, the wing needn't carry what the stroke already lifts, so flapping turns into
+    // climb at cruise speed rather than a zoom that runs out of air. Not when slow: then every
+    // newton of lift is welcome.
+    const comp = smoothstep(d.vStall * 0.6, d.vStall, V) * (1 - smoothstep(0, 0.5, this.grace));
+    if (comp > 0) clTrim = Math.max(0.05, clTrim - (comp * this.flapLiftMean) / (qSafe * area));
+    let alphaTrim = clTrim / b.liftSlope - T.incidence;
+    // Phugoid damper: hands-off only. With the stick held the player is flying (and may well
+    // want to loop), so it fades out by about a third of the travel.
+    const handsOff = 1 - smoothstep(0.05, 0.35, Math.abs(pitchIn));
+    if (V > 2) {
+      const dn = T.phugoidDamp * clamp(this.vDotSmooth / GRAVITY, -1, 1) * handsOff;
+      alphaTrim += (dn * d.weight) / (qSafe * area * b.liftSlope);
+    }
+    // Stick adds a fixed α offset on top of trim (so at a held stick, lift still grows with
+    // speed: speed-stable), capped just short of the stall until the last of the travel.
+    const alphaCruise = d.clCruise / b.liftSlope - T.incidence;
+    const alphaEdge = b.stallAngle - 0.5 * DEG - T.incidence;
+    const alphaMax = b.stallAngle + T.alphaOverStall - T.incidence;
+    let alphaCmd: number;
+    if (pitchIn >= 0) {
+      const pull = Math.min(pitchIn / T.stallStick, 1);
+      alphaCmd = Math.min(alphaTrim + pull * (alphaEdge - alphaCruise), Math.max(alphaEdge, alphaTrim));
+      if (pitchIn > T.stallStick) alphaCmd = lerp(alphaCmd, alphaMax, (pitchIn - T.stallStick) / (1 - T.stallStick));
+    } else {
+      // Forward stick asks for a load factor between trim and nMin (not a fixed α offset, which
+      // would steepen a dive into a bunt as speed builds).
+      const kq = (qSafe * area * b.liftSlope) / d.weight;
+      const nTrim = (alphaTrim + T.incidence) * kq;
+      alphaCmd = Math.max(lerp(nTrim, T.nMin, -pitchIn) / kq - T.incidence, T.alphaMin * 1.5);
+    }
+    alphaCmd = lerp(alphaCmd, T.flareAlpha, s.flare);
+    // Load-factor limit: never ask the wing for more lift than the wyvern will pull.
+    const nMax = lerp(d.nMax, T.nMaxFlare, s.flare);
+    const alphaLimHi = (nMax * d.weight) / (qSafe * area * b.liftSlope) - T.incidence;
+    const alphaLimLo = (T.nMin * d.weight) / (qSafe * area * b.liftSlope) - T.incidence;
+    alphaCmd = clamp(alphaCmd, Math.min(alphaLimLo, alphaTrim), Math.max(alphaLimHi, alphaTrim));
+    // Positive body x is nose-down: to raise α the nose must come up (negative x).
+    const pathX = Math.abs(pathRate.x);
+    let wx = clamp(pathRate.x - T.alphaGain * (alphaCmd - alpha), -d.maxPitchRate - pathX, d.maxPitchRate + pathX);
+    // The climb-out attitude hold lasts until there's speed to spare.
+    const beating = this.beatActive || s.flapStrength > 0.3;
+    const slowTop = T.climbOutSpeed * d.vStall;
+    // Only while beating: a slow glider (a cliff jump, a stall) weathervanes down the airflow
+    // to build speed, and a pull at low speed stalls.
+    const slow = beating ? 1 - smoothstep(0.45 * d.vStall, slowTop, V) : 0;
+    if (slow > 0) {
+      const theta = Math.asin(clamp(fwd.y, -1, 1));
+      const thetaTarget = T.slowClimbAttitude + pitchIn * T.slowStickAttitude;
+      const wxAttitude = clamp(-T.attitudeGain * (thetaTarget - theta), -d.maxPitchRate, d.maxPitchRate);
+      wx = lerp(wx, wxAttitude, slow);
+    }
+
+    // Yaw: follow the path, swing the nose into the relative wind, plus rudder.
+    const wy = pathRate.y + T.betaGain * beta - yawIn * d.maxYawRate;
+
+    // Roll: stick sets a roll rate about the flight path (a stability-axis roll, so a roll at
+    // high α doesn't fling the nose sideways). Centered stick: a subtle drift back to level.
+    let wz = rollIn * b.maxRollRate;
+    this.rollRest = Math.abs(rollIn) < 0.1 ? this.rollRest + dt : 0;
+    const centered = smoothstep(T.autoLevelDelay, T.autoLevelDelay + 0.8, this.rollRest);
+    if (centered > 0) {
+      const bank = Math.atan2(left.y, up.y);
+      wz += centered * clamp(-T.autoLevelGain * bank, -T.autoLevelMaxRate, T.autoLevelMaxRate);
+    }
+    target.set(wx, wy, 0);
+    if (V > 1) {
+      // Body-frame unit airflow direction: (vl, vu, vf) / V.
+      tmp.set(airVel.dot(left), airVel.dot(up), airVel.dot(fwd)).multiplyScalar(1 / V);
+      if (tmp.z < 0.2) tmp.set(0, 0, 1);
+      target.addScaledVector(tmp, wz);
+    } else {
+      target.z += wz;
+    }
+
+    // Authority: proportional to dynamic pressure, with a floor while beating the wings (the
+    // stroke makes its own airflow over the wing) and during the launch grace.
+    let auth = clamp(q / d.qRef, T.authorityMin, T.authorityMax);
+    auth = Math.max(auth, 0.5 * s.flapStrength, this.grace > 0 ? 0.45 : 0);
+    const rollAuth = auth * (0.55 + 0.45 * s.wingSpread) * (1 - 0.55 * s.stall);
+    const gain = b.angularDamping * T.trackGainScale;
+    w.x += clamp((target.x - w.x) * gain, -b.pitchAuthority * auth, b.pitchAuthority * auth) * dt;
+    w.y += clamp((target.y - w.y) * gain, -b.yawAuthority * auth, b.yawAuthority * auth) * dt;
+    w.z += clamp((target.z - w.z) * gain, -b.rollAuthority * rollAuth, b.rollAuthority * rollAuth) * dt;
+
+    // Stall: the nose drops (gravity, not muscle, so no authority limit), a wing lets go, and
+    // the airframe buffets. All deterministic.
+    const st = s.stall;
+    if (st > 0.01) {
+      const sign = Math.sign(alpha + T.incidence) || 1;
+      if (sign * w.x < T.noseDropRate) w.x += sign * T.noseDropAccel * st * dt;
+      w.z += this.wingDropSign * T.wingDropAccel * st * st * dt;
+      const t = this.time;
+      const buffet = T.buffetAccel * st * (Math.sin(t * 37.3) * 0.6 + Math.sin(t * 23.1 + 1.7) * 0.4);
+      w.x += buffet * dt;
+      w.z += buffet * 0.7 * Math.sin(t * 17.9) * dt;
+    }
+    // Keep rates sane whatever happens.
+    w.clampLength(0, 6);
+
+    const rate = w.length();
+    if (rate * dt > 1e-9) {
+      tmp2.copy(w).multiplyScalar(1 / rate);
+      dq.setFromAxisAngle(tmp2, rate * dt);
       s.orientation.multiply(dq).normalize();
     }
+  }
 
-    // Terrain contact.
+  /** Body sphere (swept) + wingtip probes against the terrain. */
+  private collide(env: FlightEnvironment, events?: GameEventBus): void {
+    const s = this.state;
+    const d = this.derived;
     const r = this.result;
-    r.contact = false;
-    r.impact = 0;
-    s.timeSinceContact += dt;
-    if (env.terrain.collideSphere(s.position, 2.4, push, normal)) {
-      s.position.add(push);
-      const vn = s.velocity.dot(normal);
-      if (vn < 0) {
-        s.velocity.addScaledVector(normal, -vn * 1.25);
-        r.impact = -vn;
+    const move = prevPos.distanceTo(s.position);
+    const reach = d.halfSpan + d.bodyRadius + move + 1.5;
+    if (env.terrain.distance(s.position) > reach) return;
+
+    // Body: sweep so even a 90 m/s dive can't step through a thin rim.
+    const R = d.bodyRadius;
+    const n = Math.min(8, Math.max(1, Math.ceil(move / (R * 0.5))));
+    for (let i = 1; i <= n; i++) {
+      probe.lerpVectors(prevPos, s.position, i / n);
+      if (env.terrain.collideSphere(probe, R, push, nrm)) {
+        s.position.copy(probe).add(push);
+        this.respond(nrm, 1, events);
+        break;
       }
-      s.velocity.multiplyScalar(0.985);
-      r.contact = true;
-      r.contactNormal.copy(normal);
-      s.timeSinceContact = 0;
     }
-    return r;
+
+    // Wingtips: only while the wings are out.
+    if (s.wingSpread > 0.45) {
+      left.set(1, 0, 0).applyQuaternion(s.orientation);
+      const reachTip = d.halfSpan * T.tipSpanFactor * s.wingSpread;
+      for (let side = 1; side >= -1; side -= 2) {
+        probe.copy(s.position).addScaledVector(left, side * reachTip);
+        if (!env.terrain.collideSphere(probe, T.tipRadius, push, nrm)) continue;
+        // Most of the correction moves the body; the rest is absorbed by the wing folding back.
+        s.position.addScaledVector(push, 0.75);
+        this.respond(nrm, 0.5, events);
+        // Yaw away from the side that hit (+y yaws left) and roll away, lifting that wing
+        // (+z banks right, which lifts the left wing).
+        const w = s.angularVelocity;
+        w.y = clamp(w.y - side * 0.12, -2, 2);
+        w.z = clamp(w.z + side * 0.08, -3, 3);
+      }
+    }
+    if (r.contact) s.timeSinceContact = 0;
+  }
+
+  /** Velocity response to a contact with normal n. `weight` scales friction (tips scrape less). */
+  private respond(n: Vector3, weight: number, events?: GameEventBus): void {
+    const s = this.state;
+    const r = this.result;
+    const v = s.velocity;
+    const speedBefore = v.length();
+    const vn = v.dot(n);
+    let impact = 0;
+    if (vn < 0) {
+      impact = -vn;
+      const e = impact > T.stunImpact ? 0.3 : T.restitution;
+      v.addScaledVector(n, -vn * (1 + e * weight));
+    }
+    // Scrape: Coulomb-ish friction from the impact plus a steady rub.
+    tmp.copy(v).addScaledVector(n, -v.dot(n));
+    const vt = tmp.length();
+    if (vt > 1e-3) {
+      const loss = Math.min(vt, (T.scrapeFriction * impact + T.scrapeDecel * this.dt) * weight);
+      v.addScaledVector(tmp, -loss / vt);
+    }
+    const lost = Math.max(0, speedBefore - v.length());
+    r.contact = true;
+    r.contactNormal.copy(n);
+    r.impact = Math.max(r.impact, impact);
+    if (impact > T.stunImpact) {
+      this.stun = T.stunTime;
+      // A little tumble about the axis between the surface and the direction of travel.
+      tmp.crossVectors(n, v);
+      if (tmp.lengthSq() > 1e-6) {
+        tmp.normalize().applyQuaternion(invQ.copy(s.orientation).invert());
+        s.angularVelocity.addScaledVector(tmp, Math.min(2.5, impact * 0.08));
+      }
+    }
+    if (impact > T.hitEventMin && this.hitCooldown <= 0) {
+      this.hitCooldown = 0.25;
+      events?.emit('terrainHit', { impulse: Math.max(lost, impact), point: s.position.clone(), normal: n.clone() });
+    }
   }
 }

@@ -81,6 +81,11 @@ export interface InputFrame {
   lookIsRate: boolean;
   /** True while the player is actively steering the camera (mouse moved / right stick off-center). */
   lookActive: boolean;
+  /**
+   * Camera zoom request this frame in mouse-wheel notches, + = zoom in. Mouse wheel always;
+   * outside play (stable, menus) RT/LT also zoom at a steady rate. Optional: absent = 0.
+   */
+  zoom?: number;
   /** Held: jump / ascend on foot. */
   jumpHeld: boolean;
   pressed: InputPresses;
@@ -196,6 +201,19 @@ export interface GroundHit {
   normal: Vector3;
   islandId: number;
   surface: SurfaceKind;
+}
+
+/**
+ * A vertical solid cylinder in the world that the analytic terrain doesn't know about (building
+ * walls, tower bases, big trunks). Walking code can push the rider/wyvern out of these.
+ */
+export interface CylinderCollider {
+  x: number;
+  z: number;
+  radius: number;
+  /** Bottom and top heights (world y). */
+  y0: number;
+  y1: number;
 }
 
 export interface RayHit {
