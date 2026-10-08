@@ -46,7 +46,6 @@ const tmp = new Color();
 
 const ceil4 = (v: number) => Math.max(4, Math.ceil(v / 4) * 4);
 
-type EndKind = 'buried' | 'broken';
 
 export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Terrain): Generator<void, { data: MeshData }> {
   const d = shape.def;
@@ -96,15 +95,26 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
   /**
    * A tube ring at arc angle a, its radius scaled by `scale`. With `jag`, each point is pushed
    * along the outward tangent (sign `outward`) by jag(phi), clamped inside the collision cap.
+   * With `sink` > 0 the ring is moved that far beyond the end along the outward tangent (a foot
+   * going into the ground) and its radius is held inside the end cap's sphere plus the rock
+   * budget, so above ground the foot is as solid as it looks.
    */
-  const tubeRing = (a: number, scale: number, tag: number, jag: ((phi: number) => number) | null = null, outward = 1): Ring => {
+  const tubeRing = (
+    a: number,
+    scale: number,
+    tag: number,
+    jag: ((phi: number) => number) | null = null,
+    outward = 1,
+    sink = 0,
+  ): Ring => {
     frame(a);
     const start = b.vertexCount;
+    const capR = sink > 0 ? Math.sqrt(Math.max(0, tube * tube - sink * sink)) + ARCH_DISPLACE : Infinity;
     for (let i = 0; i < K; i++) {
       const phi = (i / K) * Math.PI * 2;
       dir.copy(Rv).multiplyScalar(Math.cos(phi)).addScaledVector(shape.normal, Math.sin(phi));
-      P.copy(C).addScaledVector(dir, tube);
-      let r = (tube + displace(P, a * R)) * scale;
+      P.copy(C).addScaledVector(dir, tube).addScaledVector(T, sink * outward);
+      let r = Math.min(capR, (tube + displace(P, a * R + sink * outward)) * scale);
       let push = 0;
       if (jag) {
         push = jag(phi);
@@ -115,7 +125,7 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
           push *= lim / len;
         }
       }
-      P.copy(C).addScaledVector(dir, r).addScaledVector(T, push * outward);
+      P.copy(C).addScaledVector(dir, r).addScaledVector(T, (push + sink) * outward);
       b.vertex(P.x - c.x, P.y - c.y, P.z - c.z);
       part.push(tag);
       block.push(blockOf(P, a * R));
@@ -133,17 +143,24 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
   };
 
   // --- End treatment ------------------------------------------------------------------------------
-  /** Standing on an island: how far past the end the sweep continues to be fully buried. */
-  const endKind = (a: number, sign: number): { kind: EndKind; extend: number } => {
+  /**
+   * An end standing on an island is buried: the tube continues straight on along the outward
+   * tangent (vertical for a standing arch) until it is below ground. Otherwise it is broken.
+   * Returns the sink depth (m) for a buried end, or 0 for a broken one.
+   */
+  const buriedDepth = (a: number, outward: number): number => {
     frame(a);
     const island = terrain.islandAt(C.x, C.z);
-    if (!island || island.topHeight(C.x, C.z) < C.y - tube) return { kind: 'broken', extend: 0 };
-    let ext = 0;
-    for (; ext < 0.5; ext += 0.01) {
-      frame(a + sign * ext);
-      if (C.y < island.topHeight(C.x, C.z) - tube - 2.5) break;
+    if (!island || island.topHeight(C.x, C.z) < C.y - tube) return 0;
+    let depth = 0;
+    for (; depth < tube * 3; depth += 0.5) {
+      const x = C.x + T.x * depth * outward;
+      const y = C.y + T.y * depth * outward;
+      const z = C.z + T.z * depth * outward;
+      const r = Math.min(tube + ARCH_DISPLACE, Math.sqrt(Math.max(0, tube * tube - depth * depth)) + ARCH_DISPLACE);
+      if (y + r < island.topHeight(x, z) - 1) break;
     }
-    return { kind: 'buried', extend: ext };
+    return Math.max(depth, 1);
   };
 
   let prev: Ring | null = null;
@@ -163,22 +180,28 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
   };
   const capRings = spec.capRings;
   const capScale = (u: number) => Math.sqrt(1 - u * u) * 0.98 + 0.02;
+  /** Rings of a buried foot, from the arc end down to `depth` (ascending order). */
+  const footSinks = (depth: number) => {
+    const n = Math.max(2, Math.ceil(depth / spec.along));
+    const out: number[] = [];
+    for (let k = 1; k <= n; k++) out.push((depth * k) / n);
+    return out;
+  };
 
-  let a0 = 0;
-  let a1 = Math.PI * 2;
-  let startEnd: { kind: EndKind; extend: number } | null = null;
-  let endEnd: { kind: EndKind; extend: number } | null = null;
+  const a0 = shape.full ? 0 : d.arcStart;
+  const a1 = shape.full ? Math.PI * 2 : d.arcEnd;
+  const sinkStart = shape.full ? 0 : buriedDepth(a0, -1);
+  const sinkEnd = shape.full ? 0 : buriedDepth(a1, 1);
   if (!shape.full) {
-    startEnd = endKind(d.arcStart, -1);
-    endEnd = endKind(d.arcEnd, 1);
-    a0 = d.arcStart - startEnd.extend;
-    a1 = d.arcEnd + endEnd.extend;
-    // Start: a pole, then (for a broken end) fracture rings growing toward the body.
-    if (startEnd.kind === 'broken') {
+    if (sinkStart > 0) {
+      // Buried foot: a pole underground, then rings rising to the arc start.
+      const sinks = footSinks(sinkStart);
+      link(pole(a0, -(sinkStart + 0.5), 2));
+      for (let k = sinks.length - 1; k >= 0; k--) link(tubeRing(a0, 1, 2, null, -1, sinks[k]));
+    } else {
+      // Broken: a pole, then fracture rings growing toward the body.
       link(pole(a0, -tube * 0.5, 1));
       for (let j = capRings - 1; j >= 1; j--) link(tubeRing(a0, capScale(j / capRings), 1, jagFor(a0, j / capRings), -1));
-    } else {
-      link(pole(a0, -tube * 0.4, 2));
     }
   }
 
@@ -186,9 +209,7 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
   const M = Math.max(shape.full ? 24 : 4, Math.ceil(((a1 - a0) * R) / spec.along));
   let firstRing: Ring | null = null;
   for (let m = 0; m < (shape.full ? M : M + 1); m++) {
-    const a = a0 + ((a1 - a0) * m) / M;
-    const buried = !shape.full && (a < d.arcStart - 1e-6 || a > d.arcEnd + 1e-6);
-    const ring = tubeRing(a, 1, buried ? 2 : 0);
+    const ring = tubeRing(a0 + ((a1 - a0) * m) / M, 1, 0);
     firstRing ??= ring;
     link(ring);
     if (m % 16 === 15) yield;
@@ -197,11 +218,12 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
   if (shape.full) {
     // Close the torus.
     b.stitch(prev!, firstRing!, true);
-  } else if (endEnd!.kind === 'broken') {
+  } else if (sinkEnd > 0) {
+    for (const sink of footSinks(sinkEnd)) link(tubeRing(a1, 1, 2, null, 1, sink));
+    link(pole(a1, sinkEnd + 0.5, 2));
+  } else {
     for (let j = 1; j < capRings; j++) link(tubeRing(a1, capScale(j / capRings), 1, jagFor(a1, j / capRings), 1));
     link(pole(a1, tube * 0.5, 1));
-  } else {
-    link(pole(a1, tube * 0.4, 2));
   }
 
   // --- Paint --------------------------------------------------------------------------------------

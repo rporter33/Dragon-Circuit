@@ -254,7 +254,8 @@ export class SpireShape {
   radiusAt(y: number, theta: number): number {
     const base = this.baseRadiusAt(y);
     if (base === 0) return 0;
-    const n = 1 + 0.13 * this.outlineN(theta) + 0.07 * this.bandN(y * 0.04, theta * 1.5);
+    // The band noise is sampled around a circle so it closes seamlessly at theta = 2π.
+    const n = 1 + 0.13 * this.outlineN(theta) + 0.07 * this.bandN(y * 0.04 + Math.cos(theta) * 1.4, Math.sin(theta) * 1.4);
     return base * n;
   }
 }
