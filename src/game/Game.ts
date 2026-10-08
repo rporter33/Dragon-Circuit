@@ -87,7 +87,7 @@ export class Game implements GameActions {
     this.world = new World(this.scene, quality);
     this.dressing = new Dressing({ scene: this.scene, terrain: this.world.terrain, quality, asyncStreaming: !this.debug.manual });
     this.weather = new Weather(this.scene, this.world.layout, this.events, quality);
-    this.sky = new Sky(this.scene, this.renderer, quality);
+    this.sky = new Sky(this.scene, this.renderer, quality, this.weather);
     this.player = new Player({
       terrain: this.world.terrain,
       env: { windAt: (p, out) => this.weather.windAt(p, out), terrain: this.world.terrain },
@@ -96,7 +96,7 @@ export class Game implements GameActions {
       settings: () => this.settings,
     });
     this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings, this.events);
-    this.wyvern = new Wyvern(this.save.data.wyvern);
+    this.wyvern = new Wyvern(this.save.data.wyvern, { terrain: this.world.terrain });
     this.rider = new Rider(this.save.data.rider, { terrain: this.world.terrain, saddle: this.wyvern.saddle, events: this.events, quality });
     this.scene.add(this.wyvern.group, this.rider.group);
     this.races = new Races();
@@ -108,8 +108,10 @@ export class Game implements GameActions {
       quality,
       settings: () => this.settings,
       layout: this.world.layout,
+      terrain: this.world.terrain,
+      decks: this.dressing.decks,
     });
-    this.audio = new AudioSystem(this.events, () => this.settings);
+    this.audio = new AudioSystem(this.events, () => this.settings, { waterfalls: () => this.dressing.water.plansList });
     this.audio.applySettings(settings);
     this.ui = new Ui({ root: uiRoot, actions: this, events: this.events });
 
@@ -188,7 +190,9 @@ export class Game implements GameActions {
     this.world.update(dt, this.camera, focus);
     this.wyvern.update(dt, this.player.wyvernPose);
     this.rider.update(dt, this.player.riderPose, this.player.riderPose.mounted ? this.wyvern.saddle : null);
-    this.cameraRig.update(dt, this.screen === 'play' || this.screen === 'stable' ? input : this.idleInput, this.player);
+    // Photo mode (opened from the pause menu) flies the camera while the world holds still.
+    const cameraInput = this.screen === 'play' || this.screen === 'stable' || this.cameraRig.mode === 'photo';
+    this.cameraRig.update(dt, cameraInput ? input : this.idleInput, this.player);
     this.dressing.update(dt, this.camera, focus);
     this.races.update(dt, this.camera, this.player);
     this.collectibles.update(dt, this.camera, this.player);
@@ -276,6 +280,12 @@ export class Game implements GameActions {
     this.races.setShowGhost(s.showGhost);
     this.save.save();
     this.events.emit('settingsChanged', { settings: s });
+  }
+
+  quitToTitle(): void {
+    if (this.races.activeId) this.races.abort('quit');
+    this.placeAtSpawn();
+    this.setScreen('title');
   }
 
   resetProgress(): void {
