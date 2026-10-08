@@ -60,6 +60,8 @@ export interface GlideResult {
   speed: number;
   sink: number;
   ratio: number;
+  /** Spread of the vertical speed over the averaging window (m/s): ~0 for a settled glide. */
+  ripple: number;
 }
 
 /** Hold a constant pitch stick in still air and measure the settled glide. */
@@ -74,24 +76,29 @@ export function measureGlide(breed: BreedStats, pitch = 0, seconds = 70): GlideR
   let sink = 0;
   let speed = 0;
   let n = 0;
+  let lo = Infinity;
+  let hi = -Infinity;
   for (let i = 0; i < steps; i++) {
     m.step(SIM_DT, input, env);
     if (i >= avgFrom) {
       h += horizontalSpeed(m);
       sink += -m.state.velocity.y;
       speed += m.state.airspeed;
+      lo = Math.min(lo, m.state.velocity.y);
+      hi = Math.max(hi, m.state.velocity.y);
       n++;
     }
   }
-  return { speed: speed / n, sink: sink / n, ratio: h / Math.max(1e-6, sink) };
+  return { speed: speed / n, sink: sink / n, ratio: h / Math.max(1e-6, sink), ripple: hi - lo };
 }
 
 /** Best glide over a sweep of constant pitch stick positions. */
 export function measureBestGlide(breed: BreedStats): GlideResult & { pitch: number } {
-  let best = { speed: 0, sink: 0, ratio: 0, pitch: 0 };
+  let best = { speed: 0, sink: 0, ratio: 0, ripple: 0, pitch: 0 };
   for (let p = -0.2; p <= 0.5001; p += 0.05) {
     const g = measureGlide(breed, p);
-    if (g.ratio > best.ratio) best = { ...g, pitch: p };
+    // Only settled glides count (a held pull can end in a zoom-stall cycle).
+    if (g.ripple < 0.5 && g.ratio > best.ratio) best = { ...g, pitch: p };
   }
   return best;
 }

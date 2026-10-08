@@ -120,7 +120,9 @@ export class RiderFoot {
     const nx = this.position.x + this.velocity.x * dt;
     const nz = this.position.z + this.velocity.z * dt;
     let g = terrain.groundAt(nx, nz, this.position.y + P.stepUp);
-    if (g && g.normal.y < P.maxSlopeY && g.y > this.position.y + 0.02 && this.grounded) {
+    // Uphill means moving against the slope's downhill (horizontal normal) direction.
+    const uphill = g ? this.velocity.x * g.normal.x + this.velocity.z * g.normal.z < 0 : false;
+    if (g && g.normal.y < P.maxSlopeY && uphill && this.grounded) {
       // Blocked: cancel the uphill part of the velocity (the slope's horizontal normal points downhill).
       const hx = g.normal.x;
       const hz = g.normal.z;

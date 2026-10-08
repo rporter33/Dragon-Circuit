@@ -49,6 +49,11 @@ export class Companion {
   anim: CompanionAnim = { airborne: false, gait: 'idle', wingSpread: 0.22, flapPhase: 0, flapStrength: 0, flare: 0 };
   /** Set when the wyvern should come to the rider even if it's within the follow distance. */
   called = false;
+  /**
+   * How far the rider may wander before the wyvern follows. Normally the follow distance; at a
+   * new game the wyvern starts further away than that and waits where it was placed.
+   */
+  leash: number = P.followDistance;
 
   private p0 = new Vector3();
   private p1 = new Vector3();
@@ -125,7 +130,7 @@ export class Companion {
     switch (this.state) {
       case 'idle':
       case 'follow': {
-        const wantsToCome = riderGrounded && (dist > P.followDistance || (this.called && dist > P.followStop));
+        const wantsToCome = riderGrounded && (dist > this.leash || (this.called && dist > P.followStop));
         if (this.state === 'idle' && wantsToCome) {
           this.state = 'follow';
           this.stateTime = 0;
@@ -138,6 +143,7 @@ export class Companion {
             w.step(dt, null, 0, breed, terrain, false);
           } else if (dist <= P.followStop) {
             this.called = false;
+            this.leash = P.followDistance;
             w.step(dt, null, 0, breed, terrain, false);
             if (w.speed === 0) {
               this.state = 'idle';
@@ -195,6 +201,7 @@ export class Companion {
           }
           this.standStill();
           this.called = false;
+          this.leash = P.followDistance;
         }
         break;
       }

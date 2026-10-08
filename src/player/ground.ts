@@ -109,7 +109,8 @@ export class GroundWalker {
       this.speed = 0;
       return 'blocked';
     }
-    if (g.normal.y < P.maxSlopeY && g.y > this.groundY + 0.02) {
+    // Too steep to climb: walking uphill means walking against the slope's downhill direction.
+    if (g.normal.y < P.maxSlopeY && Math.sin(this.yaw) * g.normal.x + Math.cos(this.yaw) * g.normal.z < 0) {
       this.speed = Math.min(this.speed, 0.5);
       return 'blocked';
     }

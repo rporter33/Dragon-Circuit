@@ -70,10 +70,11 @@ export const FLIGHT_TUNING = {
   /** How hard the pitch loop chases the commanded angle of attack (1/s). */
   alphaGain: 4.2,
   /**
-   * Hands-off phugoid damper: α is eased off while the flight path angle is rising (and added
-   * while it falls), so a released stick settles into a steady glide instead of porpoising (s).
+   * Phugoid damper: extra load factor per g of along-path acceleration (smoothed). Speeding up
+   * (diving) adds a little lift, slowing down (climbing) eases it, so a released stick settles
+   * into a steady glide instead of porpoising. Zero in any steady state, so it never biases trim.
    */
-  phugoidDamp: 0.24,
+  phugoidDamp: 1.3,
   /**
    * Stick → α: most of the travel (up to `stallStick`) reaches just short of the stall angle; the
    * last part pushes past it by `alphaOverStall` — full back stick at low speed stalls.
@@ -96,8 +97,9 @@ export const FLIGHT_TUNING = {
   /** Rate tracking gain = angularDamping × this (1/s). */
   trackGainScale: 2.4,
   /**
-   * Slow flight (below ~stall speed): the airflow can't weathervane the body, so the wyvern holds
-   * an attitude instead — nose up while beating its wings, nose down while gliding — plus stick.
+   * Slow flight (below ~stall speed) while launching or beating: the airflow can't weathervane the
+   * body, so the wyvern holds an attitude instead — nose up while beating its wings, nose down
+   * while gliding off a cliff — plus stick.
    */
   slowClimbAttitude: 9 * DEG,
   slowDiveAttitude: -38 * DEG,
@@ -302,6 +304,9 @@ export class FlightModel {
   /** A takeoff grace ends early once the wyvern reaches flying speed. */
   private graceUntilFlying = false;
   private graceAge = 0;
+  private vDotSmooth = 0;
+  /** The current beat began with a wind-up (wings rising) and still owes its downstroke. */
+  private windup = false;
   private hitCooldown = 0;
   private smoothG = 1;
   private dt = 1 / 120;
@@ -337,6 +342,8 @@ export class FlightModel {
     s.timeSinceContact = 99;
     this.beatActive = false;
     this.beatStrength = 0;
+    this.windup = false;
+    this.vDotSmooth = 0;
     this.stallRaw = 0;
     this.stalled = false;
     this.tucked = false;
@@ -361,6 +368,7 @@ export class FlightModel {
     if (s.winded || s.stamina <= 0) return false;
     this.beatActive = true;
     this.beatStrength = clamp01(strength);
+    this.windup = false;
     s.flapPhase = 0;
     this.sinceBeat = 0;
     this.beats++;
@@ -530,7 +538,8 @@ export class FlightModel {
         this.beatActive = true;
         this.beatStrength = flapIn;
         // From a glide the wings rise briefly before the first downstroke.
-        s.flapPhase = this.sinceBeat > 0.15 ? T.windupPhase : 0;
+        this.windup = this.sinceBeat > 0.15;
+        s.flapPhase = this.windup ? T.windupPhase : 0;
         this.beats++;
         r.beatStarted = true;
       }
@@ -545,7 +554,10 @@ export class FlightModel {
       }
       if (s.flapPhase >= 1) {
         s.flapPhase -= 1;
-        if (wantsBeat && !s.winded && s.stamina > 0) {
+        if (this.windup) {
+          // The wind-up is over; the committed downstroke follows whatever the trigger does.
+          this.windup = false;
+        } else if (wantsBeat && !s.winded && s.stamina > 0) {
           this.beatStrength = flapIn;
           this.beats++;
           r.beatStarted = true;
@@ -590,6 +602,8 @@ export class FlightModel {
     this.prevFlapInput = flapIn;
 
     // --- Linear integration ---------------------------------------------------------------------
+    // Along-path acceleration, smoothed over a beat, for the phugoid damper.
+    if (V > 0.5) this.vDotSmooth = damp(this.vDotSmooth, force.dot(airVel) / (V * b.mass), 2.5, dt);
     s.velocity.addScaledVector(force, dt / b.mass);
     // Felt load factor: everything but gravity, along the body's up axis.
     const nRaw = (force.y + d.weight) * up.y + force.x * up.x + force.z * up.z;
@@ -643,14 +657,12 @@ export class FlightModel {
     const comp = smoothstep(d.vStall * 0.6, d.vStall, V) * (1 - smoothstep(0, 0.5, this.grace));
     if (comp > 0) clTrim = Math.max(0.05, clTrim - (comp * this.flapLiftMean) / (qSafe * area));
     let alphaTrim = clTrim / b.liftSlope - T.incidence;
-    // Phugoid damper (full hands-off, 60% with the stick held): rate of change of the world
-    // flight path angle.
-    const handsOff = 1 - 0.4 * smoothstep(0.05, 0.4, Math.abs(pitchIn));
+    // Phugoid damper: hands-off only. With the stick held the player is flying (and may well
+    // want to loop), so it fades out by about a third of the travel.
+    const handsOff = 1 - smoothstep(0.05, 0.35, Math.abs(pitchIn));
     if (V > 2) {
-      const horiz = Math.max(0.2 * V, Math.hypot(airVel.x, airVel.z));
-      const vDot = airVel.dot(aeroAcc) / V;
-      const gammaRate = (aeroAcc.y * V - airVel.y * vDot) / (V * horiz);
-      alphaTrim -= T.phugoidDamp * clamp(gammaRate, -1, 1) * handsOff;
+      const dn = T.phugoidDamp * clamp(this.vDotSmooth / GRAVITY, -1, 1) * handsOff;
+      alphaTrim += (dn * d.weight) / (qSafe * area * b.liftSlope);
     }
     // Stick adds a fixed α offset on top of trim (so at a held stick, lift still grows with
     // speed: speed-stable), capped just short of the stall until the last of the travel.
@@ -663,7 +675,11 @@ export class FlightModel {
       alphaCmd = Math.min(alphaTrim + pull * (alphaEdge - alphaCruise), Math.max(alphaEdge, alphaTrim));
       if (pitchIn > T.stallStick) alphaCmd = lerp(alphaCmd, alphaMax, (pitchIn - T.stallStick) / (1 - T.stallStick));
     } else {
-      alphaCmd = Math.max(alphaTrim + pitchIn * (alphaCruise - T.alphaMin), T.alphaMin * 1.5);
+      // Forward stick asks for a load factor between trim and nMin (not a fixed α offset, which
+      // would steepen a dive into a bunt as speed builds).
+      const kq = (qSafe * area * b.liftSlope) / d.weight;
+      const nTrim = (alphaTrim + T.incidence) * kq;
+      alphaCmd = Math.max(lerp(nTrim, T.nMin, -pitchIn) / kq - T.incidence, T.alphaMin * 1.5);
     }
     alphaCmd = lerp(alphaCmd, T.flareAlpha, s.flare);
     // Load-factor limit: never ask the wing for more lift than the wyvern will pull.
@@ -678,7 +694,9 @@ export class FlightModel {
     // only until the wing can fly.
     const beating = this.beatActive || s.flapStrength > 0.3;
     const slowTop = beating ? T.climbOutSpeed * d.vStall : 0.95 * d.vStall;
-    const slow = 1 - smoothstep(0.45 * d.vStall, slowTop, V);
+    // Only while launching (grace) or beating: otherwise a slow wyvern obeys α, and a pull stalls.
+    const holding = beating ? 1 : smoothstep(0, 0.3, this.grace);
+    const slow = (1 - smoothstep(0.45 * d.vStall, slowTop, V)) * holding;
     if (slow > 0) {
       const theta = Math.asin(clamp(fwd.y, -1, 1));
       const thetaTarget = (beating ? T.slowClimbAttitude : T.slowDiveAttitude) + pitchIn * T.slowStickAttitude;

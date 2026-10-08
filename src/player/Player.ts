@@ -218,6 +218,8 @@ export class Player implements PlayerSystem {
     w.speed = 0;
     w.settle(this.deps.terrain, this.breed.standHeight, 1e5);
     this.companion.standStill();
+    // It waits by the stable for its rider rather than trotting straight over.
+    this.companion.leash = Math.hypot(w.position.x - this.foot.position.x, w.position.z - this.foot.position.z) + 15;
     this.model.state.stamina = 1;
     this.model.state.winded = false;
     this.syncModelFromGround();
@@ -568,6 +570,7 @@ export class Player implements PlayerSystem {
     this.seatPosition(this.transFrom);
     w.speed = 0;
     this.companion.standStill();
+    this.companion.leash = P.followDistance;
     this.setMode('dismounting');
     this.deps.events.emit('dismount', {});
   }
@@ -759,7 +762,7 @@ export class Player implements PlayerSystem {
     this.airTime = 99;
     this.syncRiderToSeat();
     this.snapInterpolation();
-    this.deps.events.emit('respawn', { position: p.clone() });
+    this.deps.events.emit('respawn', { position: s.position.clone() });
   }
 
   private updateSafeGround(dt: number): void {
@@ -805,6 +808,7 @@ export class Player implements PlayerSystem {
     this.landActionTimer = 0;
     this.fade = 0;
     this.companion.called = false;
+    this.companion.leash = P.followDistance;
   }
 
   private setGait(g: WyvernGait): void {
@@ -938,7 +942,10 @@ export class Player implements PlayerSystem {
     this.prevWyQuat.copy(s.orientation);
     this.prevRiderPos.copy(this.riderPos);
     this.prevRiderYaw = this.riderYaw;
+    this.updateLookTarget(0);
     this.lookFresh = true;
+    // Poses and riderPosition are valid immediately, before the next frame.
+    this.update(0, 1);
   }
 
   /** Rider lean / crouch / brace and wyvern fatigue, smoothed at the physics rate. */
@@ -984,7 +991,7 @@ export class Player implements PlayerSystem {
       _left.set(1, 0, 0).applyQuaternion(s.orientation);
       const w = s.angularVelocity;
       out.copy(_fwd)
-        .addScaledVector(_left, clamp(w.y * 0.9 + w.z * 0.25, -0.9, 0.9))
+        .addScaledVector(_left, clamp(w.y * 0.9 - w.z * 0.25, -0.9, 0.9))
         .addScaledVector(_up, clamp(-w.x * 0.6, -0.5, 0.6));
       if (s.velocity.lengthSq() > 4) out.addScaledVector(_v2.copy(s.velocity).normalize(), 0.6);
       out.normalize().multiplyScalar(40).add(p);
