@@ -18,6 +18,8 @@ import { scatterIsland, type PropInstance } from './trees/placement';
 import { Structures } from './structures/Structures';
 import { Waterfalls } from './water/Waterfalls';
 import { planWaterfalls } from './water/waterfallPlan';
+import { HangingRoots } from './roots/HangingRoots';
+import { planRoots, type RootPlan } from './roots/rootPlan';
 
 export interface DressingDeps {
   scene: Scene;
@@ -54,6 +56,9 @@ export class Dressing implements DressingSystem {
   forest!: Forest;
   readonly structures: Structures;
   readonly water: Waterfalls;
+  readonly roots: HangingRoots;
+  /** The hanging strands (for course design: see strandClearance()). */
+  readonly rootPlan: RootPlan;
   private bankProps: PropInstance[];
   private terrain: Terrain;
   private quality: QualityProfile;
@@ -70,6 +75,9 @@ export class Dressing implements DressingSystem {
     this.bankProps = Waterfalls.bankProps(this.terrain, plans, this.exclusions);
     this.water = new Waterfalls(this.terrain, plans, this.quality);
     this.group.add(this.water.group);
+    this.rootPlan = planRoots(this.terrain);
+    this.roots = new HangingRoots(this.terrain, this.rootPlan);
+    this.group.add(this.roots.group);
     this.buildForest();
     this.grass = new GrassField(this.terrain, this.exclusions, this.quality);
     this.group.add(this.grass.group);
@@ -119,6 +127,6 @@ export class Dressing implements DressingSystem {
   }
 
   stats(): DressingStats {
-    return { grass: this.grass.stats, forest: this.forest.stats, structures: this.structures.stats, water: this.water.stats };
+    return { grass: this.grass.stats, forest: this.forest.stats, structures: this.structures.stats, water: this.water.stats, roots: this.roots.stats };
   }
 }

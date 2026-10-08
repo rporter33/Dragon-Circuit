@@ -55,7 +55,7 @@ function spots(game: Game): Record<string, () => Spot> {
     },
     rootfall: () => {
       const g = L('rootfall');
-      return { cam: [g.x - 120, g.y - 330, g.z - 260], look: [g.x, g.y - 220, g.z], tod: 0.4 };
+      return { cam: [g.x - 90, g.y - 330, g.z - 170], look: [g.x, g.y - 250, g.z], tod: 0.4 };
     },
     glowcap: () => {
       const g = L('glowcap');
