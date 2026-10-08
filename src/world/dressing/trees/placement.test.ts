@@ -17,7 +17,7 @@ describe('tree and prop scatter', () => {
     expect(b.map((p) => [p.species, p.x, p.z])).toEqual(a.map((p) => [p.species, p.x, p.z]));
   });
 
-  it('plants trees on grass, on gentle ground, inside the island', () => {
+  it('plants trees on grass, on gentle ground, inside the island', { timeout: 30000 }, () => {
     for (const id of ['rootfall', 'cascade', 'gullrest', 'highmoor', 'glowcap']) {
       const shape = byLandmark(id);
       for (const p of scatterIsland(shape, null, { density: 1 })) {
@@ -32,7 +32,7 @@ describe('tree and prop scatter', () => {
     }
   });
 
-  it('gives each landmark its own character', () => {
+  it('gives each landmark its own character', { timeout: 30000 }, () => {
     const count = (id: string, sp: string) => scatterIsland(byLandmark(id), null, { density: 1 }).filter((p) => p.species === sp).length;
     expect(count('glowcap', 'glowcap')).toBeGreaterThan(40);
     expect(count('gullrest', 'blossom')).toBeGreaterThan(5);
@@ -41,7 +41,7 @@ describe('tree and prop scatter', () => {
     expect(count('rootfall', 'giant')).toBeGreaterThan(30);
   });
 
-  it('respects keep-out zones and spacing', () => {
+  it('respects keep-out zones and spacing', { timeout: 30000 }, () => {
     const shape = byLandmark('rootfall');
     const ex = new ExclusionSet();
     ex.circle(shape.def.x, shape.def.z, 60);

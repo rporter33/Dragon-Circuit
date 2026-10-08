@@ -2,7 +2,7 @@
 // shrine ruins on the Observatory's island, and small ruins (broken arches, wall corners,
 // shrines, cairns, a sundial) on a deterministic selection of other islands.
 
-import { CylinderGeometry, IcosahedronGeometry, Vector3 } from 'three';
+import { BoxGeometry, Color, CylinderGeometry, IcosahedronGeometry, Vector3 } from 'three';
 import { mulberry32 } from '../../../core/rng';
 import type { IslandShape } from '../../islandShape';
 import type { Terrain } from '../../terrain';
@@ -179,13 +179,20 @@ function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: numbe
         const x = Math.sin(a) * r;
         const z = Math.cos(a) * r;
         const fallen = k === 3 || k === 8;
-        const h = 3.2 + ((k * 37) % 7) * 0.45;
-        const g = pick(variants('menhir', 4, (q) => displace(new IcosahedronGeometry(1, 2), 0.12, 1.8, 850 + q)), idx * 100 + k);
+        const h = 4.6 + ((k * 37) % 7) * 0.5;
+        const g = pick(variants('menhir', 4, (q) => displace(new BoxGeometry(1, 1, 1, 3, 4, 2), 0.12, 1.4, 850 + q, 2)), idx * 100 + k);
         const m = fallen
-          ? under(F, xf(x * 1.08, 0.5, z * 1.08, Math.PI / 2 - 0.1, a + 0.4, 0, 0.7, h * 0.5, 0.45))
-          : under(F, xf(x, h * 0.45 - 0.3, z, (rand() - 0.5) * 0.12, a, (rand() - 0.5) * 0.12, 0.8, h * 0.5, 0.45));
+          ? under(F, xf(x * 1.08, 0.55, z * 1.08, Math.PI / 2 - 0.1, a + 0.4, 0, 1.5, h, 0.8))
+          : under(F, xf(x, h * 0.5 - 0.6, z, (rand() - 0.5) * 0.12, a, (rand() - 0.5) * 0.12, 1.5, h, 0.8));
+        const base = jitter('#8c857b', 0.05);
+        const lichen = new Color('#b9b48a');
         s.solid.add(g, m, {
-          color: (p, nn, o) => o.copy(jitter(PALETTE.stone, 0.05)).lerp(jitter(PALETTE.moss), Math.max(0, nn.y - 0.4) * 0.9 + 0.1),
+          color: (p, nn, o) => {
+            o.copy(base).multiplyScalar(0.85 + 0.2 * Math.sin(p.y * 2.3 + p.x));
+            // Lichen speckle on the sides, moss on top and around the foot.
+            if (Math.sin(p.x * 5.1 + p.y * 3.7 + p.z * 4.3) > 0.75) o.lerp(lichen, 0.5);
+            o.lerp(jitter(PALETTE.moss), Math.min(0.8, Math.max(0, nn.y - 0.3) * 0.9 + Math.max(0, 1.2 - (p.y - site.y)) * 0.4));
+          },
         });
         if (!fallen) col(x, z, 1.0);
       }

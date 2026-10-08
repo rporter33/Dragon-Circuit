@@ -162,6 +162,12 @@ export function dressMaterial(opts: DressMaterialOptions = {}): MeshToonMaterial
   const glowDay = opts.glowDay ?? 0.12;
   const glowNight = opts.glowNight ?? 2.4;
   m.onBeforeCompile = (shader) => {
+    // Thin geometry (vines, root tips, stems) is sub-pixel at a distance; with MSAA the varyings
+    // get extrapolated past the triangle, so keep the interpolated color in range.
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      '#include <color_fragment>\ndiffuseColor.rgb = clamp(diffuseColor.rgb, 0.0, 1.5);',
+    );
     if (sway !== 'none') {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>\n${VERTEX_PARS}`)
@@ -178,7 +184,7 @@ export function dressMaterial(opts: DressMaterialOptions = {}): MeshToonMaterial
         .replace(
           '#include <emissivemap_fragment>',
           `#include <emissivemap_fragment>
-          totalEmissiveRadiance += vColor.rgb * vDwGlow * (uDwGlowDay + uNight * uDwGlowNight);`,
+          totalEmissiveRadiance += clamp(vColor.rgb, 0.0, 1.5) * clamp(vDwGlow, 0.0, 1.0) * (uDwGlowDay + uNight * uDwGlowNight);`,
         );
     }
     if (opts.keepNormals) {

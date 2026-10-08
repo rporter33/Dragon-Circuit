@@ -125,7 +125,7 @@ vec3 objectNormal;
   float vis = clamp((keep * 1.25 - aShape.z) / max(keep * 0.25, 0.004), 0.0, 1.0);
   float edge = 1.0 - smoothstep(uDwRadius * 0.78, uDwRadius, dist);
   float k = vis * edge;
-  float grow = mix(1.0, 2.2, smoothstep(10.0, uDwRadius * 0.9, dist));
+  float grow = mix(1.0, 1.7, smoothstep(10.0, uDwRadius * 0.9, dist));
   vec2 lxz = vec2(cy * position.x - sy * position.z, sy * position.x + cy * position.z) * aShape.y;
   // Heads grow with distance (stems don't) so drifts keep reading as dabs of color far away.
   float headK = aFl.x > 0.5 ? grow : 1.0;
@@ -169,7 +169,7 @@ const FLOWER_COLOR = /* glsl */ `
 vColor = vec4(1.0);
 {
   vec3 stem = dwSrgb(aBase.rgb);
-  vec3 petal = dwSrgb(aTip.rgb) * (0.8 + 0.25 * aTip.a);
+  vec3 petal = dwSrgb(aTip.rgb) * (0.7 + 0.2 * aTip.a);
   if (aFl.x < 0.5) vColor.rgb = stem * (0.55 + 0.45 * aFl.y);
   else if (aFl.x < 1.5) vColor.rgb = mix(petal * 1.08, petal * 0.78, aFl.z);
   else vColor.rgb = mix(petal, dwSrgb(vec3(1.0, 0.82, 0.35)), 0.65);
@@ -184,6 +184,10 @@ varying float vDwGlow;
 const FRAGMENT_EMISSIVE = /* glsl */ `
 #include <emissivemap_fragment>
 {
+  // Far blades are thinner than a pixel; with MSAA their varyings get extrapolated outside the
+  // triangle (no centroid sampling), which would flash single white/black pixels. Clamp them.
+  float vDwT = clamp(vDwT, 0.0, 1.0);
+  float vDwGlow = clamp(vDwGlow, 0.0, 1.0);
   // Backlit blades glow with the sun behind them (golden-hour rim on the meadow).
   vec3 dwV = normalize(vDwWorldPos - cameraPosition);
   float dwBack = pow(max(dot(dwV, uSunDir), 0.0), 4.0) * smoothstep(-0.05, 0.15, uSunDir.y);
@@ -213,10 +217,12 @@ function fieldMaterial(kind: 'grass' | 'flower', uniforms: FieldUniforms): MeshT
       .replace('#include <color_vertex>', flower ? FLOWER_COLOR : GRASS_COLOR);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${FRAGMENT_PARS}`)
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = clamp(diffuseColor.rgb, 0.0, 1.0);')
       .replace(
         '#include <normal_fragment_begin>',
         `float faceDirection = 1.0;
-        vec3 normal = normalize( vNormal );
+        float dwNl = length( vNormal );
+        vec3 normal = dwNl > 1e-4 ? vNormal / dwNl : vec3( 0.0, 0.0, 1.0 );
         vec3 nonPerturbedNormal = normal;`,
       )
       .replace('#include <emissivemap_fragment>', FRAGMENT_EMISSIVE);

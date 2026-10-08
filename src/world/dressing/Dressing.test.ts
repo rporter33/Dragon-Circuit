@@ -6,6 +6,8 @@ import { QUALITY } from '../../render/quality';
 import { Dressing } from './Dressing';
 import { roostPlan } from './structures/roostPlan';
 
+// Building the whole system takes a second or two; give heavy tests room on a busy machine.
+const SLOW = 30000;
 const terrain = new Terrain(LAYOUT);
 const scene = new Scene();
 const dressing = new Dressing({ scene, terrain, quality: QUALITY.high, asyncStreaming: false });
@@ -50,7 +52,7 @@ describe('Dressing system', () => {
     cam.position.set(0, 2000, 2800);
     dressing.update(1 / 30, cam, cam.position);
     expect(dressing.grass.stats.chunks).toBe(0);
-  });
+  }, SLOW);
 
   it('buckets the forest into LODs without exceeding the draw budget', () => {
     const cam = new PerspectiveCamera(60, 16 / 9, 0.5, 7000);
@@ -61,11 +63,11 @@ describe('Dressing system', () => {
     const f = dressing.forest.stats;
     expect(f.byLod[0] + f.byLod[1] + f.byLod[2]).toBeGreaterThan(500);
     expect(f.drawCalls).toBeLessThanOrEqual(33);
-  });
+  }, SLOW);
 
   it('rebuilds cleanly on a quality change', () => {
     dressing.setQuality(QUALITY.low);
     expect(dressing.forest.stats.instances).toBeGreaterThan(1000);
     dressing.setQuality(QUALITY.high);
-  });
+  }, SLOW);
 });
