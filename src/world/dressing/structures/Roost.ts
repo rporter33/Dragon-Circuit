@@ -355,6 +355,25 @@ function buildDeck(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, out: Site
   out.exclusions.capsule(root.x, root.z, tip.x, tip.z, hw + 2, false);
 }
 
+/** A stone well with a little shingled roof, a winch and a bucket. */
+function buildWell(s: SiteBuilders, x: number, y: number, z: number): void {
+  const F = xf(x, y, z, 0, 0.4, 0);
+  const b = s.solid;
+  for (let c = 0; c < 3; c++) {
+    for (let k = 0; k < 10; k++) {
+      const a = ((k + (c % 2) * 0.5) / 10) * Math.PI * 2;
+      box(b, F, Math.sin(a) * 1.35, 0.18 + c * 0.32, Math.cos(a) * 1.35, 0.85, 0.3, 0.42, c === 2 ? PALETTE.stoneWarm : PALETTE.stone, { ry: a });
+    }
+  }
+  b.add(new CylinderGeometry(1.15, 1.15, 0.05, 16), under(F, xf(0, 0.55, 0)), { color: '#24323a' });
+  for (const sx of [-1.45, 1.45]) post(b, F, v(sx, 0, 0), v(sx, 2.6, 0), 0.12, PALETTE.timber, 6);
+  post(b, F, v(-1.6, 1.85, 0), v(1.6, 1.85, 0), 0.1, PALETTE.timberLight, 8);
+  box(b, F, 1.75, 1.85, 0.25, 0.08, 0.08, 0.5, PALETTE.iron);
+  shingleRoof(b, F, -1.1, 1.1, 1.9, 2.3, 3.1, PALETTE.shingle, PALETTE.shingleAlt);
+  post(b, F, v(0, 1.85, 0), v(0, 1.0, 0), 0.015, PALETTE.rope, 6);
+  b.add(new CylinderGeometry(0.22, 0.17, 0.32, 10), under(F, xf(0, 0.85, 0)), { color: jitter(PALETTE.timberLight) });
+}
+
 /** Build everything on the Roost into the site builders; registers keep-outs/colliders/decks. */
 export function buildRoost(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, out: SiteOutputs): void {
   resetJitter(0x2005);
@@ -411,6 +430,21 @@ export function buildRoost(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, o
     } else {
       fence(s.solid, I, v(a.x, 0, a.z), v(c.x, 0, c.z), 2.6, gy);
     }
+  }
+  // A well on the plaza and a feeding trough by where the wyvern waits.
+  buildWell(s, plan.well.x, gy(plan.well.x, plan.well.z), plan.well.z);
+  out.colliders.push({ x: plan.well.x, z: plan.well.z, radius: 1.9, y0: gy(plan.well.x, plan.well.z) - 1, y1: gy(plan.well.x, plan.well.z) + 4 });
+  out.exclusions.circle(plan.well.x, plan.well.z, 3);
+  {
+    const t = plan.trough;
+    const T = xf(t.x, gy(t.x, t.z), t.z, 0, t.yaw, 0);
+    box(s.solid, T, 0, 0.45, 0, 3.4, 0.8, 1.2, PALETTE.timberLight);
+    box(s.solid, T, 0, 0.82, 0, 3.1, 0.04, 0.9, PALETTE.water);
+    for (const sx of [-1.6, 1.6]) box(s.solid, T, sx, 0.4, 0, 0.2, 0.85, 1.35, PALETTE.timber);
+    hayPile(s.solid, T, 0.4, 0.1, 2.0, 1.6, 29);
+    barrel(s.solid, T, 2.6, 0, 0.6);
+    out.colliders.push({ x: t.x, z: t.z, radius: 1.7, y0: gy(t.x, t.z) - 1, y1: gy(t.x, t.z) + 1.2 });
+    out.exclusions.circle(t.x, t.z, 3.5);
   }
   const pc = { x: pts.reduce((t, p) => t + p.x, 0) / pts.length, z: pts.reduce((t, p) => t + p.z, 0) / pts.length };
   hayPile(s.solid, I, pc.x + 2, gy(pc.x + 2, pc.z - 2), pc.z - 2, 1.8, 23);

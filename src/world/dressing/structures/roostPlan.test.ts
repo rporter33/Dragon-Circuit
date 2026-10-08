@@ -14,6 +14,8 @@ describe('the Roost site plan', () => {
       ...plan.banners.map((b) => ({ x: b.x, z: b.z, r: 0.5 })),
       ...plan.lanterns.map((l) => ({ x: l.x, z: l.z, r: 0.5 })),
       ...plan.paddock.map((p) => ({ x: p.x, z: p.z, r: 0.5 })),
+      { x: plan.well.x, z: plan.well.z, r: 1.9 },
+      { x: plan.trough.x, z: plan.trough.z, r: 1.8 },
     ];
     for (const c of plan.clear) {
       for (const t of things) expect(Math.hypot(t.x - c.x, t.z - c.z), `${t.x},${t.z}`).toBeGreaterThan(c.r + t.r);

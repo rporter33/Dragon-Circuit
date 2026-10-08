@@ -30,6 +30,9 @@ export interface RoostPlan {
   path: { x: number; z: number }[];
   /** Spots that must stay clear: spawn, wyvern spawn, stable door apron. */
   clear: { x: number; z: number; r: number }[];
+  /** A well on the plaza and a feeding trough near the wyvern's waiting spot. */
+  well: { x: number; z: number };
+  trough: { x: number; z: number; yaw: number };
 }
 
 /** Direction from the Roost toward Gull's Rest — the launch deck points at the first glide. */
@@ -141,8 +144,18 @@ export function roostPlan(layout: WorldLayout, terrain: Terrain): RoostPlan | nu
     { x: layout.wyvernSpawn.position[0], z: layout.wyvernSpawn.position[2], r: 13 },
     { ...local(0, 7), r: 8 },
   ];
+  // The well sits off to the right of the walk from the spawn to the stable door; the trough
+  // stands a few strides from where the wyvern waits, facing it.
+  const well = local(23, 22);
+  const ws = layout.wyvernSpawn.position;
+  const awayX = ws[0] - d.x;
+  const awayZ = ws[2] - d.z;
+  const al = Math.hypot(awayX, awayZ) || 1;
+  const trough = { x: ws[0] - (awayZ / al) * 17, z: ws[2] + (awayX / al) * 17, yaw: Math.atan2(awayX, awayZ) };
   return {
     islandId: d.id,
+    well,
+    trough,
     ground,
     stable: { x: st.x, z: st.z, yaw: st.yaw, width: 24, depth: 20 },
     towers,
