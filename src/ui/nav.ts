@@ -63,6 +63,14 @@ export function pickSpatial(from: Rect, cands: readonly (Rect | null)[], dir: Na
         sideCenter = Math.abs(cy - fcy);
         break;
     }
+    // Stay roughly in the pressed direction: a candidate that does not share the row (or
+    // column) must lie within a cone, so "right" never drops to a button far below.
+    if (side > 0) {
+      const dAlong = dir === 'left' || dir === 'right' ? Math.abs(cx - fcx) : Math.abs(cy - fcy);
+      const dSide = dir === 'left' || dir === 'right' ? Math.abs(cy - fcy) : Math.abs(cx - fcx);
+      const cone = dir === 'left' || dir === 'right' ? 0.75 : 2.5;
+      if (dSide > dAlong * cone) continue;
+    }
     const score = along + side * 3 + sideCenter * 0.15;
     if (score < bestScore) {
       bestScore = score;

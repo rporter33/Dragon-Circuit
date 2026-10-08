@@ -39,6 +39,7 @@ export class FocusScope {
   /** Wrap from the bottom of a list to the top (simple vertical menus). */
   wrap = false;
   private rects: (Rect | null)[] = [];
+  private bound = new WeakSet<HTMLElement>();
 
   constructor(private host: FocusHost) {}
 
@@ -47,23 +48,31 @@ export class FocusScope {
   }
 
   add(item: FocusItem): FocusItem {
-    const i = this.items.length;
     this.items.push(item);
-    item.el.classList.add('dw-focusable');
-    item.el.addEventListener('pointerenter', () => {
-      if (performance.now() - lastMouseMove > 250) return; // layout moved under a still mouse
-      if (this.items[i] === item && this.index !== i) this.focus(i, { sound: true, scroll: false });
-    });
-    item.el.addEventListener('click', (e) => {
-      if (this.items[i] !== item) return;
-      e.stopPropagation();
-      if (this.index !== i) this.focus(i, { sound: false, scroll: false });
-      item.activate?.();
-    });
+    const el = item.el;
+    el.classList.add('dw-focusable');
+    // Elements can outlive a rebuild (a footer button re-added on every tab), so listeners are
+    // bound once per element and look up whichever item currently owns it.
+    if (!this.bound.has(el)) {
+      this.bound.add(el);
+      el.addEventListener('pointerenter', () => {
+        if (performance.now() - lastMouseMove > 250) return; // layout moved under a still mouse
+        const i = this.items.findIndex((it) => it.el === el);
+        if (i >= 0 && this.index !== i) this.focus(i, { sound: true, scroll: false });
+      });
+      el.addEventListener('click', (e) => {
+        const i = this.items.findIndex((it) => it.el === el);
+        if (i < 0) return;
+        e.stopPropagation();
+        if (this.index !== i) this.focus(i, { sound: false, scroll: false });
+        this.items[i].activate?.();
+      });
+    }
     return item;
   }
 
   clear(): void {
+    this.items[this.index]?.el.classList.remove('is-focus');
     this.items = [];
     this.index = -1;
   }

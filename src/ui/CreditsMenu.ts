@@ -33,7 +33,10 @@ export class CreditsMenu extends Panel {
     }
     s.body.append(c);
     this.body = s.body;
-    s.foot.append(hintBar([['back', 'Back']]));
+    s.foot.append(hintBar([
+      ['navigate', 'Scroll'],
+      ['back', 'Back'],
+    ]));
     s.root.classList.add('dw-enter');
     this.root.append(s.root);
     ctx.fillGlyphs(this.root);

@@ -26,6 +26,12 @@ describe('pickSpatial', () => {
     const g = [r(0, 0), null, r(0, 100), { x: 0, y: 50, w: 0, h: 0 }];
     expect(pickSpatial(g[0]!, g, 'down', 0)).toBe(2);
   });
+  it('does not wander far off-axis: right from the end of a row never drops to a button below', () => {
+    const g = [r(0, 0), r(110, 0), r(0, 400, 100, 40), r(112, 400, 100, 40)];
+    expect(pickSpatial(g[1]!, g, 'right', 1)).toBe(-1);
+    // ...but down still reaches it.
+    expect(pickSpatial(g[1]!, g, 'down', 1)).toBe(3);
+  });
   it('prefers the item in line over a nearer one off to the side', () => {
     const g = [r(0, 0), r(300, 45), r(0, 120)];
     expect(pickSpatial(g[0]!, g, 'down', 0)).toBe(2);

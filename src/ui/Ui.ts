@@ -375,7 +375,7 @@ export class Ui implements UiSystem {
 
     // HUD.
     const top = this.stack[this.stack.length - 1];
-    const hudVisible = this.screen === 'play' && !this.hudHidden && (!top || !top.hidesHud);
+    const hudVisible = this.screen === 'play' && !this.hudHidden && (!top || !top.hidesHud) && view.player.mode !== 'respawning';
     this.hud.setVisible(hudVisible);
     this.hud.update(dt, view);
     this.raceHud.update(dt, view, hudVisible);
@@ -384,7 +384,8 @@ export class Ui implements UiSystem {
 
     // Panels.
     for (const panel of this.stack) panel.update(dt, view);
-    const veil = this.stack.length > 0 && this.screen !== 'title' && this.screen !== 'stable' && !(top instanceof PhotoMode);
+    // Shade the world behind sheets and dialogs; the title, the Stable and photo mode frame it.
+    const veil = !!top && !(top instanceof Title) && !(top instanceof Stable) && !(top instanceof PhotoMode);
     this.veil.classList.toggle('is-on', veil);
   }
 

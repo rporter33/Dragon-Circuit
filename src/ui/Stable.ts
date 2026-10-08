@@ -32,6 +32,8 @@ export class Stable extends Panel {
   private rider: RiderLook;
   /** Per-section re-markers for the selected tile after a change. */
   private markers: (() => void)[] = [];
+  private saveBtn!: HTMLElement;
+  private revertBtn!: HTMLElement;
 
   constructor(
     ctx: UiCtx,
@@ -75,8 +77,8 @@ export class Stable extends Panel {
 
     const saveBtn = h('div', { class: 'dw-btn', html: '<span class="dw-hint-g" data-glyph="pause" data-only="pad"></span><span>Save &amp; leave</span>' });
     const revertBtn = h('div', { class: 'dw-btn dw-btn--quiet', html: '<span class="dw-hint-g" data-glyph="back"></span><span>Revert</span>' });
-    saveBtn.addEventListener('click', () => this.saveAndLeave());
-    revertBtn.addEventListener('click', () => this.requestRevert());
+    this.saveBtn = saveBtn;
+    this.revertBtn = revertBtn;
     const foot = div(
       'dw-stable-foot',
       div('dw-stable-btns', saveBtn, revertBtn),
@@ -173,6 +175,17 @@ export class Stable extends Panel {
     this.scope.clear();
     this.markers = [];
     this.body.replaceChildren(...this.buildTab(tab));
+    // The footer buttons are part of every tab's focus order (down from the last tile).
+    this.scope.add({
+      el: this.saveBtn,
+      onFocus: () => this.setDetail('Save & leave', 'Keep this look and head back out.'),
+      activate: () => this.saveAndLeave(),
+    });
+    this.scope.add({
+      el: this.revertBtn,
+      onFocus: () => this.setDetail('Revert', 'Put back the look you walked in with.'),
+      activate: () => this.requestRevert(),
+    });
     this.refreshMarks();
     this.body.scrollTop = 0;
     // Start on the selected tile of the first section, so A does nothing surprising.
