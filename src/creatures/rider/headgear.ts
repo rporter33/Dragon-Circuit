@@ -264,7 +264,7 @@ export function buildHeadgear(ctx: BodyCtx, look: RiderLook): void {
       const n = c.clone().sub(head.center).normalize();
       const q = new Quaternion().setFromUnitVectors(ZV, n);
       b.ellipsoid(c, new Vector3(0.02, 0.025, 0.009), hb, gold, { rot: q, lat: 5, lon: 10 });
-      b.ellipsoid(c.clone().addScaledVector(n, 0.006), new Vector3(0.013, 0.017, 0.008), hb, pal.glow, { rot: q, lat: 6, lon: 10, glow: 1 });
+      b.ellipsoid(c.clone().addScaledVector(n, 0.006), new Vector3(0.015, 0.019, 0.009), hb, pal.glow, { rot: q, lat: 6, lon: 10, glow: 1.6 });
       // Little wings of gold either side of the stone.
       for (const sgn of [1, -1]) {
         const a = head.surface(new Vector3(sgn * 0.12, 0.45, 0.88), new Vector3(), t + 0.029);

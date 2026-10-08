@@ -85,6 +85,7 @@ export class Rider implements RiderRenderable {
   private readonly lastQuat = new Quaternion();
   private readonly offPos = new Vector3();
   private readonly offQuat = new Quaternion();
+  private readonly anchorVel = new Vector3();
   private hasLast = false;
   private lastMounted = false;
   private lastAction = '';
@@ -278,14 +279,18 @@ export class Rider implements RiderRenderable {
 
     // --- Continuity: teleports cut, small discontinuities are absorbed ---
     let snapped = !this.hasLast;
-    if (this.hasLast) {
-      const jump = _v.subVectors(_p, this.lastPos).length();
-      const expected = pose.velocity.length() * dt;
+    if (this.hasLast && dt > 0) {
+      const step = _v.subVectors(_p, this.lastPos);
+      const jump = step.length();
+      // What the anchor's own recent motion predicts (pose.velocity can lag interpolation).
+      const expected = Math.max(pose.velocity.length(), this.anchorVel.length()) * dt;
       if (jump > Math.max(6, expected * 3 + 3)) snapped = true;
       else {
         const attachChanged = pose.mounted !== this.lastMounted;
-        const err = jump - expected;
-        if (attachChanged || err > 0.12) {
+        const err = _v2.copy(step).addScaledVector(this.anchorVel, -dt).length();
+        // Mount/dismount blend their frames exactly; elsewhere a sudden step (a seat that
+        // isn't where the player state put it, a stair) is absorbed instead of popping.
+        if (attachChanged || (!exact && err > 0.15)) {
           // Keep the rendered pose where it was (plus the expected motion); decay the difference.
           this.offPos.copy(this.group.position).addScaledVector(pose.velocity, dt).sub(_p);
           this.offQuat.copy(this.group.quaternion).multiply(_iq.copy(_q).invert());
@@ -295,6 +300,10 @@ export class Rider implements RiderRenderable {
     if (snapped) {
       this.offPos.set(0, 0, 0);
       this.offQuat.identity();
+      this.anchorVel.copy(pose.velocity);
+    } else if (this.hasLast && dt > 0) {
+      _v.subVectors(_p, this.lastPos).divideScalar(dt);
+      if (_v.lengthSq() < 400 * 400) this.anchorVel.lerp(_v, 1 - Math.exp(-15 * dt));
     }
     this.lastPos.copy(_p);
     this.lastQuat.copy(_q);

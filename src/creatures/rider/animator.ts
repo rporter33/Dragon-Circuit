@@ -138,6 +138,7 @@ export class RiderAnimator {
   private accel = new Vector3();
   private prevVel = new Vector3();
   private initialized = false;
+  private footActive = true;
   // Bind lengths.
   private readonly lens: { thigh: number; shin: number; upper: number; fore: number; ankleY: number; ballZ: number; ballY: number };
   private readonly shoulderChest: [Vector3, Vector3];
@@ -187,7 +188,20 @@ export class RiderAnimator {
     }
 
     const wM = ctx.mountW;
-    if (wM < 0.999) this.footLayer(dt, pose, ctx, this.LF);
+    if (wM < 0.999) {
+      if (!this.footActive) {
+        // Coming back to the ground layer after riding: its state is stale (feet were planted
+        // wherever the rider mounted), so start it fresh from here.
+        this.gait.reset(pose.position, pose.yaw, ctx.ground);
+        const air = pose.action === 'jump' || pose.action === 'fall' || pose.action === 'dismount';
+        this.airW = air ? 1 : 0;
+        this.wasAir = air;
+        this.flailW = 0;
+        this.landKick = 0;
+      }
+      this.footLayer(dt, pose, ctx, this.LF);
+    }
+    this.footActive = wM < 0.999;
     if (wM > 0.001) this.mountLayer(dt, pose, ctx, this.LM);
     this.blendAndApply(wM, ctx);
     this.prevAction = pose.action;
