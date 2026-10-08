@@ -7,6 +7,7 @@ import { EventBus } from '../core/events';
 import type { GameEvents, RiderLook, Settings, WyvernLook } from '../core/types';
 import { Renderer } from '../render/renderer';
 import { QUALITY } from '../render/quality';
+import { AdaptiveResolution } from '../render/adaptiveResolution';
 import { globalUniforms } from '../render/uniforms';
 import { Input, emptyFrame } from '../input/Input';
 import { Haptics } from '../input/haptics';
@@ -20,11 +21,12 @@ import { Wyvern } from '../creatures/wyvern/Wyvern';
 import { Rider } from '../creatures/rider/Rider';
 import { Races } from '../race/Races';
 import { Collectibles } from '../progression/Collectibles';
-import { LocalSaveStore } from '../progression/save';
+import { LocalSaveStore, SAVE_KEY } from '../progression/save';
 import { Fx } from '../fx/Fx';
 import { AudioSystem } from '../audio/Audio';
 import { Ui } from '../ui/Ui';
 import type { GameActions, GameScreen, GameView } from './contracts';
+import { guessQuality } from './settings';
 import { computePrompt } from '../player/prompts';
 import { readDebugParams, type DebugParams } from '../debug/params';
 import { findShowcase, type Showcase } from '../debug/showcase';
@@ -67,10 +69,14 @@ export class Game implements GameActions {
   private showcase: Showcase | null = null;
   /** Neutral input fed to the simulation when the player has no control (title, menus). */
   private idleInput = emptyFrame();
+  /** Lowers the render resolution when frames run long (real GPUs vary wildly). */
+  private adaptive = new AdaptiveResolution();
 
   constructor(container: HTMLElement, uiRoot: HTMLElement) {
     this.debug = readDebugParams();
     const settings = this.settings;
+    // First launch: pick a quality preset from what the GPU says about itself.
+    if (isFirstLaunch(this.save.data.playTime)) settings.quality = guessQuality();
     if (this.debug.quality) settings.quality = this.debug.quality;
     const quality = QUALITY[settings.quality];
 
@@ -222,7 +228,13 @@ export class Game implements GameActions {
     this.ui.update(dt, this.view);
 
     if (this.screen === 'play') this.save.data.playTime += dt;
-    if (render) this.renderer.render(this.scene, this.camera, dt);
+    if (render) {
+      this.renderer.render(this.scene, this.camera, dt);
+      if (!this.debug.manual && this.screen !== 'loading') {
+        const scale = this.adaptive.sample(dt);
+        if (scale !== null) this.renderer.setDynamicResolution(scale);
+      }
+    }
   }
 
   // --- Actions (called by the UI) -------------------------------------------------------------
@@ -361,5 +373,13 @@ export class Game implements GameActions {
 
   private wireEvents(): void {
     // Camera shake and controller rumble subscribe to the bus themselves (CameraRig, Haptics).
+  }
+}
+
+function isFirstLaunch(playTime: number): boolean {
+  try {
+    return playTime === 0 && localStorage.getItem(SAVE_KEY) === null;
+  } catch {
+    return false;
   }
 }

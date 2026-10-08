@@ -51,8 +51,7 @@ export function unlockContext(view: GameView): UnlockContext {
  */
 export function isOptionUnlocked(save: SaveStore, opt: CosmeticOption): boolean {
   if (opt.unlock.type === 'default') return true;
-  const isUnlocked = save.isUnlocked as (id: string, slot?: CosmeticSlot) => boolean;
-  return isUnlocked.call(save, opt.id, opt.slot);
+  return save.isUnlocked(opt.id, opt.slot);
 }
 
 /** Medal counts per tier (exact tier, not "at least"). */

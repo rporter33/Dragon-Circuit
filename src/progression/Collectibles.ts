@@ -63,6 +63,8 @@ const _m = new Matrix4();
 export class Collectibles implements CollectibleSystem {
   readonly total = { feathers: FEATHER_COUNT, relics: RELICS.length };
   readonly found = { feathers: 0, relics: 0 };
+  /** The relic catalog (names and lore) for the collection screen. */
+  readonly relics = RELICS;
   readonly group = new Group();
   readonly items: Collectible[];
 

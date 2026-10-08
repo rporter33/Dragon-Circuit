@@ -12,11 +12,29 @@
       #app { position: fixed; inset: 0; }
       #app canvas { display: block; width: 100%; height: 100%; outline: none; }
       #ui { position: fixed; inset: 0; pointer-events: none; }
+      /* Shown while the archipelago is built (about a second on a desktop). */
+      #boot {
+        position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 18px; color: #f3e3bf;
+        background: radial-gradient(ellipse at 50% 120%, #e9a86a 0%, #7b5a86 38%, #233452 75%, #141d33 100%);
+        font: 600 clamp(28px, 6vh, 64px) Georgia, 'Times New Roman', serif; letter-spacing: 0.18em;
+        transition: opacity 0.8s ease;
+      }
+      #boot small { font: italic 400 clamp(13px, 2vh, 18px) Georgia, serif; letter-spacing: 0.08em; opacity: 0.75; }
+      #boot .wind { width: min(320px, 50vw); height: 2px; overflow: hidden; border-radius: 2px; background: #f3e3bf22; }
+      #boot .wind::after {
+        content: ''; display: block; width: 40%; height: 100%; background: #f3e3bf;
+        animation: boot-wind 1.4s ease-in-out infinite;
+      }
+      @keyframes boot-wind { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+      @media (prefers-reduced-motion: reduce) { #boot .wind::after { animation: none; width: 100%; opacity: 0.4; } }
+      #boot.done { opacity: 0; pointer-events: none; }
     </style>
   </head>
   <body>
     <div id="app"></div>
     <div id="ui"></div>
+    <div id="boot" role="status" aria-live="polite">DRIFTWING<div class="wind"></div><small>Gathering the wind…</small></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

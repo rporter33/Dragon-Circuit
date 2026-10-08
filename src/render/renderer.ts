@@ -102,6 +102,8 @@ export class Renderer {
   private gradePass: ShaderPass;
   private target: WebGLRenderTarget;
   private resolutionScale = 1;
+  /** Automatic resolution factor (0.5..1) the game lowers when frames run long. */
+  private dynamicScale = 1;
   private size = new Vector2();
 
   constructor(container: HTMLElement, level: QualityLevel = 'high') {
@@ -141,6 +143,19 @@ export class Renderer {
     this.resize();
   }
 
+  /** Current automatic resolution factor. */
+  get dynamicResolution(): number {
+    return this.dynamicScale;
+  }
+
+  /** Set the automatic resolution factor (reallocates render targets, so change it rarely). */
+  setDynamicResolution(scale: number): void {
+    const s = Math.min(1, Math.max(0.5, scale));
+    if (Math.abs(s - this.dynamicScale) < 1e-3) return;
+    this.dynamicScale = s;
+    this.resize();
+  }
+
   /** Bloom strength (sky module raises it at dusk/night for glowing lanterns). */
   setBloom(strength: number, threshold?: number): void {
     this.bloom.strength = strength;
@@ -150,7 +165,7 @@ export class Renderer {
   resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, this.quality.pixelRatioCap) * this.resolutionScale;
+    const pr = Math.min(window.devicePixelRatio || 1, this.quality.pixelRatioCap) * this.resolutionScale * this.dynamicScale;
     this.gl.setPixelRatio(pr);
     this.gl.setSize(w, h, false);
     this.composer.setPixelRatio(pr);
