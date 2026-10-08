@@ -23,6 +23,7 @@ import { CameraShake, type ShakeOffsets } from './shake';
 import { FallRig, FlightRig, OrbitRig } from './followRigs';
 import { PhotoRig, StableRig, TitleRig, type StableFocus } from './showRigs';
 import { createShot, type CameraPose, type CameraShot, type Rig, type RigContext } from './rigTypes';
+import { emptyFrame } from '../input/Input';
 
 export type RigKind = 'flight' | 'mounted' | 'foot' | 'falling' | 'title' | 'stable' | 'photo';
 
@@ -532,19 +533,5 @@ export class CameraRig implements CameraSystem {
   }
 }
 
-const IDLE_INPUT: InputFrame = {
-  device: 'keyboard',
-  flight: { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flare: 0 },
-  foot: { moveX: 0, moveY: 0, sprint: false },
-  lookX: 0,
-  lookY: 0,
-  lookIsRate: false,
-  lookActive: false,
-  zoom: 0,
-  jumpHeld: false,
-  pressed: {
-    confirm: false, back: false, interact: false, pause: false, restart: false, jump: false,
-    navUp: false, navDown: false, navLeft: false, navRight: false, tabPrev: false, tabNext: false,
-    recenter: false, toggleHud: false,
-  },
-};
+/** Neutral input for probing a rig's shot without moving it (farFrom). */
+const IDLE_INPUT: InputFrame = emptyFrame();
