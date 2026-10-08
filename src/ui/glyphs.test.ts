@@ -1,0 +1,50 @@
+import { describe, expect, it } from 'vitest';
+import { bindingFor } from '../input/scheme';
+import { bindingKeyboardHtml, bindingPadHtml, controlsFor, glyphDevice, glyphHtml, keyGlyph, padGlyph } from './glyphs';
+
+describe('glyph device', () => {
+  it('follows the last-used device and pad family', () => {
+    expect(glyphDevice('keyboard', 'playstation')).toBe('keyboard');
+    expect(glyphDevice('gamepad', 'playstation')).toBe('playstation');
+    expect(glyphDevice('gamepad', null)).toBe('xbox');
+  });
+});
+
+describe('controlsFor', () => {
+  it('reads the control scheme, one control for prompts', () => {
+    expect(controlsFor('flare', 'xbox')).toMatchObject({ pad: ['LT'], keys: [] });
+    expect(controlsFor('flap', 'keyboard')).toMatchObject({ pad: [], keys: ['Space'] });
+    expect(controlsFor('tuck', 'xbox').hold).toBe(true);
+    expect(controlsFor('pitch', 'xbox').axis).toBe('↕');
+  });
+  it('collapses left/right key variants', () => {
+    expect(controlsFor('tuck', 'keyboard', true).keys).toEqual(['ShiftLeft']);
+  });
+});
+
+describe('glyph markup', () => {
+  it('draws face buttons per family', () => {
+    expect(padGlyph('A', 'xbox')).toContain('>A<');
+    // PlayStation draws shapes, not letters.
+    expect(padGlyph('A', 'playstation')).not.toContain('>A<');
+    expect(padGlyph('LB', 'playstation')).toContain('L1');
+    expect(padGlyph('Menu', 'playstation')).toContain('Options');
+  });
+  it('draws keys as keycaps and mouse buttons as a mouse', () => {
+    expect(keyGlyph('KeyF')).toContain('>F<');
+    expect(keyGlyph('Mouse0')).toContain('dw-g-mouse');
+    expect(keyGlyph('ArrowUp')).toContain('dw-key--icon');
+  });
+  it('builds prompt glyphs for both devices', () => {
+    expect(glyphHtml('interact', 'keyboard')).toContain('>F<');
+    expect(glyphHtml('interact', 'xbox')).toContain('>Y<');
+    expect(glyphHtml('navigate', 'keyboard')).toContain('dw-key--icon');
+  });
+  it('renders controls-screen columns', () => {
+    const look = bindingFor('look')!;
+    const kb = bindingKeyboardHtml(look);
+    expect(kb).toContain('dw-g-mouse');
+    expect(kb).toContain('click to capture');
+    expect(bindingPadHtml(bindingFor('tuck')!, 'xbox')).toContain('hold');
+  });
+});

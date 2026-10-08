@@ -45,6 +45,10 @@ export interface InputSystem {
   setScripted(frame: Partial<InputFrame> | null): void;
   /** Gamepad display name, if any (for button glyph style: xbox / playstation / generic). */
   readonly padStyle: 'xbox' | 'playstation' | 'generic' | null;
+  /** Optional: true while the mouse is captured for look (the HUD hides "click to look around"). */
+  readonly pointerLocked?: boolean;
+  /** Optional: true while play wants the mouse captured (the HUD shows "click to look around"). */
+  readonly pointerLockWanted?: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -296,12 +300,26 @@ export interface SaveStore {
   medalCount(medal: Exclude<Medal, 'none'>): number;
 }
 
+/** A relic as the collection screen and unlock requirements show it. */
+export interface RelicInfo {
+  id: string;
+  name: string;
+  /** A line or two of lore for the collection screen's lore card. */
+  lore: string;
+}
+
 export interface CollectibleSystem {
   readonly total: { feathers: number; relics: number };
   readonly found: { feathers: number; relics: number };
   update(dt: number, camera: PerspectiveCamera, player: PlayerSystem): void;
   /** Nearest uncollected collectible within range, for a subtle HUD shimmer hint. */
   nearestHint(p: Vector3, range: number): Vector3 | null;
+  /**
+   * Optional: every relic in the game (found or not; found = its id is in SaveData.collected).
+   * The collection screen lists them with their lore, and locked cosmetics name the relic they
+   * need. Without it the UI falls back to names derived from the relic ids.
+   */
+  readonly relics?: readonly RelicInfo[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -338,6 +356,8 @@ export interface GameActions {
   setRiderLook(look: RiderLook): void;
   applySettings(s: Settings): void;
   resetProgress(): void;
+  /** Optional: leave play (abandoning any race) and return to the title screen. */
+  quitToTitle?(): void;
 }
 
 /** Read-only view of the game the UI renders from each frame. */
