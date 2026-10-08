@@ -342,7 +342,7 @@ export class Rider implements RiderRenderable {
       if (this.dv.length() > 15) this.dv.setLength(15);
       this.frameVel.add(this.dv);
     }
-    this.cloth.update(dt, bones, this.origin, this.dv, pose.airflow, this.time, this.mountW > 0.5);
+    this.cloth.update(dt, bones, this.origin, this.dv, pose.airflow, this.time);
     this.lastAction = action;
   }
 

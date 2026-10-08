@@ -67,7 +67,7 @@ function headBand(ctx: BodyCtx, yF: number, yB: number, inflate: number, halfH: 
 }
 
 export function buildHeadgear(ctx: BodyCtx, look: RiderLook): void {
-  const { b, pal, head, d } = ctx;
+  const { b, pal, head } = ctx;
   const hb = sk(B.head);
   const t = hairThickness(look.hair);
   const brass = pal.brass;
@@ -140,8 +140,6 @@ export function buildHeadgear(ctx: BodyCtx, look: RiderLook): void {
       headBand(ctx, 0.41, 0.36, t + 0.018, 0.009, (phi) => (Math.abs(phi) < 0.9 ? tone(leather, 1.15) : leather));
       // Ear flaps.
       for (const s of [1, -1]) {
-        const top = head.surface(new Vector3(s, -0.05, -0.05), new Vector3(), t + 0.018);
-        const n = top.clone().sub(head.center).setY(0).normalize();
         b.sheet(
           3,
           4,
@@ -157,7 +155,6 @@ export function buildHeadgear(ctx: BodyCtx, look: RiderLook): void {
           () => hb,
           (u, v, inner) => (inner || v > 0.9 ? pal.cream : leather),
         );
-        void n;
       }
       // Chin strap hanging loose from one flap.
       const a = head.surface(new Vector3(-0.92, -0.62, 0.1), new Vector3(), 0.02);
@@ -277,5 +274,4 @@ export function buildHeadgear(ctx: BodyCtx, look: RiderLook): void {
     default:
       break;
   }
-  void d;
 }

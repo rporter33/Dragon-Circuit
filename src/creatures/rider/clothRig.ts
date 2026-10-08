@@ -275,7 +275,7 @@ export class ClothRig {
    * Advance. `origin` is the frame origin this frame (world), `dv` the change of the frame's
    * velocity since last frame, `air` the relative air velocity (wind − rider velocity).
    */
-  update(dt: number, bones: Bone[], origin: Vector3, dv: Vector3, air: Vector3, time: number, mountActive: boolean): void {
+  update(dt: number, bones: Bone[], origin: Vector3, dv: Vector3, air: Vector3, time: number): void {
     this.origin.copy(origin);
     for (const pc of this.pieces) {
       const n = pc.spec.cols * pc.spec.rows;
@@ -290,8 +290,6 @@ export class ClothRig {
       }
       pc.cloth.setAnchors(tg);
       pc.cloth.frameVelocityChange(dv.x, dv.y, dv.z);
-      // The mount collider only exists while in the saddle (it's parked far away otherwise).
-      void mountActive;
       pc.cloth.update(dt, { airX: air.x, airY: air.y, airZ: air.z, time });
       this.draw(pc);
       _m.makeTranslation(origin.x, origin.y, origin.z);

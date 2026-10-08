@@ -41,7 +41,6 @@ const _p = new Vector3();
 const _a = new Vector3();
 const _b = new Vector3();
 const _n = new Vector3();
-const _c = new Color();
 const _c3 = new Vector3();
 const _d3 = new Vector3();
 
@@ -315,7 +314,6 @@ export class SkinBuilder {
     }
     for (let j = 0; j < lon; j++) this.tri(bottom, ring(lat - 1, j + 1), ring(lat - 1, j));
     this.end();
-    void _c;
   }
 
   /** A rounded box between two points (a straight loft with a boxy superellipse section). */
