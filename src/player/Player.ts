@@ -1,133 +1,1079 @@
-// Player state machine: flying ↔ landed ↔ on foot, plus falls and respawns. (Baseline: flying
-// and a simple landed state. The player module owner implements the full machine.)
+// Player state machine: the rider and their wyvern.
+//
+//   flying ──touchdown──▶ landed ──interact──▶ dismounting ──▶ onFoot ──interact (near)──▶ mounting ──▶ landed
+//     ▲  ◀──takeoff / walk off a cliff──┘                         │ walks off an edge
+//     │                                                           ▼
+//     ├──────────────── caught (0.8 s later) ◀──────────────── falling
+//     └── respawning ◀── below the cloud floor (fade to white, back above the last safe ground)
+//
+// Physics runs in fixedUpdate (120 Hz): the flight model while airborne, kinematic walkers on
+// the ground. update() interpolates everything into the render poses once per frame.
 
-import { Euler, Quaternion, Vector3 } from 'three';
-import type { BreedId, BreedStats, FlightEnvironment, InputFrame, PlayerMode, RiderPose, WyvernPose } from '../core/types';
+import { Quaternion, Vector3 } from 'three';
+import type {
+  BreedId,
+  BreedStats,
+  FlightEnvironment,
+  FlightInput,
+  FlightState,
+  GroundHit,
+  InputFrame,
+  PlayerMode,
+  RiderAction,
+  RiderPose,
+  Settings,
+  WyvernGait,
+  WyvernPose,
+} from '../core/types';
 import type { GameEventBus } from '../core/events';
 import type { PlayerSystem } from '../game/contracts';
 import type { Terrain } from '../world/terrain';
 import { BREEDS } from '../flight/breeds';
 import { FlightModel, createFlightState } from '../flight/FlightModel';
+import { angleDelta, clamp, clamp01, damp, DEG, lerp, smoothstep } from '../core/math';
+import { hashSeed, mulberry32 } from '../core/rng';
+import { createRiderPose, createWyvernPose } from './poses';
+import { standingOrientation, yawOf } from './ground';
+import { RiderFoot } from './foot';
+import { Companion } from './companion';
+import { nearStable } from './prompts';
+import { PLAYER_TUNING as P } from './tuning';
 
 export interface PlayerDeps {
   terrain: Terrain;
   env: FlightEnvironment;
   events: GameEventBus;
   breed: BreedId;
+  /** Read for settings.holdToFlap. Optional: hold-to-flap when absent. */
+  settings?: () => Settings;
 }
 
-export function createWyvernPose(): WyvernPose {
-  return {
-    position: new Vector3(),
-    orientation: new Quaternion(),
-    velocity: new Vector3(),
-    airborne: true,
-    airspeed: 0,
-    angularVelocity: new Vector3(),
-    wingSpread: 1,
-    flapPhase: 0,
-    flapStrength: 0,
-    flare: 0,
-    stall: 0,
-    fatigue: 0,
-    gait: 'idle',
-    groundSpeed: 0,
-    gaitTime: 0,
-    lookTarget: new Vector3(),
-    groundY: null,
-  };
-}
+// Scratch.
+const _v = new Vector3();
+const _v2 = new Vector3();
+const _fwd = new Vector3();
+const _up = new Vector3();
+const _left = new Vector3();
+const _q = new Quaternion();
+const UP = new Vector3(0, 1, 0);
+const NEUTRAL: FlightInput = { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flare: 0 };
 
-export function createRiderPose(): RiderPose {
-  return {
-    mounted: true,
-    position: new Vector3(),
-    yaw: 0,
-    velocity: new Vector3(),
-    action: 'mounted',
-    actionTime: 0,
-    lean: 0,
-    crouch: 0,
-    brace: 0,
-    airflow: new Vector3(),
-  };
-}
+/** Seat (where the rider's hips rest) in body space, as a fraction of standHeight. */
+const SEAT_UP = 0.5;
+const SEAT_FWD = 0.35;
 
 export class Player implements PlayerSystem {
   mode: PlayerMode = 'flying';
   breed: BreedStats;
   readonly model: FlightModel;
-  wyvernPose = createWyvernPose();
-  riderPose = createRiderPose();
-  riderPosition = new Vector3();
-  prevPosition = new Vector3();
-  position = new Vector3();
+  readonly wyvernPose: WyvernPose = createWyvernPose();
+  readonly riderPose: RiderPose = createRiderPose();
+  readonly riderPosition = new Vector3();
+  readonly prevPosition = new Vector3();
+  readonly position = new Vector3();
   controllable = true;
   fade = 0;
+  /** Seconds since the mode changed. */
+  modeTime = 0;
+  /** The wyvern on the ground (riderless or carrying the rider) and the rider on foot. */
+  readonly companion = new Companion();
+  readonly foot = new RiderFoot();
+
   private deps: PlayerDeps;
-  private prevQuat = new Quaternion();
+  private simTime = 0;
+  private cameraYaw = 0;
+
+  // Interpolation: wyvern body and rider (feet on foot / seat mounted).
+  private prevWyPos = new Vector3();
+  private prevWyQuat = new Quaternion();
+  private riderPos = new Vector3();
+  private prevRiderPos = new Vector3();
+  private riderYaw = 0;
+  private prevRiderYaw = 0;
+  private riderVel = new Vector3();
+  private riderMounted = true;
+
+  // Animation channels written each fixed step.
+  private airborne = true;
+  private gait: WyvernGait = 'idle';
+  private gaitStart = 0;
+  private wingSpread = 1;
+  private flapPhase = 0;
+  private flapStrength = 0;
+  private flare = 0;
+  private groundSpeed = 0;
+  private groundY: number | null = null;
+  private turnRate = 0;
+  private riderAction: RiderAction = 'mounted';
+  private riderActionStart = 0;
+  /** Wyvern takeoff crouch (0..1) and the rider's own crouch. */
+  private crouch = 0;
+  private riderCrouch = 0;
+  private brace = 0;
+  private lean = 0;
+  private fatigue = 0;
+  private landKick = 0;
+
+  // Input.
+  private latched = false;
+  private latchInteract = false;
+  private latchJump = false;
+  private prevInteract = false;
+  private prevJump = false;
+  private prevFlap = 0;
+  private flapQueued = 0;
+  private beatsAtQueue = 0;
+  private queueAge = 0;
+  private flightIn: FlightInput = { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flare: 0 };
+
+  // Transitions.
+  private takeoffTimer = -1;
+  private airTime = 0;
+  private launchGait: WyvernGait = 'idle';
+  private noLand = 0;
+  private landBlend = 1;
+  private touchdownQuat = new Quaternion();
+  private transFrom = new Vector3();
+  private transTo = new Vector3();
+  private respawnPlaced = false;
+  private waveTimer = 0;
+  private landActionTimer = 0;
+  private hitCooldown = 0;
+  private stillTime = 0;
+
+  // Last place it was safe to stand (respawn point).
+  private lastSafe = new Vector3();
+  private lastSafeYaw = 0;
+  private safeTimer = 0;
+
+  // Where the wyvern looks.
+  private lookTarget = new Vector3();
+  private lookSmooth = new Vector3();
+  private lookFresh = true;
+  private idleLookTimer = 0;
+  private idleLookCount = 0;
+  private idleLook = new Vector3();
 
   constructor(deps: PlayerDeps) {
     this.deps = deps;
     this.breed = BREEDS[deps.breed];
     this.model = new FlightModel(this.breed);
+    const ws = deps.terrain.layout.wyvernSpawn;
+    deps.terrain.standingPoint(ws.position[0], ws.position[2], this.lastSafe);
+    this.lastSafeYaw = ws.yaw;
   }
 
-  get flight() {
+  get flight(): FlightState {
     return this.model.state;
   }
+
+  // --- Queries for prompts, HUD and tests ---------------------------------------------------
+
+  /** Height of the wyvern's body above the ground below it (null over open air). */
+  get heightAboveGround(): number | null {
+    const g = this.groundY;
+    return g === null ? null : this.model.state.position.y - g;
+  }
+
+  /** Horizontal distance from the rider to the wyvern's body. */
+  get wyvernDistance(): number {
+    const a = this.riderPos;
+    const b = this.model.state.position;
+    return Math.hypot(a.x - b.x, a.z - b.z);
+  }
+
+  /** Seconds the mounted wyvern has been standing still on the ground. */
+  get groundStillTime(): number {
+    return this.stillTime;
+  }
+
+  /** The point the wyvern respawns above. */
+  get safeGround(): Vector3 {
+    return this.lastSafe;
+  }
+
+  // --- Setup ----------------------------------------------------------------------------------
 
   setBreed(id: BreedId): void {
     this.breed = BREEDS[id];
     this.model.setBreed(this.breed);
+    if (this.mode !== 'flying' && this.mode !== 'respawning' && this.mode !== 'falling' && this.companion.state !== 'hop') {
+      const w = this.companion.walker;
+      w.settle(this.deps.terrain, this.breed.standHeight, w.groundY + 3);
+      this.syncModelFromGround();
+      this.prevWyPos.copy(this.model.state.position);
+    }
   }
 
-  teleport(position: Vector3, yaw: number, mode: 'flying' | 'landed' | 'onFoot', speed = 24): void {
-    const q = new Quaternion().setFromEuler(new Euler(0, yaw, 0));
-    this.model.reset(position, q, new Vector3(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(mode === 'flying' ? speed : 0));
-    this.prevPosition.copy(position);
-    this.position.copy(position);
-    this.prevQuat.copy(q);
-    this.mode = mode === 'onFoot' ? 'landed' : mode;
+  /** New game: the rider on foot at the spawn, the wyvern standing on the Roost beside the stable. */
+  placeAtSpawn(): void {
+    const layout = this.deps.terrain.layout;
+    const sp = layout.spawn;
+    const ws = layout.wyvernSpawn;
+    this.resetTransitions();
+    this.foot.place(_v.set(sp.position[0], 1e5, sp.position[2]), sp.yaw, this.deps.terrain);
+    const w = this.companion.walker;
+    w.position.set(ws.position[0], 1e5, ws.position[2]);
+    w.yaw = ws.yaw;
+    w.speed = 0;
+    w.settle(this.deps.terrain, this.breed.standHeight, 1e5);
+    this.companion.standStill();
+    this.model.state.stamina = 1;
+    this.model.state.winded = false;
+    this.syncModelFromGround();
+    this.lastSafe.set(w.position.x, w.groundY, w.position.z);
+    this.lastSafeYaw = ws.yaw;
+    this.setMode('onFoot', true);
+    this.syncRiderFromFoot();
+    this.snapInterpolation();
   }
 
-  fixedUpdate(dt: number, input: InputFrame, _cameraYaw: number): void {
+  teleport(position: Vector3, yaw: number, mode: 'flying' | 'landed' | 'onFoot', speed?: number): void {
+    this.resetTransitions();
+    const t = this.deps.terrain;
+    if (mode === 'landed' || mode === 'onFoot') {
+      const w = this.companion.walker;
+      if (mode === 'onFoot') {
+        if (this.foot.place(position, yaw, t)) {
+          // The wyvern waits a few meters to the rider's left.
+          w.position.set(position.x + Math.cos(yaw) * 4.5, position.y + 4, position.z - Math.sin(yaw) * 4.5);
+          w.yaw = yaw;
+          if (!w.settle(t, this.breed.standHeight)) {
+            w.position.set(position.x, position.y + 4, position.z);
+            w.settle(t, this.breed.standHeight);
+          }
+          w.speed = 0;
+          this.companion.standStill();
+          this.syncModelFromGround();
+          this.setMode('onFoot', true);
+          this.syncRiderFromFoot();
+          this.snapInterpolation();
+          return;
+        }
+      } else {
+        w.position.copy(position);
+        w.yaw = yaw;
+        w.speed = 0;
+        if (w.settle(t, this.breed.standHeight, position.y + 3)) {
+          this.companion.standStill();
+          this.syncModelFromGround();
+          this.setMode('landed', true);
+          this.syncRiderToSeat();
+          this.snapInterpolation();
+          return;
+        }
+      }
+      // No ground there: fly instead.
+    }
+    const q = standingOrientation(yaw, UP, 0, 0, _q);
+    const v = _v.set(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(speed ?? this.model.derived.vCruise);
+    this.model.reset(position, q, v);
+    this.model.setGrace(1);
+    this.airTime = 99;
+    this.setMode('flying', true);
+    this.syncRiderToSeat();
+    this.snapInterpolation();
+  }
+
+  /**
+   * Latch this frame's edge-triggered presses (interact, jump) so a press is never lost on a
+   * rendered frame that runs no fixed step, nor applied twice on one that runs several. Game
+   * calls it once per frame before the fixed steps; without it, presses are edge-detected
+   * across fixed steps instead.
+   */
+  latchPresses(input: InputFrame): void {
+    this.latched = true;
+    if (input.pressed.interact) this.latchInteract = true;
+    if (input.pressed.jump) this.latchJump = true;
+  }
+
+  // --- Simulation -----------------------------------------------------------------------------
+
+  fixedUpdate(dt: number, input: InputFrame, cameraYaw: number): void {
+    this.simTime += dt;
+    this.modeTime += dt;
+    this.cameraYaw = cameraYaw;
+    this.hitCooldown = Math.max(0, this.hitCooldown - dt);
+    this.noLand = Math.max(0, this.noLand - dt);
+    this.landActionTimer = Math.max(0, this.landActionTimer - dt);
+    this.waveTimer = Math.max(0, this.waveTimer - dt);
+    this.prevPosition.copy(this.model.state.position);
+    this.prevWyPos.copy(this.model.state.position);
+    this.prevWyQuat.copy(this.model.state.orientation);
+    this.prevRiderPos.copy(this.riderPos);
+    this.prevRiderYaw = this.riderYaw;
+
+    let interact: boolean;
+    let jump: boolean;
+    if (this.latched) {
+      interact = this.latchInteract;
+      jump = this.latchJump;
+      this.latchInteract = false;
+      this.latchJump = false;
+    } else {
+      interact = input.pressed.interact && !this.prevInteract;
+      jump = input.pressed.jump && !this.prevJump;
+    }
+    this.prevInteract = input.pressed.interact;
+    this.prevJump = input.pressed.jump;
+
+    switch (this.mode) {
+      case 'flying':
+        this.updateFlying(dt, input);
+        break;
+      case 'landed':
+        this.updateLanded(dt, input, interact);
+        break;
+      case 'onFoot':
+        this.updateOnFoot(dt, input, interact, jump);
+        break;
+      case 'mounting':
+        this.updateMounting(dt);
+        break;
+      case 'dismounting':
+        this.updateDismounting(dt);
+        break;
+      case 'falling':
+        this.updateFalling(dt);
+        break;
+      case 'respawning':
+        this.updateRespawning(dt);
+        break;
+    }
+    this.prevFlap = input.flight.flap;
+    this.position.copy(this.model.state.position);
+    this.controllable = this.mode === 'flying' || this.mode === 'landed' || this.mode === 'onFoot';
+    this.updateSafeGround(dt);
+    this.updateChannels(dt);
+    this.updateLookTarget(dt);
+  }
+
+  // --- Flying -----------------------------------------------------------------------------------
+
+  private updateFlying(dt: number, input: InputFrame): void {
     const s = this.model.state;
-    this.prevPosition.copy(s.position);
-    this.prevQuat.copy(s.orientation);
-    if (this.mode === 'flying') {
-      this.model.step(dt, input.flight, this.deps.env, this.deps.events);
-      if (s.position.y < this.deps.terrain.layout.cloudFloor) {
-        const p = new Vector3(0, 0, 0);
-        this.deps.terrain.standingPoint(0, 60, p);
-        p.y += 60;
-        this.teleport(p, Math.PI, 'flying');
-        this.deps.events.emit('respawn', { position: p });
+    this.buildFlightInput(dt, input.flight);
+    this.model.regenMultiplier = 1;
+    this.model.step(dt, this.flightIn, this.deps.env, this.deps.events);
+    if (this.flapQueued > 0 && s.winded) this.flapQueued = 0;
+    this.airTime += dt;
+    this.copyFlightAnim();
+    this.setGait(this.airTime < P.takeoffGaitTime ? this.launchGait : 'idle');
+    this.legContact(dt);
+    if (this.mode === 'flying' && s.position.y < this.deps.terrain.layout.cloudFloor) this.startRespawn();
+    this.syncRiderToSeat();
+  }
+
+  private buildFlightInput(dt: number, f: FlightInput): void {
+    const fi = this.flightIn;
+    fi.pitch = f.pitch;
+    fi.roll = f.roll;
+    fi.yaw = f.yaw;
+    fi.tuck = f.tuck;
+    fi.flare = f.flare;
+    const hold = this.deps.settings?.().holdToFlap ?? true;
+    if (hold) {
+      fi.flap = f.flap;
+      return;
+    }
+    // Tap mode: every press queues exactly one wingbeat (buffered until the current one ends).
+    if (f.flap > 0.35 && this.prevFlap <= 0.35) {
+      this.flapQueued = Math.max(0.6, f.flap);
+      this.beatsAtQueue = this.model.beats;
+      this.queueAge = 0;
+    } else if (this.flapQueued > 0 && f.flap > this.flapQueued) {
+      this.flapQueued = f.flap;
+    }
+    if (this.flapQueued > 0) {
+      this.queueAge += dt;
+      if (this.model.beats !== this.beatsAtQueue || this.queueAge > 1.2) this.flapQueued = 0;
+    }
+    fi.flap = this.flapQueued;
+  }
+
+  private copyFlightAnim(): void {
+    const s = this.model.state;
+    this.airborne = true;
+    this.wingSpread = s.wingSpread;
+    this.flapPhase = s.flapPhase;
+    this.flapStrength = s.flapStrength;
+    this.flare = s.flare;
+    this.groundSpeed = 0;
+    this.groundY = this.model.ground ? this.model.ground.y : null;
+    this.turnRate = 0;
+  }
+
+  /** Legs touching the ground: land, skid, bounce or skate off a slope. */
+  private legContact(dt: number): void {
+    const s = this.model.state;
+    const sh = this.breed.standHeight;
+    const g = this.deps.terrain.groundAt(s.position.x, s.position.z, s.position.y + 0.5);
+    if (!g) return;
+    this.groundY = g.y;
+    const h = s.position.y - g.y;
+    if (h > sh || this.noLand > 0) return;
+    // At speed the legs are tucked: contact is the body scraping (handled by the flight model).
+    const legsDown = s.airspeed < P.legsSpeed || s.flare > 0.25 || this.airTime < 0.6;
+    if (!legsDown) return;
+    const n = g.normal;
+    const vn = s.velocity.dot(n);
+    if (vn > 0.5) return; // pushing off / climbing away
+    const sink = Math.max(0, -vn);
+    _v.copy(s.velocity).addScaledVector(n, -vn);
+    const along = _v.length();
+    if (n.y < P.landNormalY) {
+      // Too steep to stand: the legs skate and the wyvern slides off.
+      s.position.addScaledVector(n, (sh - h) * 0.5);
+      if (vn < 0) s.velocity.addScaledVector(n, -vn);
+      return;
+    }
+    if (along < P.landSpeed && sink < P.landSink) {
+      this.touchdown(g, sink);
+      return;
+    }
+    // Too fast: the legs plant, the body is held up, speed is scrubbed off; a hard one bounces.
+    s.position.y = g.y + sh;
+    if (vn < 0) s.velocity.addScaledVector(n, -vn * (1 + (sink > P.landSink ? P.bounce : 0)));
+    if (along > 1e-3) s.velocity.addScaledVector(_v, -Math.min(along, P.skidDecel * dt) / along);
+    if (sink > P.landSink * 0.7 && this.hitCooldown <= 0) {
+      this.hitCooldown = 0.35;
+      this.landKick = 1;
+      this.deps.events.emit('terrainHit', { impulse: sink, point: s.position.clone().setY(g.y), normal: n.clone() });
+    }
+    this.setGait('landing');
+  }
+
+  private touchdown(g: GroundHit, sink: number): void {
+    const s = this.model.state;
+    const w = this.companion.walker;
+    w.position.set(s.position.x, g.y + this.breed.standHeight, s.position.z);
+    w.groundY = g.y;
+    w.normal.copy(g.normal);
+    w.surface = g.surface;
+    w.islandId = g.islandId;
+    const hs = Math.hypot(s.velocity.x, s.velocity.z);
+    w.yaw = hs > 2 ? Math.atan2(s.velocity.x, s.velocity.z) : yawOf(_fwd.set(0, 0, 1).applyQuaternion(s.orientation));
+    w.speed = Math.min(hs, P.landSpeed);
+    w.turnRate = 0;
+    this.companion.state = 'idle';
+    this.touchdownQuat.copy(s.orientation);
+    this.landBlend = 0;
+    this.landKick = clamp01(sink / P.landSink);
+    s.angularVelocity.set(0, 0, 0);
+    this.takeoffTimer = -1;
+    this.stillTime = 0;
+    this.setMode('landed');
+    this.setGait('landing');
+    this.deps.events.emit('touchdown', { impact: sink, position: w.position.clone().setY(g.y), surface: g.surface });
+    this.syncModelFromGround();
+  }
+
+  // --- Landed (mounted, on the ground) ------------------------------------------------------------
+
+  private updateLanded(dt: number, input: InputFrame, interact: boolean): void {
+    const w = this.companion.walker;
+    const s = this.model.state;
+    this.model.regenStamina(dt, P.groundRegen);
+    this.landBlend = Math.min(1, this.landBlend + dt / P.landBlendTime);
+
+    if (this.takeoffTimer >= 0) {
+      this.takeoffTimer += dt;
+      w.step(dt, null, 0, this.breed, this.deps.terrain, false);
+      if (this.takeoffTimer >= P.crouchTime) {
+        this.leap();
+        return;
+      }
+    } else {
+      const flapPressed = input.flight.flap > 0.5 && this.prevFlap <= 0.5;
+      if (flapPressed) {
+        if (s.winded) this.deps.events.emit('flapRefused', {});
+        else {
+          this.takeoffTimer = 0;
+          this.setGait('takeoff');
+        }
+      } else if (interact && this.landBlend >= 1 && !nearStable(this.riderPos, this.deps.terrain.layout)) {
+        this.startDismount();
+        return;
+      }
+      const dir = this.cameraRelative(input.foot.moveX, input.foot.moveY, _v);
+      const mag = Math.min(1, dir.length());
+      const res = w.step(dt, mag > 0.05 ? dir : null, mag * this.breed.groundSpeed, this.breed, this.deps.terrain, true);
+      if (res === 'edge') {
+        this.walkOff();
+        return;
+      }
+      this.wyvernFootsteps();
+    }
+    this.stillTime = w.speed < 0.3 && this.takeoffTimer < 0 ? this.stillTime + dt : 0;
+    if (this.takeoffTimer < 0) {
+      const landing = this.gait === 'landing' && (this.simTime - this.gaitStart < P.landGaitTime || w.speed > this.breed.groundSpeed * 1.05);
+      if (!landing) this.setGait(this.gaitForSpeed(w.speed));
+    }
+    this.syncModelFromGround();
+    this.groundAnim(this.takeoffTimer >= 0 ? smoothstep(0, P.crouchTime, this.takeoffTimer) : 0);
+    this.syncRiderToSeat();
+  }
+
+  private leap(): void {
+    const w = this.companion.walker;
+    w.forward(_fwd);
+    const vel = _v.copy(_fwd).multiplyScalar(w.speed + P.leapForward).addScaledVector(UP, P.leapUp);
+    const q = standingOrientation(w.yaw, UP, 0, P.leapPitch, _q);
+    this.model.reset(_v2.copy(w.position).addScaledVector(UP, 0.15), q, vel);
+    this.model.forceBeat(1);
+    this.model.setGrace(P.launchGrace, true);
+    this.takeoffTimer = -1;
+    this.airTime = 0;
+    this.noLand = 0.3;
+    this.launchGait = 'takeoff';
+    this.setMode('flying');
+    this.setGait('takeoff');
+    this.deps.events.emit('takeoff', { position: this.model.state.position.clone() });
+  }
+
+  /** Walked off a cliff while mounted: spread the wings and fall into flight. */
+  private walkOff(): void {
+    const w = this.companion.walker;
+    w.forward(_fwd);
+    const fast = w.speed > this.breed.groundSpeed * 0.6;
+    const vel = _v.copy(_fwd).multiplyScalar(Math.max(w.speed, 3.5)).addScaledVector(UP, fast ? P.walkOffHop : 0.8);
+    const q = standingOrientation(w.yaw, UP, 0, -8 * DEG, _q);
+    this.model.reset(w.position, q, vel);
+    this.model.state.wingSpread = 0.45;
+    this.model.setGrace(P.walkOffGrace);
+    this.airTime = 0;
+    this.noLand = 0.6;
+    this.launchGait = 'jump';
+    this.setMode('flying');
+    this.setGait('jump');
+    this.deps.events.emit('takeoff', { position: this.model.state.position.clone() });
+  }
+
+  private startDismount(): void {
+    const w = this.companion.walker;
+    const sh = this.breed.standHeight;
+    w.forward(_fwd);
+    _left.set(_fwd.z, 0, -_fwd.x); // body left = up × forward
+    const offset = sh * 0.9 + 0.7;
+    let found = false;
+    for (const [lx, fz] of [[1, 0], [-1, 0], [0, -1.6], [0.7, -0.9], [-0.7, -0.9]] as const) {
+      _v.copy(w.position).addScaledVector(_left, lx * offset).addScaledVector(_fwd, fz * offset);
+      const g = this.deps.terrain.groundAt(_v.x, _v.z, w.groundY + 2);
+      if (!g || g.normal.y < P.maxSlopeY || Math.abs(g.y - w.groundY) > 1.5) continue;
+      this.transTo.set(_v.x, g.y, _v.z);
+      found = true;
+      break;
+    }
+    if (!found) this.transTo.copy(w.position).addScaledVector(_left, offset).setY(w.groundY);
+    this.seatPosition(this.transFrom);
+    w.speed = 0;
+    this.companion.standStill();
+    this.setMode('dismounting');
+    this.deps.events.emit('dismount', {});
+  }
+
+  private updateDismounting(dt: number): void {
+    this.model.regenStamina(dt, P.groundRegen);
+    this.companion.walker.step(dt, null, 0, this.breed, this.deps.terrain, false);
+    this.syncModelFromGround();
+    this.groundAnim(0);
+    this.setGait('idle');
+    const t = clamp01(this.modeTime / P.dismountTime);
+    // Hop down off the saddle: hips → feet on the ground, a small arc outward.
+    this.arc(this.transFrom, _v2.copy(this.transTo).addScaledVector(UP, P.riderHip), t, 0.5, this.riderPos);
+    this.riderPos.y -= P.riderHip * smoothstep(0, 1, t);
+    this.riderYaw = this.companion.walker.yaw;
+    this.riderMounted = false;
+    this.setRiderAction('dismount');
+    if (t >= 1) {
+      this.foot.place(this.transTo, this.companion.walker.yaw, this.deps.terrain);
+      this.setMode('onFoot');
+      this.syncRiderFromFoot();
+    }
+  }
+
+  // --- On foot ----------------------------------------------------------------------------------
+
+  private updateOnFoot(dt: number, input: InputFrame, interact: boolean, jump: boolean): void {
+    const t = this.deps.terrain;
+    const ev = this.deps.events;
+    this.model.regenStamina(dt, P.groundRegen);
+    const f = input.foot;
+    const r = this.foot.step(dt, { moveX: f.moveX, moveY: f.moveY, sprint: f.sprint, jump }, this.cameraYaw, t);
+    if (r.footstep) ev.emit('footstep', { position: this.foot.position.clone(), surface: this.foot.surface, heavy: false });
+    if (r.landed && r.impact > 2) {
+      ev.emit('footstep', { position: this.foot.position.clone(), surface: this.foot.surface, heavy: r.impact > 7 });
+      if (r.impact > 6) this.landActionTimer = 0.35;
+    }
+    if (!this.foot.grounded) {
+      const below = t.groundAt(this.foot.position.x, this.foot.position.z, this.foot.position.y);
+      if (!below || this.foot.position.y - below.y > P.fallDepth || this.foot.position.y < t.layout.cloudFloor) {
+        this.startFall();
+        return;
       }
     }
-    this.position.copy(s.position);
+    if (interact) {
+      if (this.wyvernDistance <= P.mountRange) {
+        this.startMount();
+        return;
+      }
+      if (!nearStable(this.foot.position, t.layout)) {
+        // Too far to mount: wave and the wyvern comes.
+        this.waveTimer = P.waveTime;
+        this.companion.called = true;
+      }
+    }
+    this.companion.update(dt, this.foot.position, this.foot.grounded, this.breed, t, ev, this.simTime);
+    this.syncModelFromCompanion();
+    this.syncRiderFromFoot();
+    const fs = this.foot;
+    if (this.waveTimer > 0) this.setRiderAction('wave');
+    else if (!fs.grounded) this.setRiderAction(fs.velocity.y > 0 ? 'jump' : 'fall');
+    else if (this.landActionTimer > 0) this.setRiderAction('land');
+    else this.setRiderAction(fs.speed < 0.3 ? 'idle' : fs.speed < (P.walkSpeed + P.runSpeed) / 2 ? 'walk' : 'run');
   }
+
+  private startMount(): void {
+    this.transFrom.copy(this.foot.position);
+    this.companion.walker.speed = 0;
+    this.companion.called = false;
+    this.companion.standStill();
+    this.setMode('mounting');
+    this.deps.events.emit('mount', {});
+  }
+
+  private updateMounting(dt: number): void {
+    this.model.regenStamina(dt, P.groundRegen);
+    this.companion.walker.step(dt, null, 0, this.breed, this.deps.terrain, false);
+    this.syncModelFromGround();
+    this.groundAnim(0);
+    this.setGait('idle');
+    const t = clamp01(this.modeTime / P.mountTime);
+    // Feet travel from the ground up to where they hang when the hips are on the seat.
+    this.seatPosition(_v2).addScaledVector(UP, -P.riderHip);
+    this.arc(this.transFrom, _v2, smoothstep(0, 1, t), 1.1, this.riderPos);
+    this.riderYaw += clamp(angleDelta(this.riderYaw, this.companion.walker.yaw), -6 * dt, 6 * dt);
+    this.riderMounted = t >= 0.75;
+    this.setRiderAction('mount');
+    if (t >= 1) {
+      this.landBlend = 1;
+      this.takeoffTimer = -1;
+      this.stillTime = 0;
+      this.setMode('landed');
+      this.syncRiderToSeat();
+    }
+  }
+
+  // --- Falling off an island ---------------------------------------------------------------------
+
+  private startFall(): void {
+    const fp = this.foot.position;
+    this.setMode('falling');
+    this.deps.events.emit('fellOff', { position: fp.clone() });
+    // Where the rider will be when the wyvern arrives, and the body position under that seat.
+    const tc = P.catchDelay;
+    const v = this.foot.velocity;
+    const yaw = Math.hypot(v.x, v.z) > 0.5 ? Math.atan2(v.x, v.z) : this.foot.yaw;
+    const pred = _v.copy(fp).addScaledVector(v, tc);
+    pred.y -= 0.5 * P.footGravity * tc * tc;
+    this.bodyUnderSeat(pred, yaw, _v2);
+    this.companion.beginSwoop(fp, v, _v2, tc);
+  }
+
+  private updateFalling(dt: number): void {
+    const t = this.deps.terrain;
+    this.foot.fall(dt);
+    this.companion.update(dt, this.foot.position, false, this.breed, t, undefined, this.simTime);
+    this.syncModelFromCompanion();
+    this.syncRiderFromFoot();
+    this.setRiderAction('fall');
+    // Landed on something below before the wyvern got there.
+    const g = t.groundAt(this.foot.position.x, this.foot.position.z, this.foot.position.y + 1);
+    if (g && this.foot.position.y <= g.y) {
+      this.foot.place(_v.copy(this.foot.position).setY(g.y), this.foot.yaw, t);
+      this.landActionTimer = 0.5;
+      this.deps.events.emit('footstep', { position: this.foot.position.clone(), surface: g.surface, heavy: true });
+      // The wyvern lands nearby instead of catching.
+      this.companion.walker.position.copy(this.model.state.position);
+      this.companion.walker.groundY = g.y;
+      this.companion.standStill();
+      this.companion.called = true;
+      this.companion.state = 'follow';
+      this.setMode('onFoot');
+      return;
+    }
+    if (this.modeTime >= P.catchDelay) this.catchRider();
+  }
+
+  private catchRider(): void {
+    const v = this.foot.velocity;
+    const yaw = Math.hypot(v.x, v.z) > 0.5 ? Math.atan2(v.x, v.z) : this.foot.yaw;
+    const body = this.bodyUnderSeat(this.foot.position, yaw, _v2);
+    _fwd.set(Math.sin(yaw), 0, Math.cos(yaw));
+    const vel = _v.copy(v).addScaledVector(_fwd, this.model.derived.vStall * 0.9);
+    const q = standingOrientation(yaw, UP, 0, -20 * DEG, _q);
+    this.model.reset(body, q, vel);
+    this.model.setGrace(P.catchGrace);
+    this.airTime = 99;
+    this.launchGait = 'idle';
+    this.setMode('flying');
+    this.deps.events.emit('caught', {});
+    this.syncRiderToSeat();
+  }
+
+  // --- Respawn ----------------------------------------------------------------------------------
+
+  private startRespawn(): void {
+    this.respawnPlaced = false;
+    this.flapQueued = 0;
+    this.setMode('respawning');
+  }
+
+  private updateRespawning(dt: number): void {
+    // Keep gliding hands-off (quietly) through the fade.
+    this.model.step(dt, NEUTRAL, this.deps.env);
+    this.copyFlightAnim();
+    this.setGait('idle');
+    const t = this.modeTime;
+    if (!this.respawnPlaced) {
+      this.fade = clamp01(t / P.fadeOut);
+      if (t >= P.fadeOut) this.placeRespawn();
+    } else {
+      const u = t - P.fadeOut - P.fadeHold;
+      this.fade = u <= 0 ? 1 : 1 - clamp01(u / P.fadeIn);
+      if (this.fade <= 0) this.setMode('flying');
+    }
+    this.syncRiderToSeat();
+  }
+
+  private placeRespawn(): void {
+    const yaw = this.lastSafeYaw;
+    const p = _v2.copy(this.lastSafe).addScaledVector(UP, P.respawnHeight + this.breed.standHeight);
+    const q = standingOrientation(yaw, UP, 0, 0, _q);
+    this.model.reset(p, q, _v.set(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(this.model.derived.vCruise));
+    const s = this.model.state;
+    s.stamina = Math.max(s.stamina, 0.6);
+    s.winded = false;
+    this.model.setGrace(2);
+    this.respawnPlaced = true;
+    this.airTime = 99;
+    this.syncRiderToSeat();
+    this.snapInterpolation();
+    this.deps.events.emit('respawn', { position: p.clone() });
+  }
+
+  private updateSafeGround(dt: number): void {
+    this.safeTimer += dt;
+    if (this.safeTimer < 0.5) return;
+    this.safeTimer = 0;
+    let x: number, y: number, z: number, yaw: number, ny: number;
+    if (this.mode === 'landed') {
+      const w = this.companion.walker;
+      [x, y, z, yaw, ny] = [w.position.x, w.groundY, w.position.z, w.yaw, w.normal.y];
+    } else if (this.mode === 'onFoot' && this.foot.grounded) {
+      const f = this.foot;
+      [x, y, z, yaw, ny] = [f.position.x, f.position.y, f.position.z, f.yaw, f.normal.y];
+    } else return;
+    if (ny < 0.85) return;
+    // Only well inside an island: respawning over a cliff edge would be no favour.
+    const island = this.deps.terrain.islandAt(x, z, y + 1);
+    if (!island || island.normRadius(x, z) > 0.8) return;
+    this.lastSafe.set(x, y, z);
+    this.lastSafeYaw = yaw;
+  }
+
+  // --- Shared helpers ---------------------------------------------------------------------------
+
+  private setMode(mode: PlayerMode, quiet = false): void {
+    const from = this.mode;
+    this.mode = mode;
+    this.modeTime = 0;
+    if (mode !== 'respawning') this.fade = 0;
+    this.riderMounted = mode === 'flying' || mode === 'landed' || mode === 'respawning';
+    if (this.riderMounted) this.setRiderAction('mounted');
+    if (mode === 'onFoot' || mode === 'landed' || mode === 'mounting' || mode === 'dismounting') this.airborne = false;
+    if (!quiet && from !== mode) this.deps.events.emit('modeChange', { from, to: mode });
+  }
+
+  private resetTransitions(): void {
+    this.takeoffTimer = -1;
+    this.respawnPlaced = false;
+    this.flapQueued = 0;
+    this.landBlend = 1;
+    this.noLand = 0;
+    this.waveTimer = 0;
+    this.landActionTimer = 0;
+    this.fade = 0;
+    this.companion.called = false;
+  }
+
+  private setGait(g: WyvernGait): void {
+    if (g === this.gait) return;
+    this.gait = g;
+    this.gaitStart = this.simTime;
+  }
+
+  private setRiderAction(a: RiderAction): void {
+    if (a === this.riderAction) return;
+    this.riderAction = a;
+    this.riderActionStart = this.simTime;
+  }
+
+  private gaitForSpeed(speed: number): WyvernGait {
+    if (speed < 0.3) return 'idle';
+    return speed < this.breed.groundSpeed * P.walkFraction ? 'walk' : 'run';
+  }
+
+  private wyvernFootsteps(): void {
+    const w = this.companion.walker;
+    const run = w.speed > this.breed.groundSpeed * P.walkFraction;
+    if (w.footstep(this.breed.standHeight * (run ? 1.3 : 0.9))) {
+      this.deps.events.emit('footstep', { position: w.position.clone().setY(w.groundY), surface: w.surface, heavy: true });
+    }
+  }
+
+  /** Camera-relative stick → world direction (length = stick magnitude). */
+  private cameraRelative(mx: number, my: number, out: Vector3): Vector3 {
+    const s = Math.sin(this.cameraYaw);
+    const c = Math.cos(this.cameraYaw);
+    return out.set(-c * mx + s * my, 0, s * mx + c * my);
+  }
+
+  /** Copy the grounded wyvern (walker) into the physics state. */
+  private syncModelFromGround(): void {
+    const w = this.companion.walker;
+    const s = this.model.state;
+    s.position.copy(w.position);
+    const stand = standingOrientation(w.yaw, w.normal, 0.35, 0, _q);
+    if (this.mode === 'landed' && this.landBlend < 1) {
+      s.orientation.slerpQuaternions(this.touchdownQuat, stand, smoothstep(0, 1, this.landBlend));
+    } else s.orientation.copy(stand);
+    s.velocity.set(Math.sin(w.yaw) * w.speed, 0, Math.cos(w.yaw) * w.speed);
+    s.angularVelocity.set(0, w.turnRate, 0);
+    s.airspeed = w.speed;
+    s.stall = 0;
+    s.flare = 0;
+    this.groundY = w.groundY;
+  }
+
+  private syncModelFromCompanion(): void {
+    const c = this.companion;
+    const s = this.model.state;
+    s.position.copy(c.walker.position);
+    s.orientation.copy(c.orientation);
+    s.velocity.copy(c.velocity);
+    s.angularVelocity.set(0, c.walker.turnRate, 0);
+    s.airspeed = c.velocity.length();
+    s.stall = 0;
+    this.airborne = c.anim.airborne;
+    this.setGait(c.anim.gait);
+    this.wingSpread = c.anim.wingSpread;
+    this.flapPhase = c.anim.flapPhase;
+    this.flapStrength = c.anim.flapStrength;
+    this.flare = c.anim.flare;
+    this.groundSpeed = c.state === 'idle' || c.state === 'follow' ? c.walker.speed : 0;
+    this.groundY = c.walker.groundY;
+    this.turnRate = c.walker.turnRate;
+    s.flapPhase = this.flapPhase;
+    s.wingSpread = this.wingSpread;
+  }
+
+  /** Animation channels for a wyvern standing/walking; `crouch` opens the wings for takeoff. */
+  private groundAnim(crouch: number): void {
+    const w = this.companion.walker;
+    this.airborne = false;
+    this.wingSpread = lerp(0.22, 1, crouch);
+    this.flapPhase = 0;
+    this.flapStrength = 0;
+    this.flare = 0;
+    this.groundSpeed = w.speed;
+    this.groundY = w.groundY;
+    this.turnRate = w.turnRate;
+    this.crouch = crouch;
+    const s = this.model.state;
+    s.wingSpread = this.wingSpread;
+    s.flapPhase = 0;
+  }
+
+  /** World position of the saddle seat for the wyvern's current physics pose. */
+  private seatPosition(out: Vector3): Vector3 {
+    const s = this.model.state;
+    const sh = this.breed.standHeight;
+    return out.set(0, SEAT_UP * sh, SEAT_FWD * sh).applyQuaternion(s.orientation).add(s.position);
+  }
+
+  /** Body center that puts the seat under a rider whose feet are at `feet` (level, facing yaw). */
+  private bodyUnderSeat(feet: Vector3, yaw: number, out: Vector3): Vector3 {
+    const sh = this.breed.standHeight;
+    return out
+      .copy(feet)
+      .addScaledVector(UP, P.riderHip - SEAT_UP * sh)
+      .add(_left.set(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(-SEAT_FWD * sh));
+  }
+
+  private syncRiderToSeat(): void {
+    this.seatPosition(this.riderPos);
+    this.riderVel.copy(this.model.state.velocity);
+    this.riderYaw = yawOf(_fwd.set(0, 0, 1).applyQuaternion(this.model.state.orientation));
+  }
+
+  private syncRiderFromFoot(): void {
+    this.riderPos.copy(this.foot.position);
+    this.riderVel.copy(this.foot.velocity);
+    this.riderYaw = this.foot.yaw;
+  }
+
+  /** Point along a hop from a to b at t with an arc of `height`. */
+  private arc(a: Vector3, b: Vector3, t: number, height: number, out: Vector3): Vector3 {
+    out.lerpVectors(a, b, t);
+    out.y += Math.sin(Math.PI * t) * height;
+    return out;
+  }
+
+  private snapInterpolation(): void {
+    const s = this.model.state;
+    this.prevPosition.copy(s.position);
+    this.position.copy(s.position);
+    this.prevWyPos.copy(s.position);
+    this.prevWyQuat.copy(s.orientation);
+    this.prevRiderPos.copy(this.riderPos);
+    this.prevRiderYaw = this.riderYaw;
+    this.lookFresh = true;
+  }
+
+  /** Rider lean / crouch / brace and wyvern fatigue, smoothed at the physics rate. */
+  private updateChannels(dt: number): void {
+    const s = this.model.state;
+    const b = this.breed;
+    let lean = 0;
+    let crouch = this.crouch;
+    let brace = 0;
+    if (this.mode === 'flying' || this.mode === 'respawning') {
+      _up.set(0, 1, 0).applyQuaternion(s.orientation);
+      _left.set(1, 0, 0).applyQuaternion(s.orientation);
+      const bank = Math.atan2(_left.y, _up.y);
+      lean = clamp(0.45 * Math.sin(bank) + (0.5 * s.angularVelocity.z) / b.maxRollRate, -1, 1);
+      const tuck = clamp01((1 - s.wingSpread) / 0.78);
+      crouch = Math.max(tuck, 0.5 * smoothstep(35, 70, s.airspeed));
+      brace = Math.max(0.9 * s.flare, clamp01((s.gLoad - 2) / 3), clamp01(this.model.stunned / 0.6));
+    } else if (this.mode === 'landed') {
+      lean = clamp(-this.turnRate * 0.35, -1, 1);
+    } else {
+      crouch = 0;
+    }
+    this.landKick = Math.max(0, this.landKick - dt * 2.5);
+    brace = Math.max(brace, this.landKick);
+    this.lean = damp(this.lean, lean, 8, dt);
+    this.riderCrouch = damp(this.riderCrouch, crouch, 8, dt);
+    this.brace = damp(this.brace, brace, 10, dt);
+    if (this.mode !== 'landed') this.crouch = Math.max(0, this.crouch - dt * 4);
+    const tired = s.winded ? Math.max(0.75, 1 - s.stamina) : clamp01((1 - s.stamina - 0.2) / 0.8);
+    this.fatigue = damp(this.fatigue, tired, 2, dt);
+  }
+
+  /** Where the wyvern's head wants to look this step (world). */
+  private updateLookTarget(dt: number): void {
+    const s = this.model.state;
+    const p = s.position;
+    const out = this.lookTarget;
+    const riderHead = _v.copy(this.riderPos).addScaledVector(UP, this.riderMounted ? 0.8 : 1.6);
+    if (this.mode === 'flying' || this.mode === 'respawning') {
+      // Lead into turns: the head swings toward where the flight path is going.
+      _fwd.set(0, 0, 1).applyQuaternion(s.orientation);
+      _up.set(0, 1, 0).applyQuaternion(s.orientation);
+      _left.set(1, 0, 0).applyQuaternion(s.orientation);
+      const w = s.angularVelocity;
+      out.copy(_fwd)
+        .addScaledVector(_left, clamp(w.y * 0.9 + w.z * 0.25, -0.9, 0.9))
+        .addScaledVector(_up, clamp(-w.x * 0.6, -0.5, 0.6));
+      if (s.velocity.lengthSq() > 4) out.addScaledVector(_v2.copy(s.velocity).normalize(), 0.6);
+      out.normalize().multiplyScalar(40).add(p);
+      return;
+    }
+    if (this.mode === 'mounting' || this.mode === 'dismounting' || this.mode === 'falling') {
+      out.copy(riderHead);
+      return;
+    }
+    if (this.mode === 'landed') {
+      // Look where the camera looks (within reason), or along the way it's walking.
+      const w = this.companion.walker;
+      let yaw = this.cameraYaw;
+      if (w.speed > 1) yaw = w.yaw + clamp(w.turnRate * 0.6, -0.8, 0.8);
+      const rel = clamp(angleDelta(w.yaw, yaw), -1.6, 1.6);
+      out.set(Math.sin(w.yaw + rel), 0, Math.cos(w.yaw + rel)).multiplyScalar(30).add(p);
+      out.y = p.y + 1.5;
+      return;
+    }
+    // On foot: watch the rider when they're close; otherwise look around.
+    const d = this.wyvernDistance;
+    if (d < 16 || this.companion.state !== 'idle' || this.waveTimer > 0) {
+      out.copy(riderHead);
+      return;
+    }
+    this.idleLookTimer -= dt;
+    if (this.idleLookTimer <= 0) {
+      const rnd = mulberry32(hashSeed(this.idleLookCount++, 7.3));
+      this.idleLookTimer = 2.5 + rnd() * 3;
+      const yaw = this.companion.walker.yaw + (rnd() - 0.5) * 2.6;
+      const dist = 12 + rnd() * 50;
+      const r = rnd();
+      if (r < 0.25) this.idleLook.copy(riderHead);
+      else this.idleLook.set(p.x + Math.sin(yaw) * dist, p.y + (rnd() - 0.3) * 8, p.z + Math.cos(yaw) * dist);
+    }
+    out.copy(this.idleLook);
+  }
+
+  // --- Presentation -----------------------------------------------------------------------------
 
   update(dt: number, alpha: number): void {
     const s = this.model.state;
-    const w = this.wyvernPose;
-    w.position.lerpVectors(this.prevPosition, s.position, alpha);
-    w.orientation.slerpQuaternions(this.prevQuat, s.orientation, alpha);
-    w.velocity.copy(s.velocity);
-    w.airborne = this.mode === 'flying';
-    w.airspeed = s.airspeed;
-    w.angularVelocity.copy(s.angularVelocity);
-    w.wingSpread = s.wingSpread;
-    w.flapPhase = s.flapPhase;
-    w.flapStrength = s.flapStrength;
-    w.flare = s.flare;
-    w.stall = s.stall;
-    w.fatigue = 1 - s.stamina;
-    w.gaitTime += dt;
-    this.riderPosition.copy(w.position);
-    this.riderPose.mounted = true;
-    this.riderPose.airflow.copy(s.velocity).multiplyScalar(-1);
+    const a = clamp01(alpha);
+    const wp = this.wyvernPose;
+    wp.position.lerpVectors(this.prevWyPos, s.position, a);
+    wp.orientation.slerpQuaternions(this.prevWyQuat, s.orientation, a);
+    if (!this.airborne && this.crouch > 0) wp.position.y -= this.crouch * 0.22 * this.breed.standHeight;
+    wp.velocity.copy(s.velocity);
+    wp.airborne = this.airborne;
+    wp.airspeed = this.mode === 'flying' || this.mode === 'respawning' ? s.airspeed : s.velocity.length();
+    wp.angularVelocity.copy(s.angularVelocity);
+    wp.wingSpread = this.wingSpread;
+    wp.flapPhase = this.flapPhase;
+    wp.flapStrength = this.flapStrength;
+    wp.flare = this.flare;
+    wp.stall = this.mode === 'flying' ? s.stall : 0;
+    wp.fatigue = this.fatigue;
+    wp.gait = this.gait;
+    wp.gaitTime = this.simTime - this.gaitStart;
+    wp.groundSpeed = this.airborne ? 0 : this.groundSpeed;
+    wp.groundY = this.groundY;
+    if (this.lookFresh) {
+      this.lookSmooth.copy(this.lookTarget);
+      this.lookFresh = false;
+    } else {
+      const k = 1 - Math.exp(-6 * dt);
+      this.lookSmooth.lerp(this.lookTarget, k);
+    }
+    wp.lookTarget.copy(this.lookSmooth);
+
+    const rp = this.riderPose;
+    rp.mounted = this.riderMounted;
+    if (this.riderMounted) {
+      rp.position.set(0, SEAT_UP * this.breed.standHeight, SEAT_FWD * this.breed.standHeight).applyQuaternion(wp.orientation).add(wp.position);
+      rp.yaw = yawOf(_fwd.set(0, 0, 1).applyQuaternion(wp.orientation));
+    } else {
+      rp.position.lerpVectors(this.prevRiderPos, this.riderPos, a);
+      rp.yaw = this.prevRiderYaw + angleDelta(this.prevRiderYaw, this.riderYaw) * a;
+    }
+    rp.velocity.copy(this.riderVel);
+    rp.action = this.riderMounted && this.mode !== 'mounting' ? 'mounted' : this.riderAction;
+    rp.actionTime = this.simTime - this.riderActionStart;
+    rp.lean = this.riderMounted ? this.lean : 0;
+    rp.crouch = this.riderMounted ? this.riderCrouch : 0;
+    rp.brace = this.riderMounted ? this.brace : 0;
+    this.deps.env.windAt(rp.position, rp.airflow);
+    rp.airflow.sub(rp.velocity);
+    this.riderPosition.copy(rp.position);
   }
 }
 
-export { createFlightState };
+export { createFlightState, createRiderPose, createWyvernPose };

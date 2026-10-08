@@ -22,7 +22,8 @@ import { LocalSaveStore } from '../progression/save';
 import { Fx } from '../fx/Fx';
 import { AudioSystem } from '../audio/Audio';
 import { Ui } from '../ui/Ui';
-import type { GameActions, GameScreen, GameView, PromptAction } from './contracts';
+import type { GameActions, GameScreen, GameView } from './contracts';
+import { computePrompt } from '../player/prompts';
 import { readDebugParams, type DebugParams } from '../debug/params';
 import { findShowcase, type Showcase } from '../debug/showcase';
 
@@ -86,6 +87,7 @@ export class Game implements GameActions {
       env: { windAt: (p, out) => this.weather.windAt(p, out), terrain: this.world.terrain },
       events: this.events,
       breed: this.save.data.wyvern.breed,
+      settings: () => this.settings,
     });
     this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings);
     this.wyvern = new Wyvern(this.save.data.wyvern);
@@ -154,8 +156,10 @@ export class Game implements GameActions {
     if (simulate) {
       this.accumulator += dt;
       let steps = 0;
+      const gameplayInput = this.screen === 'play' && this.player.controllable && !this.ui.capturesInput ? input : this.idleInput;
+      // Presses are per rendered frame; latch them so 0 or several fixed steps see each once.
+      this.player.latchPresses(gameplayInput);
       while (this.accumulator >= FIXED_DT && steps < MAX_STEPS) {
-        const gameplayInput = this.screen === 'play' && this.player.controllable && !this.ui.capturesInput ? input : this.idleInput;
         this.player.fixedUpdate(FIXED_DT, gameplayInput, this.cameraRig.yaw);
         this.races.fixedUpdate(FIXED_DT, this.player);
         this.accumulator -= FIXED_DT;
@@ -185,7 +189,7 @@ export class Game implements GameActions {
     this.renderer.grade.uCloudVeil.value = this.sky.cloudVeilAt(this.camera.position);
     this.renderer.grade.uFade.value = Math.max(this.player.fade, this.uiFade);
 
-    this.prompt = this.computePrompt();
+    this.prompt = this.screen === 'play' ? computePrompt(this.player, this.world.layout) : null;
     this.view.screen = this.screen;
     this.view.prompt = this.prompt;
     this.ui.update(dt, this.view);
@@ -284,27 +288,8 @@ export class Game implements GameActions {
     const p = this.input.frame.pressed;
     if (p.pause) this.pause();
     if (p.restart && this.races.activeId) this.restartRace();
-    if (p.interact && this.player.mode === 'onFoot' && this.nearStable()) this.openStable();
-  }
-
-  private nearStable(): boolean {
-    const st = this.world.layout.stable;
-    const r = this.player.riderPosition;
-    return Math.hypot(r.x - st.x, r.z - st.z) < st.interactRadius;
-  }
-
-  private computePrompt(): GameView['prompt'] {
-    if (this.screen !== 'play') return null;
-    const mk = (action: PromptAction, text: string) => ({ action, text });
-    const mode = this.player.mode;
-    if (mode === 'onFoot' && this.nearStable()) return mk('stable', 'Open the Stable');
-    if (mode === 'flying') {
-      const f = this.player.flight;
-      const g = this.world.terrain.groundAt(f.position.x, f.position.z, f.position.y);
-      if (g && f.position.y - g.y < 25 && f.airspeed < 30) return mk('flare', 'Flare to land');
-      if (f.stall > 0.5) return mk('tuck', 'Stalling — dive to recover');
-    }
-    return null;
+    // The prompt decides what interact does here (mounting wins over the stable door).
+    if (p.interact && this.prompt?.action === 'stable') this.openStable();
   }
 
   private updateTimeOfDay(dt: number): void {
@@ -321,10 +306,8 @@ export class Game implements GameActions {
   }
 
   private placeAtSpawn(): void {
-    const sp = this.world.layout.spawn;
-    const p = this.world.terrain.standingPoint(sp.position[0], sp.position[2], new Vector3());
-    p.y += 40;
-    this.player.teleport(p, sp.yaw, 'flying', 26);
+    // New game: on foot at the spawn, the wyvern waiting on the Roost.
+    this.player.placeAtSpawn();
     this.cameraRig.snap(this.player);
   }
 
