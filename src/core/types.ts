@@ -473,6 +473,11 @@ export interface GameEvents {
   tuckEnd: {};
   /** Hit terrain while flying. impulse in m/s of velocity lost. */
   terrainHit: { impulse: number; point: Vector3; normal: Vector3 };
+  /**
+   * Flew (body or a wing) through foliage: it brushed and slowed the wyvern, no bounce or stun.
+   * At most a few per second while in contact; speed is the wyvern's speed (m/s).
+   */
+  foliageBrush: { position: Vector3; speed: number };
   touchdown: { impact: number; position: Vector3; surface: SurfaceKind };
   takeoff: { position: Vector3 };
   footstep: { position: Vector3; surface: SurfaceKind; heavy: boolean };

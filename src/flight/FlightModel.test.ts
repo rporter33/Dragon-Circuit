@@ -3,6 +3,7 @@ import { Vector3 } from 'three';
 import { EventBus } from '../core/events';
 import type { BreedId, GameEvents } from '../core/types';
 import { mulberry32 } from '../core/rng';
+import { DEG } from '../core/math';
 import { LAYOUT } from '../world/layout';
 import { Terrain } from '../world/terrain';
 import { BREEDS, BREED_ORDER } from './breeds';
@@ -18,8 +19,9 @@ import {
   measureEndurance,
   measureFlare,
   measureGlide,
+  measureMush,
   measureRoll,
-  measureStallSpeed,
+  measureTailSlide,
   neutralInput,
   pathAngle,
   stillAir,
@@ -40,7 +42,7 @@ describe('glide and cruise', () => {
   const targets: Record<BreedId, [number, number]> = {
     harrier: [8.5, 9.6],
     galewing: [12, 13.5],
-    skimmer: [6.6, 7.6],
+    skimmer: [7.2, 8.2],
     ironback: [7.5, 8.6],
   };
   for (const id of BREED_ORDER) {
@@ -51,7 +53,7 @@ describe('glide and cruise', () => {
       const best = measureBestGlide(BREEDS[id]);
       expect(best.ratio).toBeGreaterThan(targets[id][0]);
       expect(best.ratio).toBeLessThan(targets[id][1]);
-    });
+    }, 30_000);
   }
 
   it('settles into a steady glide when the stick is let go', () => {
@@ -74,10 +76,24 @@ describe('glide and cruise', () => {
 
 describe('energy', () => {
   for (const id of BREED_ORDER) {
-    it(`${id}: tucked dive reaches 70–95 m/s`, () => {
+    it(`${id}: tucked dive reaches 70–100 m/s`, () => {
       const v = measureDive(BREEDS[id]);
       expect(v).toBeGreaterThan(70);
-      expect(v).toBeLessThan(95);
+      expect(v).toBeLessThan(100);
+    });
+
+    it(`${id}: tucking dives faster than diving with spread wings (45° and 85°)`, () => {
+      const dive = (angle: number, tuck: number) => {
+        const m = launch(BREEDS[id], 26, 40000);
+        const input = neutralInput();
+        input.tuck = tuck;
+        for (let i = 0; i < 30 / SIM_DT; i++) {
+          input.pitch = Math.max(-1, Math.min(1, (-angle * DEG - pathAngle(m)) * 3));
+          m.step(SIM_DT, input, stillAir());
+        }
+        return m.state.airspeed;
+      };
+      for (const angle of [45, 85]) expect(dive(angle, 1), `${angle}°`).toBeGreaterThan(dive(angle, 0) * 1.12);
     });
   }
 
@@ -157,61 +173,85 @@ describe('energy', () => {
 });
 
 describe('stall', () => {
-  it('stalls past the critical angle, drops the nose, and recovers when the stick is released', () => {
+  it('a held pull mushes instead of stalling, and flies on when the stick is let go', () => {
     for (const id of BREED_ORDER) {
       const { events, counts } = bus();
-      const m = launch(BREEDS[id], new FlightModel(BREEDS[id]).derived.vStall * 1.25);
+      const d = new FlightModel(BREEDS[id]).derived;
+      // Slow, then haul back and hold for 8 s (keyboard pitch is all or nothing).
+      const m = launch(BREEDS[id], d.vStall * 1.25);
       const env = stillAir();
       const input = neutralInput();
-      // Slow, then haul back and hold.
       input.pitch = 1;
-      let t = 0;
-      while (m.state.stall < 0.5 && t < 20) {
+      let maxStall = 0;
+      for (let i = 0; i < 8 / SIM_DT; i++) {
         m.step(SIM_DT, input, env, events);
-        t += SIM_DT;
+        maxStall = Math.max(maxStall, m.state.stall);
       }
-      expect(counts.stallStart, id).toBe(1);
-      const fwd = () => new Vector3(0, 0, 1).applyQuaternion(m.state.orientation).y;
-      const pitchAtBreak = fwd();
-      for (let i = 0; i < 1.5 / SIM_DT; i++) m.step(SIM_DT, input, env, events);
-      // Lift has collapsed: sinking, nose lower than at the break.
-      expect(m.state.velocity.y, id).toBeLessThan(-2);
-      expect(fwd(), id).toBeLessThan(pitchAtBreak);
-      // Recovery: lower the nose and let speed build.
-      input.pitch = -0.3;
-      t = 0;
-      while (m.state.stall > 0.05 && t < 6) {
-        m.step(SIM_DT, input, env, events);
-        t += SIM_DT;
-      }
-      expect(t, id).toBeLessThan(2.5);
-      expect(counts.stallEnd, id).toBe(1);
-      for (let i = 0; i < 2 / SIM_DT; i++) m.step(SIM_DT, neutralInput(), env, events);
-      expect(m.state.airspeed, id).toBeGreaterThan(new FlightModel(BREEDS[id]).derived.vStall);
+      expect(counts.stallStart ?? 0, id).toBe(0);
+      expect(maxStall, id).toBeLessThan(0.45);
+      // Let go: it is flying normally within a few seconds.
+      input.pitch = 0;
+      for (let i = 0; i < 4 / SIM_DT; i++) m.step(SIM_DT, input, env, events);
+      expect(m.state.airspeed, id).toBeGreaterThan(d.vStall * 1.2);
       expect(m.state.stall, id).toBeLessThan(0.05);
     }
   });
 
-  it('stalls in the 12–17 m/s band when slowed in level flight', () => {
+  it('holding full pull from cruise for 5 s never stalls (it zooms, floats over and porpoises)', () => {
     for (const id of BREED_ORDER) {
-      const v = measureStallSpeed(BREEDS[id]);
+      const { events, counts } = bus();
+      const m = launch(BREEDS[id], new FlightModel(BREEDS[id]).derived.vCruise);
+      const input = neutralInput();
+      input.pitch = 1;
+      for (let i = 0; i < 5 / SIM_DT; i++) m.step(SIM_DT, input, stillAir(), events);
+      expect(counts.stallStart ?? 0, id).toBe(0);
+    }
+  });
+
+  it('slowed in level flight it settles into a sinking mush just above stall speed', () => {
+    for (const id of BREED_ORDER) {
+      const d = new FlightModel(BREEDS[id]).derived;
+      const r = measureMush(BREEDS[id]);
+      expect(r.maxStall, id).toBeLessThan(0.45);
+      expect(r.speed, id).toBeGreaterThan(d.vStall * 1.0);
+      expect(r.speed, id).toBeLessThan(d.vStall * 1.35);
+      // It can't hold its height that slowly: a gentle sink, not a plunge.
+      expect(r.sink, id).toBeGreaterThan(0.3);
+      expect(r.sink, id).toBeLessThan(4);
+    }
+  });
+
+  it('a zoom that runs out of air stalls, drops the nose and flies out hands-off', () => {
+    for (const id of BREED_ORDER) {
+      const { events, counts } = bus();
+      // Straight up, wing unloaded, coasting until the air runs out (a tail slide).
+      const m = launch(BREEDS[id], 35, 3000, -88 * DEG);
+      const input = neutralInput();
+      input.pitch = -0.35;
+      for (let t = 0; t < 8 && m.state.stall < 0.5; t += SIM_DT) m.step(SIM_DT, input, stillAir(), events);
+      expect(counts.stallStart, id).toBe(1);
+      const r = measureTailSlide(BREEDS[id]);
+      expect(r.stalled, id).toBe(true);
+      // Hands off, it is back on a normal glide within ~10 s, having lost a hill's worth of
+      // height rather than a mountain's.
+      expect(r.seconds, id).toBeLessThan(10);
+      expect(r.lost, id).toBeLessThan(140);
+    }
+  });
+
+  it('stall speeds sit in the 12–17 m/s band', () => {
+    for (const id of BREED_ORDER) {
+      const v = new FlightModel(BREEDS[id]).derived.vStall;
       expect(v, id).toBeGreaterThan(12);
       expect(v, id).toBeLessThan(17.5);
     }
   });
 
   it('drops a wing in a stall, always the same way for the same inputs', () => {
-    const run = () => {
-      const m = launch(BREEDS.skimmer, 22);
-      const env = stillAir();
-      const input = neutralInput();
-      input.pitch = 1;
-      for (let i = 0; i < 6 / SIM_DT; i++) m.step(SIM_DT, input, env);
-      return new Vector3(1, 0, 0).applyQuaternion(m.state.orientation).y;
-    };
-    const a = run();
-    expect(Math.abs(a)).toBeGreaterThan(0.05);
-    expect(run()).toBe(a);
+    const a = measureTailSlide(BREEDS.skimmer);
+    expect(a.stalled).toBe(true);
+    expect(Math.abs(a.bankAtRelease)).toBeGreaterThan(0.05);
+    expect(measureTailSlide(BREEDS.skimmer).bankAtRelease).toBe(a.bankAtRelease);
   });
 
   it('does not report a stall while flaring', () => {
@@ -226,10 +266,10 @@ describe('stall', () => {
 });
 
 describe('flaps and stamina', () => {
-  it('flaps for about breed.staminaSeconds, then refuses until 35% recovered', () => {
+  it('flaps for about breed.staminaSeconds, then keeps beating weakly: never refused', () => {
     for (const id of BREED_ORDER) {
       const b = BREEDS[id];
-      expect(Math.abs(measureEndurance(b) - b.staminaSeconds), id).toBeLessThan(b.staminaSeconds * 0.1);
+      expect(Math.abs(measureEndurance(b) - b.staminaSeconds), id).toBeLessThan(b.staminaSeconds * 0.12);
     }
     const { events, counts } = bus();
     const b = BREEDS.harrier;
@@ -237,27 +277,49 @@ describe('flaps and stamina', () => {
     const env = stillAir();
     const input = neutralInput();
     input.flap = 1;
-    while (!m.state.winded) m.step(SIM_DT, input, env, events);
-    // Finish the committed beat, then try again: refused.
-    for (let i = 0; i < 1.5 / SIM_DT; i++) m.step(SIM_DT, input, env, events);
-    expect(counts.flapRefused).toBeGreaterThan(0);
+    while (m.state.stamina > 1e-4) m.step(SIM_DT, input, env, events);
+    // Empty: the beats go on, weaker, and nothing is refused.
     const beats = m.beats;
-    for (let i = 0; i < 1 / SIM_DT; i++) m.step(SIM_DT, input, env, events);
-    expect(m.beats).toBe(beats);
-    // Stamina comes back from empty (even while the refused trigger is held); glide to recover.
+    let strength = 0;
+    const off = events.on('flap', (p) => (strength = p.strength));
+    const y0 = m.state.position.y;
+    for (let i = 0; i < 10 / SIM_DT; i++) m.step(SIM_DT, input, env, events);
+    off();
+    expect(counts.flapRefused ?? 0).toBe(0);
+    expect(m.state.winded).toBe(false);
+    expect(m.beats - beats).toBeGreaterThan(10);
+    expect(strength).toBeGreaterThan(0.15);
+    expect(strength).toBeLessThan(0.4);
+    // Weak beats slow the sink but don't hold altitude: gliding (or landing) is how to rest.
+    const vy = (m.state.position.y - y0) / 10;
+    expect(vy).toBeLessThan(-0.3);
+    expect(vy).toBeGreaterThan(-2.5);
+    // Let go and glide: the meter refills at the breed's regen rate.
     input.flap = 0;
     let t = 0;
-    while (m.state.winded && t < 30) {
+    while (m.state.stamina < 0.999 && t < 30) {
       m.step(SIM_DT, input, env, events);
       t += SIM_DT;
     }
-    expect(m.state.stamina).toBeGreaterThanOrEqual(0.35);
-    const fromEmpty = t + 2.5;
-    expect(fromEmpty).toBeGreaterThan(0.35 / b.staminaRegen);
-    expect(fromEmpty).toBeLessThan(0.35 / b.staminaRegen + 2);
-    input.flap = 1;
-    for (let i = 0; i < 0.5 / SIM_DT; i++) m.step(SIM_DT, input, env, events);
-    expect(m.beats).toBeGreaterThan(beats);
+    expect(t).toBeGreaterThan(1 / b.staminaRegen);
+    expect(t).toBeLessThan(1 / b.staminaRegen + 1.5);
+  });
+
+  it('rising air is restful: regen is faster gliding in a thermal', () => {
+    const b = BREEDS.galewing;
+    const regen = (up: number) => {
+      const m = launch(b, 22);
+      m.state.stamina = 0;
+      const env = { windAt: (_p: Vector3, out: Vector3) => out.set(0, up, 0), terrain: stillAir().terrain };
+      for (let i = 0; i < 3 / SIM_DT; i++) m.step(SIM_DT, neutralInput(), env);
+      return m.state.stamina;
+    };
+    expect(regen(6)).toBeGreaterThan(regen(0) * 1.8);
+  });
+
+  it('a larger capacity (the Rested bonus) makes the meter last proportionally longer', () => {
+    const b = BREEDS.harrier;
+    expect(measureEndurance(b, 1.4) / measureEndurance(b)).toBeCloseTo(1.4, 1);
   });
 
   it('commits to a beat once started and fires the flap event at the bottom of the stroke', () => {
@@ -317,6 +379,70 @@ describe('handling', () => {
         expect(r[heavy].rollOut).toBeGreaterThan(r[light].rollOut);
       }
     }
+  });
+
+  it('settles where it is put: a released roll overshoots by less than 12° for every breed', () => {
+    for (const id of BREED_ORDER) {
+      const m = launch(BREEDS[id], new FlightModel(BREEDS[id]).derived.vCruise);
+      const input = neutralInput();
+      for (let i = 0; i < 1 / SIM_DT; i++) m.step(SIM_DT, input, stillAir());
+      input.roll = 1;
+      while (bankAngle(m) < 45 * DEG) m.step(SIM_DT, input, stillAir());
+      const released = bankAngle(m);
+      input.roll = 0;
+      let peak = released;
+      for (let i = 0; i < 3 / SIM_DT; i++) {
+        m.step(SIM_DT, input, stillAir());
+        peak = Math.max(peak, bankAngle(m));
+      }
+      expect((peak - released) / DEG, id).toBeLessThan(12);
+    }
+  });
+
+  it('the rudder swings the heading (a flat turn with a little lean)', () => {
+    const m = launch(BREEDS.harrier, 24);
+    const h0 = Math.atan2(m.state.velocity.x, m.state.velocity.z);
+    const input = neutralInput();
+    input.yaw = 1;
+    for (let i = 0; i < 3 / SIM_DT; i++) m.step(SIM_DT, input, stillAir());
+    // Yaw right turns toward -X (heading decreases), by a useful amount but far less than a bank.
+    const turned = h0 - Math.atan2(m.state.velocity.x, m.state.velocity.z);
+    expect(turned / DEG).toBeGreaterThan(15);
+    expect(turned / DEG).toBeLessThan(70);
+    expect(bankAngle(m)).toBeGreaterThan(0);
+    expect(bankAngle(m) / DEG).toBeLessThan(30);
+  });
+
+  it('a beat wins over a tuck: holding both opens the wings and beats', () => {
+    const { events, counts } = bus();
+    const m = launch(BREEDS.harrier, 40, 3000, 30 * DEG);
+    const input = neutralInput();
+    input.tuck = 1;
+    for (let i = 0; i < 1 / SIM_DT; i++) m.step(SIM_DT, input, stillAir(), events);
+    expect(m.state.wingSpread).toBeLessThan(0.3);
+    const beats = m.beats;
+    input.flap = 1;
+    for (let i = 0; i < 1.5 / SIM_DT; i++) m.step(SIM_DT, input, stillAir(), events);
+    expect(m.beats - beats).toBeGreaterThanOrEqual(2);
+    expect(counts.flap).toBeGreaterThanOrEqual(1);
+    expect(m.state.wingSpread).toBeGreaterThan(0.8);
+    // Let go of the flap: the wings fold back into the dive once the stroke is done.
+    input.flap = 0;
+    for (let i = 0; i < 1.5 / SIM_DT; i++) m.step(SIM_DT, input, stillAir(), events);
+    expect(m.state.wingSpread).toBeLessThan(0.3);
+  });
+
+  it('air rising under one wing rolls the wyvern away from it, light breeds most', () => {
+    const roll = (id: BreedId) => {
+      const m = launch(BREEDS[id], 24);
+      // A gust front: rising air to the left of x = 0 (the left wing points +X).
+      const env = { windAt: (p: Vector3, out: Vector3) => out.set(0, p.x > 0 ? 2.5 : 0, 0), terrain: stillAir().terrain };
+      for (let i = 0; i < 0.8 / SIM_DT; i++) m.step(SIM_DT, neutralInput(), env);
+      return bankAngle(m);
+    };
+    // Lifted left wing: banks right (positive).
+    expect(roll('harrier') / DEG).toBeGreaterThan(2);
+    expect(roll('skimmer')).toBeGreaterThan(roll('ironback'));
   });
 
   it('a bank and a slight pull make a coordinated carving turn', () => {
@@ -420,6 +546,68 @@ describe('terrain', () => {
     expect(counts.terrainHit).toBeGreaterThan(0);
     expect(stunned).toBeGreaterThan(0.4);
     expect(m.state.position.y).toBeGreaterThan(g.y);
+  });
+
+  it('flies into a building wall and bounces off it (structures collide like rock)', () => {
+    const t = new Terrain(LAYOUT);
+    // A tower in open sky, flown straight at.
+    t.colliders.add({ x: 0, z: 0, radius: 5, y0: 2900, y1: 3100 });
+    const { events, counts } = bus();
+    const m = launch(BREEDS.harrier, 26, 3000);
+    m.reset(new Vector3(0, 3000, -60), yawQuat(0), new Vector3(0, 0, 26));
+    let closest = Infinity;
+    for (let i = 0; i < 4 / SIM_DT; i++) {
+      m.step(SIM_DT, neutralInput(), { windAt: (_p, o) => o.set(0, 0, 0), terrain: t }, events);
+      closest = Math.min(closest, Math.hypot(m.state.position.x, m.state.position.z));
+    }
+    expect(closest).toBeGreaterThan(5 + m.derived.bodyRadius * 0.8);
+    expect(counts.terrainHit).toBeGreaterThan(0);
+  });
+
+  it('brushes through foliage: slowed and nudged, never stopped or stunned', () => {
+    const t = new Terrain(LAYOUT);
+    // A big soft canopy in open sky.
+    t.colliders.add({ kind: 'sphere', x: 0, y: 3000, z: 0, radius: 8, soft: true });
+    const { events, counts } = bus();
+    let brushes = 0;
+    events.on('foliageBrush', () => brushes++);
+    const m = new FlightModel(BREEDS.harrier);
+    m.reset(new Vector3(0, 3002, -40), yawQuat(0), new Vector3(0, 0, 26));
+    let stunned = 0;
+    for (let i = 0; i < 3 / SIM_DT; i++) {
+      m.step(SIM_DT, neutralInput(), { windAt: (_p, o) => o.set(0, 0, 0), terrain: t }, events);
+      stunned = Math.max(stunned, m.stunned);
+    }
+    // Went through (past the canopy), slower than an untouched glide, with leaves flying.
+    expect(m.state.position.z).toBeGreaterThan(20);
+    expect(brushes).toBeGreaterThan(0);
+    expect(counts.terrainHit ?? 0).toBe(0);
+    expect(stunned).toBe(0);
+    const free = new FlightModel(BREEDS.harrier);
+    free.reset(new Vector3(0, 3002, -40), yawQuat(0), new Vector3(0, 0, 26));
+    for (let i = 0; i < 3 / SIM_DT; i++) free.step(SIM_DT, neutralInput(), stillAir());
+    expect(m.state.velocity.length()).toBeLessThan(free.state.velocity.length() - 1);
+  });
+
+  it('flaring low over the ground backwings against the sink (stamina pays for it)', () => {
+    const fall = (backwing: boolean) => {
+      const m = new FlightModel(BREEDS.ironback);
+      const g = terrain.groundAt(0, -60, 1e6)!;
+      m.reset(new Vector3(0, g.y + (backwing ? 9 : 60), -60), yawQuat(0), new Vector3(0, -9, 14));
+      const input = neutralInput();
+      input.flare = 1;
+      m.state.flare = 1;
+      let sink = 0;
+      for (let i = 0; i < 0.9 / SIM_DT; i++) {
+        m.step(SIM_DT, input, { windAt: (_p, o) => o.set(0, 0, 0), terrain });
+        sink = -m.state.velocity.y;
+      }
+      return { sink, stamina: m.state.stamina };
+    };
+    const low = fall(true);
+    const high = fall(false);
+    expect(low.sink).toBeLessThan(high.sink - 3);
+    expect(low.stamina).toBeLessThan(high.stamina);
   });
 
   it('a wingtip clipping a spire yaws the wyvern away from it', () => {

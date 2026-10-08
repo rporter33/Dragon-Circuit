@@ -8,6 +8,8 @@ import { DEFAULT_SETTINGS } from '../game/settings';
 import { LAYOUT } from '../world/layout';
 import { Terrain } from '../world/terrain';
 import { BREED_ORDER, BREEDS } from '../flight/breeds';
+import { yawQuat } from '../flight/telemetry';
+import { DEG } from '../core/math';
 import { Player } from './Player';
 import { RiderFoot } from './foot';
 import { computePrompt } from './prompts';
@@ -429,9 +431,11 @@ describe('prompts', () => {
     r.run(2.5);
     // ...but once it's been gliding down toward the ground for a while.
     expect(computePrompt(r.player, LAYOUT)?.action).toBe('flare');
-    r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 13);
-    // Hauled back below stall speed: the stall breaks about a second in.
-    r.run(1.3, (inp) => (inp.flight.pitch = 1));
+    // A tail slide (straight up, coasting until the air runs out) is what stalls a wyvern now.
+    r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 35);
+    r.player.model.reset(new Vector3(0, 900, 0), yawQuat(0, -88 * DEG), new Vector3(0, 35, 0));
+    for (let i = 0; i < 160 && r.player.flight.stall <= 0.5; i++) r.run(0.05, (inp) => (inp.flight.pitch = -0.35));
+    expect(r.player.flight.stall).toBeGreaterThan(0.5);
     expect(computePrompt(r.player, LAYOUT)?.text).toMatch(/Stalling/);
   });
 
