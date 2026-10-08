@@ -89,7 +89,7 @@ export const FLIGHT_CAM = {
   /** Racing: a higher, further-reaching framing so the next ring shows above the wyvern. */
   race: { heightSpan: 0.3, heightBase: 3.4, lookAheadTime: 0.45, lookAheadMax: 28 },
   /** Racing: the next ring's rim stays at least this far (rad) above the wyvern on screen. */
-  ringClearance: 0.17,
+  ringClearance: 0.24,
   /** Foliage may pull the boom in to no less than this share of its length. */
   softMin: 0.45,
   /** Seconds of stick-free time before a look offset springs back (mouse gets longer). */
