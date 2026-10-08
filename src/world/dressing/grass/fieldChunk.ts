@@ -209,6 +209,7 @@ export function generateFieldChunk(
     const dryB = hexBytes(style.tipDry);
     const hBaseB = hexBytes(style.heatherBase);
     const hTipB = hexBytes(style.heatherTip);
+    const hTipPaleB = hexBytes(style.heatherTipPale ?? style.heatherTip);
     const paved = def.kind === 'roost' || def.kind === 'ruin';
 
     // --- grass tufts ---------------------------------------------------------------------------
@@ -246,8 +247,9 @@ export function generateFieldChunk(
       tufts.pos[p4 + 1] = smp.y;
       tufts.pos[p4 + 2] = z;
       tufts.pos[p4 + 3] = rnd() * Math.PI * 2;
-      tufts.shape[p4] = heather ? h * 0.55 + 0.16 : h;
-      tufts.shape[p4 + 1] = heather ? 1.25 + rnd() * 0.3 : 0.8 + rnd() * 0.45;
+      // Heather: low rounded clumps (0.25-0.4 m), a little wider than a grass tuft.
+      tufts.shape[p4] = heather ? Math.min(0.42, h * 0.32 + 0.16) : h;
+      tufts.shape[p4 + 1] = heather ? 1.15 + rnd() * 0.3 : 0.8 + rnd() * 0.45;
       tufts.shape[p4 + 2] = i / n;
       // Lean/seed in 0..1; heather tufts are flagged by adding 1 (the shader splits it).
       tufts.shape[p4 + 3] = rnd() + (heather ? 1 : 0);
@@ -255,13 +257,14 @@ export function generateFieldChunk(
       const nzB = toByte((smp.nz * 0.5 + 0.5) * 255);
       const vary = 0.88 + rnd() * 0.24; // per-tuft brightness
       if (heather) {
-        const pink = rnd() * 0.25;
+        // Each clump somewhere between the deeper and the paler bloom.
+        const pale = rnd();
         tufts.base[p4] = toByte(hBaseB[0] * vary);
         tufts.base[p4 + 1] = toByte(hBaseB[1] * vary);
         tufts.base[p4 + 2] = toByte(hBaseB[2] * vary);
-        tufts.tip[p4] = toByte((hTipB[0] + 40 * pink) * vary);
-        tufts.tip[p4 + 1] = toByte((hTipB[1] + 10 * pink) * vary);
-        tufts.tip[p4 + 2] = toByte((hTipB[2] - 10 * pink) * vary);
+        tufts.tip[p4] = toByte((hTipB[0] + (hTipPaleB[0] - hTipB[0]) * pale) * vary);
+        tufts.tip[p4 + 1] = toByte((hTipB[1] + (hTipPaleB[1] - hTipB[1]) * pale) * vary);
+        tufts.tip[p4 + 2] = toByte((hTipB[2] + (hTipPaleB[2] - hTipB[2]) * pale) * vary);
       } else {
         const dry = smoothstep(0.55, 0.9, patch) * 0.7 + (rnd() - 0.5) * 0.25;
         const d = Math.max(0, Math.min(1, dry));

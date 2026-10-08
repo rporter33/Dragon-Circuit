@@ -144,8 +144,9 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
   float M = 0.0;
   if (isTop > 0.5) {
     float cover = vOver.a - 2.0;
-    float n = dwNoise2(wp.xz * 0.42) * 0.6 + dwNoise2(wp.xz * 1.6 + 7.0) * 0.4 - 0.5;
-    float m = cover + n * 0.55 * mid * smoothstep(0.0, 0.08, cover) * smoothstep(1.0, 0.92, cover);
+    // Three octaves: broad wobble, mid bays and a crisp, broken fringe (no soft blobs).
+    float n = dwNoise2(wp.xz * 0.42) * 0.5 + dwNoise2(wp.xz * 1.6 + 7.0) * 0.32 + dwNoise2(wp.xz * 4.3 - 3.0) * 0.18 * fine - 0.5 + 0.09 * (1.0 - fine);
+    float m = cover + n * 0.75 * mid * smoothstep(0.0, 0.08, cover) * smoothstep(1.0, 0.92, cover);
     float w = max(dCover * 1.2, 0.02);
     M = smoothstep(0.5 - w, 0.5 + w, m);
     col = mix(col, vOver.rgb, M);
