@@ -50,6 +50,7 @@ export class RaceHud {
   /** The race the HUD is showing (from events; the race system may be idle again by now). */
   private raceId: string | null = null;
   private armed = false;
+  private armedAge = 0;
   private finishedLeft = 0;
   private ringIndex = 0;
   private ringTotal = 0;
@@ -103,6 +104,7 @@ export class RaceHud {
     ev.on('raceArmed', (e: GameEvents['raceArmed']) => {
       this.raceId = e.raceId;
       this.armed = true;
+      this.armedAge = 0;
       this.finishedLeft = 0;
       this.ringIndex = 0;
       this.ringTotal = 0;
@@ -166,11 +168,6 @@ export class RaceHud {
     this.deltaLeft = 2.4;
   }
 
-  /** The race the HUD is following, if any (for the results card). */
-  get currentRace(): string | null {
-    return this.raceId;
-  }
-
   update(dt: number, view: GameView, hudVisible: boolean): void {
     const races = view.races;
     const def: RaceDef | undefined = this.raceId ? races.defs.find((d) => d.id === this.raceId) : undefined;
@@ -216,6 +213,13 @@ export class RaceHud {
       }
     }
 
+    // There is no "disarm" event: the gate banner stays while you are near that start (or for
+    // a few seconds after arming) and goes once you fly off.
+    if (this.armed) {
+      this.armedAge += dt;
+      const near = races.nearbyStart(view.player.position)?.id === this.raceId;
+      if (!near && this.armedAge > 6) this.armed = false;
+    }
     this.gateOn.set(hudVisible && this.armed && races.state !== 'running');
     if (this.armed) this.gateName.textContent = def?.name ?? titleCase(this.raceId ?? '');
 

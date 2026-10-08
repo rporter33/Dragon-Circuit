@@ -816,8 +816,8 @@
 }
 .dw-gauge-track {
   fill: none;
-  stroke: rgba(28, 20, 15, 0.42);
-  stroke-width: 5.5;
+  stroke: rgba(28, 20, 15, 0.58);
+  stroke-width: 6;
 }
 .dw-gauge-fill {
   fill: none;
@@ -1412,15 +1412,6 @@
 }
 .dw-hud-note .dw-hint-g {
   font-size: 1.3em;
-}
-
-/* Fade to black for transitions the UI owns. */
-.dw-fader {
-  position: absolute;
-  inset: 0;
-  background: #0d0906;
-  opacity: 0;
-  transition: opacity 0.4s;
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -2514,8 +2505,8 @@
   color: var(--gold);
 }
 .dw-tabrow .dw-tab {
-  padding: 0.3em 0.7em;
-  font-size: 0.8em;
+  padding: 0.3em 0.68em;
+  font-size: 0.84em;
 }
 .dw-stable-tabs .dw-tabnav {
   display: flex;

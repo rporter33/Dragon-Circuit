@@ -9,9 +9,9 @@
 import './fonts';
 import './ui.css';
 import type { GameEventBus } from '../core/events';
-import type { GameEvents, Medal, Settings } from '../core/types';
+import type { GameEvents, Settings } from '../core/types';
 import type { GameActions, GameScreen, GameView, UiSystem } from '../game/contracts';
-import type { ControlAction } from '../input/scheme';
+import type { ControlAction, PadControl } from '../input/scheme';
 import { ControlsMenu } from './ControlsMenu';
 import { CollectionMenu } from './CollectionMenu';
 import { CreditsMenu } from './CreditsMenu';
@@ -29,7 +29,6 @@ import { Results, type RaceResult } from './Results';
 import { SettingsMenu } from './SettingsMenu';
 import { Stable } from './Stable';
 import { Title } from './Title';
-import type { PadControl } from '../input/scheme';
 
 export interface UiDeps {
   root: HTMLElement;
@@ -83,8 +82,7 @@ export class Ui implements UiSystem {
     this.events = deps.events;
     preloadFonts();
 
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const ui = this;
+    const ui = this; // the getters below read live fields
     this.ctx = {
       get actions() {
         return ui.actions;
@@ -306,15 +304,12 @@ export class Ui implements UiSystem {
         raceId: e.raceId,
         def,
         timeMs: e.timeMs,
-        medal: e.medal as Medal,
+        medal: e.medal,
         newBest: e.newBest,
         previousBestMs: e.previousBestMs,
         unlocked: [],
       };
       this.resultsIn = RESULTS_DELAY;
-    });
-    ev.on('settingsChanged', () => {
-      // Panels re-read settings on show; the HUD reads them each frame.
     });
   }
 
