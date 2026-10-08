@@ -59,6 +59,7 @@ export interface SpringState {
  * gently and settles in roughly 4.7/omega seconds — an ease-in-out for transition offsets.
  */
 export function springDecay(s: SpringState, omega: number, dt: number): void {
+  if (!(dt > 0)) return;
   const e = Math.exp(-omega * dt);
   const k = (s.v + omega * s.x) * dt;
   s.x = (s.x + k) * e;
@@ -89,4 +90,32 @@ export function filmOffsetForShift(shift: number, vfovDeg: number, aspect: numbe
 /** Ease a look offset back to 0 once the player has left the stick alone for `delay` seconds. */
 export function lookReturn(offset: number, idle: number, delay: number, rate: number, dt: number): number {
   return idle > delay ? damp(offset, 0, rate, dt) : offset;
+}
+
+/**
+ * One step of an UNDERdamped spring toward 0 (ζ < 1 rings once: a dip, then a small lift past
+ * rest). Sub-stepped semi-implicit Euler, stable for any frame time. In place.
+ */
+export function springStep(s: SpringState, omega: number, zeta: number, dt: number): void {
+  if (!(dt > 0)) return;
+  const n = Math.max(1, Math.ceil(dt * 240));
+  const h = dt / n;
+  for (let i = 0; i < n; i++) {
+    s.v += (-omega * omega * s.x - 2 * zeta * omega * s.v) * h;
+    s.x += s.v * h;
+  }
+}
+
+/**
+ * The wingbeat heave for a breed: how far (m, per metre of camera distance) and how slowly the
+ * camera dips under a full downstroke. Heavier bodies heave further and slower; the spring rings
+ * once, so the dip is followed by a small lift — a big body carried on each beat.
+ */
+export function heaveFor(mass: number): { amplitude: number; omega: number; zeta: number } {
+  const m = Math.max(100, mass) / 650;
+  return {
+    amplitude: 0.025 * Math.sqrt(m),
+    omega: 2 * Math.PI * 1.45 / Math.sqrt(m),
+    zeta: 0.42,
+  };
 }

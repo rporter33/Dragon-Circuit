@@ -3,8 +3,9 @@
 // shots when the rig changes and layers shake on top.
 
 import { Vector3, type PerspectiveCamera } from 'three';
-import type { InputFrame, Settings, TerrainQuery } from '../core/types';
+import type { InputFrame, Settings } from '../core/types';
 import type { PlayerSystem } from '../game/contracts';
+import type { CameraTerrain } from './collision';
 
 export interface CameraShot {
   position: Vector3;
@@ -32,13 +33,15 @@ export interface CameraPose {
 }
 
 export interface RigContext {
-  terrain: Pick<TerrainQuery, 'distance'>;
+  terrain: CameraTerrain;
   settings: Settings;
   camera: PerspectiveCamera;
   /** Seconds since the rig system started (for slow cinematic motion). */
   time: number;
   /** Player's follow-distance multiplier from the mouse wheel (1 = default). */
   zoom: number;
+  /** While racing: the next ring (or the finish) the camera should keep in view; else null. */
+  waypoint: Vector3 | null;
 }
 
 export interface Rig {
