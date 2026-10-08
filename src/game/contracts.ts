@@ -7,6 +7,7 @@ import type { GameEventBus } from '../core/events';
 import type {
   BreedId,
   BreedStats,
+  CosmeticSlot,
   CylinderCollider,
   FlightEnvironment,
   FlightState,
@@ -285,6 +286,8 @@ export interface GhostRecording {
   rate: number;
   /** Packed samples: [x, y, z, qx, qy, qz, qw, flapPhase, flapStrength, wingSpread, flare] × n. */
   samples: Float32Array;
+  /** Optional: race time (ms) at each ring of this run, for live split deltas against it. */
+  splits?: number[];
 }
 
 export interface SaveStore {
@@ -296,7 +299,11 @@ export interface SaveStore {
   reset(): void;
   getGhost(raceId: string): Promise<GhostRecording | null>;
   putGhost(ghost: GhostRecording): Promise<void>;
-  isUnlocked(cosmeticId: string): boolean;
+  /**
+   * Whether a cosmetic can be worn. `slot` disambiguates ids that several slots share ('long' is
+   * a hair style and a scarf); without it the first catalog match is used.
+   */
+  isUnlocked(cosmeticId: string, slot?: CosmeticSlot): boolean;
   medalCount(medal: Exclude<Medal, 'none'>): number;
 }
 
