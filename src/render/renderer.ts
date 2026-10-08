@@ -1,9 +1,16 @@
-// WebGL renderer + post chain: scene → bloom → grade (color, vignette, speed blur, fades) →
-// output (ACES tone map + sRGB). MSAA happens in the composer's render target.
+// WebGL renderer + post chain:
+//
+//   scene ──► HDR target (half float, MSAA per quality, the only multisampled buffer)
+//          └► bloom mip chain (half res and down; see post/bloom.ts)
+//   grade (full res, straight to the canvas): scene + bloom, speed blur or sharpening, color
+//          grade, cloud veil, flash, vignette, fade, ACES tone map, sRGB, dither.
+//
+// One full-resolution pass after the scene, one MSAA resolve, no ping-pong buffers. Shader
+// warmup (warmup.ts) keeps program links out of play; quality changes rebuild the targets and
+// recompile everything before the next visible frame.
 
 import {
   ACESFilmicToneMapping,
-  Color,
   HalfFloatType,
   PCFShadowMap,
   SRGBColorSpace,
@@ -11,100 +18,72 @@ import {
   WebGLRenderer,
   WebGLRenderTarget,
   type Camera,
+  type ShaderMaterial,
   type Scene,
 } from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { QUALITY, type QualityProfile } from './quality';
 import type { QualityLevel } from '../core/types';
+import { BloomChain } from './post/bloom';
+import { gradeMaterial, gradeUniforms, type GradeUniforms } from './post/grade';
+import { POST_CAMERA, PostQuad } from './post/quad';
+import { ShaderWarmup, type WarmupStats } from './warmup';
+import { globalUniforms } from './uniforms';
 
-const GradeShader = {
-  name: 'DriftwingGrade',
-  uniforms: {
-    tDiffuse: { value: null },
-    uTime: { value: 0 },
-    uExposure: { value: 1.0 },
-    uSaturation: { value: 1.08 },
-    uContrast: { value: 1.04 },
-    uLift: { value: new Color(0.0, 0.0, 0.0) },
-    uGain: { value: new Color(1.0, 1.0, 1.0) },
-    uVignette: { value: 0.32 },
-    /** 0..1 radial speed blur (dives). */
-    uSpeedBlur: { value: 0 },
-    /** 0..1 full-screen fade to uFadeColor (respawn, transitions). */
-    uFade: { value: 0 },
-    uFadeColor: { value: new Color(0.92, 0.95, 1.0) },
-    /** 0..1 additive flash (ring passed, collectible). */
-    uFlash: { value: 0 },
-    uFlashColor: { value: new Color(1.0, 0.9, 0.6) },
-    /** 0..1 white-out when flying through a cloud. */
-    uCloudVeil: { value: 0 },
-    uCloudColor: { value: new Color(0.9, 0.93, 0.97) },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-  `,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse;
-    uniform float uTime, uExposure, uSaturation, uContrast, uVignette, uSpeedBlur, uFade, uFlash, uCloudVeil;
-    uniform vec3 uLift, uGain, uFadeColor, uFlashColor, uCloudColor;
-    varying vec2 vUv;
+export type { GradeUniforms } from './post/grade';
+export type { WarmupStats } from './warmup';
 
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+/**
+ * Bloom energy relative to the strength the sky's palettes ask for (0.25-0.55). Calibrated so
+ * halos match the UnrealBloomPass tuning the palettes were authored against.
+ */
+const BLOOM_GAIN = 1.8;
+/** Below this strength bloom is skipped entirely. */
+const BLOOM_MIN = 0.02;
+/**
+ * Shader time wraps by this much (seconds; a power of two, so the wrap is exact). float32
+ * keeps sub-millisecond steps below 2^13 s; the wrap happens behind a fade when possible.
+ */
+const TIME_WRAP = 4096;
+/** Wrap regardless after this long without a fade (one frame of animation phase jump). */
+const TIME_HARD_LIMIT = 4 * TIME_WRAP;
+/** Longest a quality change may hold back drawing while programs compile (ms). */
+const RECOMPILE_MAX_MS = 4000;
 
-    void main() {
-      vec2 uv = vUv;
-      vec3 col = texture2D(tDiffuse, uv).rgb;
-      if (uSpeedBlur > 0.001) {
-        vec2 dir = uv - 0.5;
-        float r = length(dir);
-        float amt = uSpeedBlur * smoothstep(0.12, 0.7, r) * 0.06;
-        vec3 acc = col;
-        for (int i = 1; i < 8; i++) {
-          acc += texture2D(tDiffuse, uv - dir * amt * float(i) / 7.0).rgb;
-        }
-        col = acc / 8.0;
-      }
-      col *= uExposure;
-      float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
-      col = mix(vec3(luma), col, uSaturation);
-      // Contrast around mid-grey, applied in linear HDR before tone mapping.
-      col = max(col, 0.0);
-      col = (col - 0.18) * uContrast + 0.18;
-      col = max(col, 0.0);
-      col = col * uGain + uLift * (1.0 - clamp(luma, 0.0, 1.0));
-      col = mix(col, uCloudColor * (0.9 + 0.1 * hash(uv * 3.0 + uTime)), uCloudVeil);
-      col += uFlashColor * uFlash;
-      // Vignette.
-      vec2 v = uv - 0.5;
-      float vig = 1.0 - uVignette * smoothstep(0.25, 0.85, length(v * vec2(1.1, 1.0)) * 1.25);
-      col *= vig;
-      col = mix(col, uFadeColor, uFade);
-      gl_FragColor = vec4(col, 1.0);
-    }
-  `,
-};
-
-export type GradeUniforms = typeof GradeShader.uniforms;
+export interface RenderStats {
+  /** Draw calls, triangles and points of the last frame (shadow and post passes included). */
+  calls: number;
+  triangles: number;
+  points: number;
+  /** Linked programs in total. */
+  programs: number;
+  /** Drawing-buffer size in pixels. */
+  width: number;
+  height: number;
+  /** Current pixel ratio (cap × resolution setting × automatic factor). */
+  pixelRatio: number;
+  /** Objects held off camera while their programs compile. */
+  compiling: number;
+}
 
 export class Renderer {
   readonly gl: WebGLRenderer;
   readonly canvas: HTMLCanvasElement;
   readonly grade: GradeUniforms;
+  readonly warmup: ShaderWarmup;
   quality: QualityProfile;
-  private composer: EffectComposer;
-  private renderPass: RenderPass;
-  private bloom: UnrealBloomPass;
-  private gradePass: ShaderPass;
+  /** True when the last frame linked new programs (a hitch, not steady-state cost). */
+  compiledThisFrame = false;
   private target: WebGLRenderTarget;
+  private bloom: BloomChain;
+  private gradeQuad: PostQuad<ShaderMaterial>;
+  private bloomStrength = 0.32;
   private resolutionScale = 1;
   /** Automatic resolution factor (0.5..1) the game lowers when frames run long. */
   private dynamicScale = 1;
   private size = new Vector2();
+  private pixelRatio = 1;
+  private needsRecompile = false;
+  private recompiling: { done: boolean; started: number } | null = null;
 
   constructor(container: HTMLElement, level: QualityLevel = 'high') {
     this.quality = QUALITY[level];
@@ -114,32 +93,40 @@ export class Renderer {
     this.gl.toneMappingExposure = 1.0;
     this.gl.shadowMap.enabled = this.quality.shadows;
     this.gl.shadowMap.type = PCFShadowMap;
+    // Count the whole frame (shadow, scene and post passes), not just the last draw.
+    this.gl.info.autoReset = false;
     this.canvas = this.gl.domElement;
     this.canvas.tabIndex = 0;
     container.appendChild(this.canvas);
+    this.warmup = new ShaderWarmup(this.gl);
 
-    this.target = new WebGLRenderTarget(1, 1, { type: HalfFloatType, samples: this.quality.msaa });
-    this.composer = new EffectComposer(this.gl, this.target);
-    this.renderPass = new RenderPass(undefined as unknown as Scene, undefined as unknown as Camera);
-    this.composer.addPass(this.renderPass);
-    this.bloom = new UnrealBloomPass(new Vector2(256, 256), 0.32, 0.55, 0.86);
-    this.bloom.enabled = this.quality.bloom;
-    this.composer.addPass(this.bloom);
-    this.gradePass = new ShaderPass(GradeShader);
-    this.grade = this.gradePass.uniforms as unknown as GradeUniforms;
-    this.composer.addPass(this.gradePass);
-    this.composer.addPass(new OutputPass());
+    this.target = this.makeSceneTarget(this.quality.msaa);
+    this.bloom = new BloomChain(this.quality.bloomLevels ?? 6);
+    this.bloom.threshold = 0.86;
+    this.grade = gradeUniforms();
+    this.gradeQuad = new PostQuad(gradeMaterial(this.grade));
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    this.watchPixelRatio();
   }
 
   setQuality(level: QualityLevel, resolutionScale = this.resolutionScale): void {
-    this.quality = QUALITY[level];
+    const q = QUALITY[level];
+    const changed = q !== this.quality;
+    this.quality = q;
     this.resolutionScale = resolutionScale;
-    this.gl.shadowMap.enabled = this.quality.shadows;
-    this.bloom.enabled = this.quality.bloom;
-    this.target.samples = this.quality.msaa;
+    this.gl.shadowMap.enabled = q.shadows;
+    // three never re-creates a framebuffer when `samples` changes on a live target, so a new
+    // MSAA level means a new target.
+    if (this.target.samples !== q.msaa) {
+      this.target.dispose();
+      this.target = this.makeSceneTarget(q.msaa);
+    }
+    this.bloom.setLevels(q.bloomLevels ?? 6);
+    // The systems apply their own quality changes right after this call; recompile on the next
+    // frame, once they have.
+    if (changed) this.needsRecompile = true;
     this.resize();
   }
 
@@ -156,22 +143,31 @@ export class Renderer {
     this.resize();
   }
 
-  /** Bloom strength (sky module raises it at dusk/night for glowing lanterns). */
-  setBloom(strength: number, threshold?: number): void {
-    this.bloom.strength = strength;
+  /**
+   * Bloom strength and threshold (the sky raises bloom at dusk/night for glowing lanterns).
+   * `knee` softens the threshold: the ramp runs from threshold - knee to threshold + knee.
+   */
+  setBloom(strength: number, threshold?: number, knee?: number): void {
+    this.bloomStrength = strength;
     if (threshold !== undefined) this.bloom.threshold = threshold;
+    if (knee !== undefined) this.bloom.knee = knee;
   }
 
   resize(): void {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, this.quality.pixelRatioCap) * this.resolutionScale * this.dynamicScale;
+    const w = Math.max(1, window.innerWidth);
+    const h = Math.max(1, window.innerHeight);
+    const dpr = window.devicePixelRatio || 1;
+    const pr = Math.min(dpr, this.quality.pixelRatioCap) * this.resolutionScale * this.dynamicScale;
+    this.pixelRatio = pr;
     this.gl.setPixelRatio(pr);
     this.gl.setSize(w, h, false);
-    this.composer.setPixelRatio(pr);
-    this.composer.setSize(w, h);
-    // Bloom at half resolution is plenty and much cheaper.
-    this.bloom.resolution.set(Math.max(1, (w * pr) / 2), Math.max(1, (h * pr) / 2));
+    const bw = this.canvas.width;
+    const bh = this.canvas.height;
+    this.target.setSize(bw, bh);
+    this.bloom.setSize(bw, bh);
+    this.grade.uTexel.value.set(1 / bw, 1 / bh);
+    // The browser stretches the drawing buffer to the screen; sharpen in proportion.
+    this.grade.uSharpen.value = sharpenFor((w * dpr) / bw);
     this.size.set(w, h);
     for (const fn of this.resizeListeners) fn(w, h);
   }
@@ -186,11 +182,68 @@ export class Renderer {
     return this.size.x / Math.max(1, this.size.y);
   }
 
+  get stats(): RenderStats {
+    const i = this.gl.info;
+    return {
+      calls: i.render.calls,
+      triangles: i.render.triangles,
+      points: i.render.points,
+      programs: i.programs?.length ?? 0,
+      width: this.canvas.width,
+      height: this.canvas.height,
+      pixelRatio: this.pixelRatio,
+      compiling: this.warmup.compiling,
+    };
+  }
+
+  /**
+   * Boot warmup, run behind the splash: compile every program the scene and the post chain use
+   * (in parallel where the driver allows), then draw everything once off screen so shadow
+   * variants exist and all geometry is uploaded. See warmup.ts.
+   */
+  async prepare(scene: Scene, camera: Camera, drawAll = true): Promise<WarmupStats> {
+    const programsBefore = this.gl.info.programs?.length ?? 0;
+    this.compilePost();
+    const { compileMs, readyMs } = await this.warmup.compileAll(scene, camera, this.target);
+    const drawMs = drawAll ? this.warmup.drawAll(scene, camera, this.target) : 0;
+    return { programsBefore, programsAfter: this.gl.info.programs?.length ?? 0, compileMs, readyMs, drawMs };
+  }
+
   render(scene: Scene, camera: Camera, dt: number): void {
-    this.renderPass.scene = scene;
-    this.renderPass.camera = camera;
-    this.grade.uTime.value += dt;
-    this.composer.render(dt);
+    this.advanceTime(dt);
+    if (this.needsRecompile) this.startRecompile(scene, camera);
+    const r = this.recompiling;
+    if (r) {
+      // Hold the last frame on screen while the new quality's programs link.
+      if (!r.done && performance.now() - r.started < RECOMPILE_MAX_MS) {
+        this.compiledThisFrame = true;
+        return;
+      }
+      this.recompiling = null;
+    }
+    const info = this.gl.info;
+    info.reset();
+    const programs = info.programs?.length ?? 0;
+    this.warmup.update(scene, camera, this.target, dt);
+
+    const gl = this.gl;
+    gl.setRenderTarget(this.target);
+    gl.render(scene, camera);
+
+    const g = this.grade;
+    if (this.quality.bloom && this.bloomStrength > BLOOM_MIN) {
+      g.tBloom.value = this.bloom.render(gl, this.target.texture);
+      g.uBloomStrength.value = this.bloomStrength * BLOOM_GAIN;
+    } else {
+      g.uBloomStrength.value = 0;
+    }
+    g.tDiffuse.value = this.target.texture;
+    const autoClear = gl.autoClear;
+    gl.autoClear = false; // the grade covers every pixel
+    gl.setRenderTarget(null);
+    this.gradeQuad.render(gl);
+    gl.autoClear = autoClear;
+    this.compiledThisFrame = (info.programs?.length ?? 0) !== programs;
   }
 
   /** Render without post (for the stable preview inset or debug captures). */
@@ -198,4 +251,68 @@ export class Renderer {
     this.gl.setRenderTarget(null);
     this.gl.render(scene, camera);
   }
+
+  // --- Internals ------------------------------------------------------------------------------
+
+  private makeSceneTarget(samples: number): WebGLRenderTarget {
+    const t = new WebGLRenderTarget(Math.max(1, this.canvas?.width ?? 1), Math.max(1, this.canvas?.height ?? 1), {
+      type: HalfFloatType,
+      samples,
+      depthBuffer: true,
+      stencilBuffer: false,
+    });
+    t.texture.name = 'DriftwingScene';
+    t.texture.generateMipmaps = false;
+    return t;
+  }
+
+  private compilePost(): void {
+    const gl = this.gl;
+    const prev = gl.getRenderTarget();
+    try {
+      gl.setRenderTarget(this.bloom.compileTarget);
+      for (const q of this.bloom.quads) gl.compile(q.mesh, POST_CAMERA);
+      gl.setRenderTarget(null);
+      gl.compile(this.gradeQuad.mesh, POST_CAMERA);
+    } finally {
+      gl.setRenderTarget(prev);
+    }
+  }
+
+  private startRecompile(scene: Scene, camera: Camera): void {
+    this.needsRecompile = false;
+    this.warmup.reset();
+    const job = { done: false, started: performance.now() };
+    // Without parallel compilation there is nothing to wait for: the next draw links in place.
+    if (this.warmup.parallel) this.recompiling = job;
+    this.warmup.compileAll(scene, camera, this.target).then(
+      () => (job.done = true),
+      () => (job.done = true),
+    );
+  }
+
+  private advanceTime(dt: number): void {
+    const g = this.grade.uTime;
+    g.value = (g.value + Math.max(0, dt)) % 1000;
+    const t = globalUniforms.uTime;
+    if (t.value > TIME_HARD_LIMIT || (t.value > TIME_WRAP && this.grade.uFade.value > 0.95)) t.value -= TIME_WRAP;
+  }
+
+  /** devicePixelRatio changes (moving to another monitor, OS zoom) don't fire 'resize'. */
+  private watchPixelRatio(): void {
+    if (typeof matchMedia !== 'function') return;
+    const mq = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    const onChange = () => {
+      mq.removeEventListener('change', onChange);
+      this.resize();
+      this.watchPixelRatio();
+    };
+    mq.addEventListener('change', onChange);
+  }
+}
+
+/** Sharpening for a drawing buffer the browser stretches by `upscale` (1 = native). */
+export function sharpenFor(upscale: number): number {
+  if (!(upscale > 1.04)) return 0;
+  return Math.min(0.5, (upscale - 1) * 0.8);
 }
