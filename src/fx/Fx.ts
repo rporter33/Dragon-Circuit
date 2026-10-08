@@ -181,7 +181,9 @@ export class Fx implements FxSystem {
 
     // --- World: thermals, fireflies, leaves, launch gust --------------------------------------
     this.thermals.setPxScale(pxScale);
-    this.thermals.update(step, this.camPos, Math.min(camera.far, 2200));
+    // Thermals are for flyers: full strength on the wing, a faint hint from the ground, the title
+    // and the stable (where they'd only scribble over the backdrop).
+    this.thermals.update(step, this.camPos, Math.min(camera.far, 2200), flying ? 1 : 0.3);
     const night = globalUniforms.uNight.value;
     if (this.fireflies) {
       this.fireflies.setPxScale(pxScale);
