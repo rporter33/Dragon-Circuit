@@ -1,0 +1,295 @@
+import { CapsuleGeometry, Euler, Mesh, Object3D, Vector3 } from 'three';
+import type { Showcase } from '../showcase';
+import type { Game } from '../../game/Game';
+import type { RiderAction, RiderLook, RiderPose } from '../../core/types';
+import { Rider } from '../../creatures/rider/Rider';
+import { cosmeticsFor, DEFAULT_RIDER } from '../../cosmetics/catalog';
+import { toonMaterial } from '../../render/painterly';
+import { createRiderPose } from '../../player/poses';
+import { PLAYER_TUNING as P } from '../../player/tuning';
+
+/**
+ * ?view=rider — the rider in isolation on the Roost.
+ *
+ *   look:     outfit= hair= headgear= scarf= cape= build=slight|medium|broad
+ *             skin= hairColor= primary= secondary= scarfColor= capeColor=   (hex without #)
+ *   lineup:   lineup=outfit|hair|headgear|scarf|cape|build|action — one rider per option
+ *   action:   action=idle|walk|run|jump|fall|land|mount|dismount|wave [t=fixed action seconds]
+ *             speed= (m/s on foot; airflow when mounted). mount/dismount use a stand-in wyvern
+ *             and replay the player state's own arcs.
+ *   mounted:  mounted=1 on a stand-in saddle; lean= crouch= brace= pitch=deg (dive angle)
+ *   camera:   angle=deg (0 = in front) dist= height= camUp= turntable=1 focus=head
+ *
+ * Steps files can tweak parameters live: __riderShow.params.set('angle', '90').
+ */
+
+interface Actor {
+  rider: Rider;
+  pose: RiderPose;
+  home: Vector3;
+  action: RiderAction;
+  fixedT: number | null;
+  saddle: Object3D | null;
+  body: Mesh | null;
+}
+
+const actors: Actor[] = [];
+let params = new URLSearchParams();
+let time = 0;
+const _v = new Vector3();
+const _t = new Vector3();
+const _a = new Vector3();
+const _b = new Vector3();
+const ACTIONS: [RiderAction, number | null][] = [
+  ['idle', null],
+  ['wave', 0.62],
+  ['jump', 0.16],
+  ['fall', 1.4],
+  ['land', 0.06],
+  ['mount', 0.42],
+  ['dismount', 0.85],
+];
+
+function num(k: string, d: number): number {
+  const v = params.get(k);
+  return v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d;
+}
+
+function lookFromParams(): RiderLook {
+  const l: RiderLook = { ...DEFAULT_RIDER };
+  const set = (k: keyof RiderLook, p: string, hex = false) => {
+    const v = params.get(p);
+    if (v) (l as unknown as Record<string, string>)[k] = hex ? `#${v.replace('#', '')}` : v;
+  };
+  set('outfit', 'outfit');
+  set('hair', 'hair');
+  set('headgear', 'headgear');
+  set('scarf', 'scarf');
+  set('cape', 'cape');
+  set('build', 'build');
+  set('skin', 'skin', true);
+  set('hairColor', 'hairColor', true);
+  set('outfitPrimary', 'primary', true);
+  set('outfitSecondary', 'secondary', true);
+  set('scarfColor', 'scarfColor', true);
+  set('capeColor', 'capeColor', true);
+  return l;
+}
+
+const SKINS = ['#f2d0b8', '#d09a74', '#8a5a3e', '#e6b896', '#6a4230', '#b07a56', '#f0dcc8'];
+const HAIRS = ['#3a2a20', '#d8b070', '#1e1a18', '#a03a2a', '#6a4a30', '#e8d8b0'];
+
+function lineupLooks(base: RiderLook): RiderLook[] {
+  const which = params.get('lineup');
+  const vary = (l: RiderLook, i: number): RiderLook => ({
+    ...l,
+    skin: params.get('skin') ? l.skin : SKINS[i % SKINS.length],
+    hairColor: params.get('hairColor') ? l.hairColor : HAIRS[i % HAIRS.length],
+  });
+  const slot = (s: 'riderOutfit' | 'riderHair' | 'riderHeadgear' | 'riderScarf' | 'riderCape', key: keyof RiderLook) =>
+    cosmeticsFor(s).map((o, i) => vary({ ...base, [key]: o.id } as RiderLook, i));
+  switch (which) {
+    case 'outfit':
+      return slot('riderOutfit', 'outfit');
+    case 'hair':
+      return slot('riderHair', 'hair');
+    case 'headgear':
+      return slot('riderHeadgear', 'headgear');
+    case 'scarf':
+      return slot('riderScarf', 'scarf');
+    case 'cape':
+      return slot('riderCape', 'cape');
+    case 'build':
+      return (['slight', 'medium', 'broad'] as const).map((b, i) => vary({ ...base, build: b }, i));
+    case 'action':
+      return ACTIONS.map((_, i) => vary(base, i));
+    default:
+      return [base];
+  }
+}
+
+/** A stand-in for the wyvern's back with a saddle Object3D like the real one's. */
+function makeStandIn(game: Game, at: Vector3, yaw = 0): { saddle: Object3D; body: Mesh } {
+  const hw = num('halfWidth', 0.55);
+  const body = new Mesh(new CapsuleGeometry(hw, 3.2, 6, 16).rotateX(Math.PI / 2), toonMaterial({ color: '#3f7d5a' }));
+  body.castShadow = true;
+  body.receiveShadow = true;
+  body.position.copy(at);
+  body.rotation.y = yaw;
+  const saddle = new Object3D();
+  saddle.position.set(0, hw + 0.1, 0.2);
+  saddle.userData.halfWidth = hw;
+  saddle.userData.gripOffset = new Vector3(0, 0.35, 0.45);
+  body.add(saddle);
+  const horn = new Mesh(new CapsuleGeometry(0.035, 0.22, 4, 8), toonMaterial({ color: '#7a3a2a' }));
+  horn.position.set(0, hw + 0.4, 0.65);
+  body.add(horn);
+  const seat = new Mesh(new CapsuleGeometry(0.5, 0.5, 4, 16).scale(1.05, 0.25, 1.1).rotateX(Math.PI / 2), toonMaterial({ color: '#7a3a2a' }));
+  seat.position.set(0, hw + 0.02, 0.2);
+  body.add(seat);
+  game.scene.add(body);
+  body.updateMatrixWorld(true);
+  return { saddle, body };
+}
+
+const arc = (a: Vector3, b: Vector3, t: number, h: number, out: Vector3) => {
+  out.lerpVectors(a, b, t);
+  out.y += Math.sin(Math.PI * t) * h;
+  return out;
+};
+const smooth = (t: number) => {
+  const u = Math.min(1, Math.max(0, t));
+  return u * u * (3 - 2 * u);
+};
+
+const rider: Showcase = {
+  name: 'rider',
+  description: 'The rider: looks, lineups, actions, mounted posture with cloth (see file header)',
+  setup(game, p) {
+    params = p;
+    time = 0;
+    actors.length = 0;
+    if (typeof window !== 'undefined') (window as unknown as { __riderShow: unknown }).__riderShow = { params, actors, game };
+    game.rider.group.visible = false;
+    game.wyvern.group.visible = false;
+    const mounted = params.get('mounted') === '1';
+    const L = game.world.layout;
+    const t = game.world.terrain;
+    const base = lookFromParams();
+    const looks = lineupLooks(base);
+    const isActions = params.get('lineup') === 'action';
+    const spacing = mounted ? 2.2 : isActions ? 2.6 : 1.05;
+    const origin = t.standingPoint(L.spawn.position[0] - 6, L.spawn.position[2] + 4, new Vector3());
+    looks.forEach((look, i) => {
+      const off = (i - (looks.length - 1) / 2) * spacing;
+      const home = t.standingPoint(origin.x + off, origin.z, new Vector3());
+      const action = isActions ? ACTIONS[i][0] : ((params.get('action') ?? (mounted ? 'mounted' : 'idle')) as RiderAction);
+      const fixedT = params.get('t') !== null ? num('t', 0) : isActions ? ACTIONS[i][1] : null;
+      let saddle: Object3D | null = null;
+      let body: Mesh | null = null;
+      if (mounted) {
+        const s = makeStandIn(game, new Vector3(home.x, home.y + 1.6, home.z));
+        saddle = s.saddle;
+        body = s.body;
+      } else if (action === 'mount' || action === 'dismount') {
+        // The wyvern stands to the rider's right, facing the same way.
+        const s = makeStandIn(game, new Vector3(home.x - 1.25, home.y + 1.25, home.z + 0.3));
+        saddle = s.saddle;
+        body = s.body;
+      }
+      const r = new Rider(look, { terrain: t, saddle: saddle ?? undefined });
+      game.scene.add(r.group);
+      actors.push({ rider: r, pose: createRiderPose(), home, action, fixedT, saddle, body });
+    });
+    // Park the real player out of the way.
+    game.player.teleport(new Vector3(origin.x + 40, origin.y + 2, origin.z - 40), 0, 'onFoot');
+  },
+  update(game, dt) {
+    time += dt;
+    const mounted = params.get('mounted') === '1';
+    const center = new Vector3();
+    for (const a of actors) {
+      const pose = a.pose;
+      const action = a.action;
+      const speed = num('speed', action === 'run' ? 7.5 : action === 'walk' ? 1.6 : mounted ? 30 : 0);
+      pose.lean = num('lean', 0);
+      pose.crouch = num('crouch', 0);
+      pose.brace = num('brace', 0);
+      if (mounted && a.body && a.saddle) {
+        const pitch = (num('pitch', 0) * Math.PI) / 180;
+        a.body.quaternion.setFromEuler(new Euler(pitch, 0, pose.lean * 0.6, 'YXZ'));
+        a.body.updateMatrixWorld(true);
+        _v.set(0, 0, 1).applyQuaternion(a.body.quaternion);
+        pose.airflow.copy(_v).multiplyScalar(-speed);
+        pose.velocity.set(0, 0, 0);
+        pose.mounted = true;
+        pose.action = 'mounted';
+        pose.actionTime = time;
+        a.saddle.getWorldPosition(pose.position);
+        a.rider.update(dt, pose, a.saddle);
+        center.add(a.body.position);
+        continue;
+      }
+      pose.mounted = false;
+      pose.velocity.set(0, 0, 0);
+      pose.yaw = (num('yaw', 0) * Math.PI) / 180;
+      pose.position.copy(a.home);
+      const dur =
+        action === 'mount' ? P.mountTime + 1.2 : action === 'dismount' ? P.dismountTime + 1.2 : action === 'wave' ? P.waveTime + 0.6 : action === 'jump' ? 0.62 : action === 'fall' ? 3 : action === 'land' ? 0.8 : 1e9;
+      const tt = a.fixedT !== null ? a.fixedT : time % dur;
+      pose.action = action;
+      pose.actionTime = tt;
+      if (action === 'walk' || action === 'run') {
+        // Laps along a line, turning at each end.
+        const lap = 14;
+        const s = ((time * speed) % (2 * lap)) - lap;
+        const dir = s < 0 ? 1 : -1;
+        const along = s < 0 ? s + lap / 2 : lap / 2 - s;
+        pose.position.copy(a.home).add(_v.set(0, 0, along));
+        game.world.terrain.standingPoint(pose.position.x, pose.position.z, pose.position);
+        pose.velocity.set(0, 0, dir * speed);
+        pose.yaw = dir > 0 ? 0 : Math.PI;
+        pose.actionTime = time;
+      } else if (action === 'jump') {
+        pose.velocity.y = P.jumpSpeed - P.footGravity * tt;
+        pose.position.y += P.jumpSpeed * tt - 0.5 * P.footGravity * tt * tt;
+        if (pose.velocity.y < 0) pose.action = 'fall';
+        if (pose.position.y < a.home.y) {
+          pose.position.y = a.home.y;
+          pose.action = 'idle';
+          pose.velocity.y = 0;
+        }
+      } else if (action === 'fall') {
+        pose.velocity.set(0, -Math.min(45, 2 + P.footGravity * tt), 1.5);
+        pose.position.y += 1.4;
+      } else if ((action === 'mount' || action === 'dismount') && a.saddle) {
+        a.saddle.getWorldPosition(_b);
+        if (action === 'mount') {
+          const k = tt / P.mountTime;
+          if (k < 1) {
+            _a.copy(_b).addScaledVector(_v.set(0, 1, 0), -P.riderHip);
+            arc(a.home, _a, smooth(k), 1.1, pose.position);
+            pose.mounted = k >= 0.75;
+          } else {
+            pose.action = 'mounted';
+            pose.actionTime = tt - P.mountTime;
+            pose.mounted = true;
+            pose.position.copy(_b);
+          }
+        } else {
+          if (tt < 0.6) {
+            pose.action = 'mounted';
+            pose.mounted = true;
+            pose.position.copy(_b);
+          } else if (tt - 0.6 < P.dismountTime) {
+            const kk = (tt - 0.6) / P.dismountTime;
+            pose.action = 'dismount';
+            pose.actionTime = tt - 0.6;
+            _a.copy(a.home).addScaledVector(_v.set(0, 1, 0), P.riderHip);
+            arc(_b, _a, kk, 0.5, pose.position);
+            pose.position.y -= P.riderHip * smooth(kk);
+          } else {
+            pose.action = 'idle';
+            pose.actionTime = tt - 0.6 - P.dismountTime;
+          }
+        }
+      }
+      pose.airflow.copy(pose.velocity).multiplyScalar(-1);
+      a.rider.update(dt, pose, pose.mounted ? a.saddle : null);
+      center.add(a.home);
+    }
+    center.multiplyScalar(1 / Math.max(1, actors.length));
+    // Camera.
+    const n = actors.length;
+    const angle = ((num('angle', mounted ? 120 : 20) + (params.get('turntable') === '1' ? time * 40 : 0)) * Math.PI) / 180;
+    const wide = params.get('lineup') === 'action' ? 2.6 : 1.05;
+    const dist = num('dist', mounted ? 3 + n * 1.2 : n > 1 ? 1.2 + n * wide * 0.85 : 3.2);
+    const focusHead = params.get('focus') === 'head';
+    const h = num('height', focusHead ? 1.62 : mounted ? 1.0 : 1.05);
+    _t.copy(center).add(_v.set(0, h, 0));
+    const pos = _t.clone().add(_v.set(Math.sin(angle) * dist, (mounted ? 0 : 0.25) + num('camUp', mounted ? 0.05 : 0.15) * dist, Math.cos(angle) * dist));
+    game.cameraRig.setOverride({ position: pos, target: _t });
+  },
+};
+
+export default rider;
