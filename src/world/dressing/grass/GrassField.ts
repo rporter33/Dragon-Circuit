@@ -38,8 +38,8 @@ import type { FieldWorkerRequest } from './fieldWorker';
 const NEAR_SYNC = 48;
 /** Max chunk requests in flight to the worker. */
 const MAX_PENDING = 8;
-/** Chunks whose nearest point is farther than this draw the 4-triangle far tuft. */
-const FAR_TUFT = 34;
+/** Chunks whose nearest point is farther than this (m) draw the 4-triangle far tuft. */
+const FAR_TUFT: Record<QualityProfile['level'], number> = { low: 18, medium: 26, high: 30, ultra: 40 };
 
 interface LayerSlot {
   mesh: Mesh;
@@ -428,7 +428,7 @@ export class GrassField {
       const s = this.slots.get(w.k);
       if (!s || !s.data) continue;
       const keep = keepFraction(w.d);
-      const far = w.d > FAR_TUFT;
+      const far = w.d > FAR_TUFT[this.quality.level];
       this.setBase(s.grass, far ? this.tuftFar : this.tuftBase, far);
       s.grass.geo.instanceCount = prefixCount(s.data.tufts, keep);
       s.flowers.geo.instanceCount = prefixCount(s.data.flowers, keepFraction(w.d * 0.75));
