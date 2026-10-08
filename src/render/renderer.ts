@@ -106,6 +106,7 @@ export class Renderer {
     this.bloom = new BloomChain(this.quality.bloomLevels ?? 6);
     this.bloom.threshold = 0.86;
     this.grade = gradeUniforms();
+    this.grade.uFxaa.value = this.quality.fxaa ? 1 : 0;
     this.gradeQuad = new PostQuad(gradeMaterial(this.grade));
 
     this.resize();
@@ -126,6 +127,7 @@ export class Renderer {
       this.target = this.makeSceneTarget(q.msaa);
     }
     this.bloom.setLevels(q.bloomLevels ?? 6);
+    this.grade.uFxaa.value = q.fxaa ? 1 : 0;
     // The systems apply their own quality changes right after this call; recompile on the next
     // frame, once they have.
     if (changed) this.needsRecompile = true;

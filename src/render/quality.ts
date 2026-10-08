@@ -11,6 +11,8 @@ export interface QualityProfile {
    * reach for a quarter of the previous level's cost. Optional: 6 when absent.
    */
   bloomLevels?: number;
+  /** FXAA in the grade pass (for levels without MSAA). Optional: off when absent. */
+  fxaa?: boolean;
   shadows: boolean;
   shadowMapSize: number;
   /** Half-extent of the shadow camera around the player (m). */
@@ -31,7 +33,7 @@ export interface QualityProfile {
 
 export const QUALITY: Record<QualityLevel, QualityProfile> = {
   low: {
-    level: 'low', pixelRatioCap: 1, msaa: 0, bloom: false, bloomLevels: 0, shadows: false, shadowMapSize: 1024,
+    level: 'low', pixelRatioCap: 1, msaa: 0, fxaa: true, bloom: false, bloomLevels: 0, shadows: false, shadowMapSize: 1024,
     shadowExtent: 80, grassDensity: 0.25, grassRadius: 70, propDensity: 0.5, drawDistance: 4200,
     particles: 0.4, clouds: 0,
   },

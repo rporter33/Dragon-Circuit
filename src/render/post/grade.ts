@@ -40,6 +40,8 @@ export function gradeUniforms() {
     uSharpen: { value: 0 },
     /** Dither amplitude in 8-bit steps (hides banding in sky gradients and night fog). */
     uDither: { value: 1 },
+    /** 1 = FXAA on the scene (quality levels without MSAA). */
+    uFxaa: { value: 0 },
   };
 }
 
@@ -49,7 +51,7 @@ const FRAG = /* glsl */ `
 uniform sampler2D tDiffuse;
 uniform sampler2D tBloom;
 uniform float uTime, uExposure, uSaturation, uContrast, uVignette, uSpeedBlur, uFade, uFlash, uCloudVeil;
-uniform float uBloomStrength, uSharpen, uDither;
+uniform float uBloomStrength, uSharpen, uDither, uFxaa;
 uniform vec2 uTexel;
 uniform vec3 uLift, uGain, uFadeColor, uFlashColor, uCloudColor;
 varying vec2 vUv;
@@ -71,6 +73,88 @@ vec3 sharpen(vec3 col, vec2 uv) {
   return clamp(sharp, mn, mx);
 }
 
+// FXAA for targets without MSAA: the edge-walking variant (Lottes' FXAA 3.11 quality preset, as
+// written up by Catlike Coding; three's FXAAShader is the same algorithm). It only ever blends a
+// pixel with its neighbour across the edge, never diagonally, so small bright lanterns and
+// stars keep their shape. Luma and the final blend use compressed values (c / (1 + max(c))),
+// so HDR highlights behave like display values instead of bleeding into their neighbours.
+vec3 fxIn(vec3 c) { return c / (1.0 + max(c.r, max(c.g, c.b))); }
+vec3 fxOut(vec3 c) { return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-3); }
+float fxL(vec3 c) { return sqrt(dot(fxIn(c), vec3(0.299, 0.587, 0.114))); }
+float fxLAt(vec2 uv) { return fxL(texture2D(tDiffuse, uv).rgb); }
+
+vec3 fxaa(vec3 colM, vec2 uv) {
+  vec2 t = uTexel;
+  float m = fxL(colM);
+  float n = fxLAt(uv + vec2(0.0, t.y));
+  float e = fxLAt(uv + vec2(t.x, 0.0));
+  float s = fxLAt(uv - vec2(0.0, t.y));
+  float w = fxLAt(uv - vec2(t.x, 0.0));
+  float hi = max(max(max(max(n, e), s), w), m);
+  float lo = min(min(min(min(n, e), s), w), m);
+  float contrast = hi - lo;
+  // Flat areas (most of the screen) stop here.
+  if (contrast < max(0.0312, 0.063 * hi)) return colM;
+  float ne = fxLAt(uv + t);
+  float nw = fxLAt(uv + vec2(-t.x, t.y));
+  float se = fxLAt(uv + vec2(t.x, -t.y));
+  float sw = fxLAt(uv - t);
+
+  // Sub-pixel blend: how much the centre differs from its neighbourhood.
+  float f = (2.0 * (n + e + s + w) + ne + nw + se + sw) / 12.0;
+  f = smoothstep(0.0, 1.0, clamp(abs(f - m) / contrast, 0.0, 1.0));
+  float pixelBlend = f * f;
+
+  // Edge orientation and which side the contrast is on.
+  float horizontal = abs(n + s - 2.0 * m) * 2.0 + abs(ne + se - 2.0 * e) + abs(nw + sw - 2.0 * w);
+  float vertical = abs(e + w - 2.0 * m) * 2.0 + abs(ne + nw - 2.0 * n) + abs(se + sw - 2.0 * s);
+  bool isH = horizontal >= vertical;
+  float pL = isH ? n : e;
+  float nL = isH ? s : w;
+  float pG = abs(pL - m);
+  float nG = abs(nL - m);
+  float stepLen = isH ? t.y : t.x;
+  float opposite = pL;
+  float gradient = pG;
+  if (pG < nG) { stepLen = -stepLen; opposite = nL; gradient = nG; }
+
+  // Walk along the edge both ways to find its ends.
+  vec2 uvEdge = uv;
+  vec2 edgeStep;
+  if (isH) { uvEdge.y += stepLen * 0.5; edgeStep = vec2(t.x, 0.0); }
+  else { uvEdge.x += stepLen * 0.5; edgeStep = vec2(0.0, t.y); }
+  float edgeL = (m + opposite) * 0.5;
+  float gThreshold = gradient * 0.25;
+  float steps[6] = float[6](1.0, 1.5, 2.0, 2.0, 2.0, 4.0);
+  vec2 puv = uvEdge + edgeStep;
+  float pDelta = fxLAt(puv) - edgeL;
+  bool pEnd = abs(pDelta) >= gThreshold;
+  for (int i = 1; i < 6 && !pEnd; i++) {
+    puv += edgeStep * steps[i];
+    pDelta = fxLAt(puv) - edgeL;
+    pEnd = abs(pDelta) >= gThreshold;
+  }
+  if (!pEnd) puv += edgeStep * 8.0;
+  vec2 nuv = uvEdge - edgeStep;
+  float nDelta = fxLAt(nuv) - edgeL;
+  bool nEnd = abs(nDelta) >= gThreshold;
+  for (int i = 1; i < 6 && !nEnd; i++) {
+    nuv -= edgeStep * steps[i];
+    nDelta = fxLAt(nuv) - edgeL;
+    nEnd = abs(nDelta) >= gThreshold;
+  }
+  if (!nEnd) nuv -= edgeStep * 8.0;
+  float pDist = isH ? puv.x - uv.x : puv.y - uv.y;
+  float nDist = isH ? uv.x - nuv.x : uv.y - nuv.y;
+  float shortest = min(pDist, nDist);
+  bool deltaSign = pDist <= nDist ? pDelta >= 0.0 : nDelta >= 0.0;
+  float edgeBlend = deltaSign == (m - edgeL >= 0.0) ? 0.0 : 0.5 - shortest / (pDist + nDist);
+
+  float blend = max(pixelBlend, edgeBlend);
+  vec2 other = uv + (isH ? vec2(0.0, stepLen) : vec2(stepLen, 0.0));
+  return fxOut(mix(fxIn(colM), fxIn(texture2D(tDiffuse, other).rgb), blend));
+}
+
 void main() {
   vec2 uv = vUv;
   vec3 col = texture2D(tDiffuse, uv).rgb;
@@ -83,6 +167,8 @@ void main() {
       acc += texture2D(tDiffuse, uv - dir * amt * float(i) / 7.0).rgb;
     }
     col = acc / 8.0;
+  } else if (uFxaa > 0.5) {
+    col = fxaa(col, uv);
   } else if (uSharpen > 0.001) {
     col = sharpen(col, uv);
   }
