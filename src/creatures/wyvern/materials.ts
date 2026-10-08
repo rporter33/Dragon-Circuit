@@ -109,12 +109,13 @@ export function applyLookUniforms(u: WyvernUniforms, look: WyvernLook): void {
   u.uMembrane.value.set(look.membrane);
   u.uEyes.value.set(look.eyes);
   u.uSaddle.value.set(look.saddleColor);
-  // Saddle cloth: a lighter, slightly warmer companion of the saddle color.
+  // Saddle cloth: a slightly lighter, warmer companion of the saddle color (kept close in value:
+  // a much lighter band on top of the back caught the light like a glowing strip).
   const c = u.uCloth.value.set(look.saddleColor);
   c.getHSL(_hsl);
-  c.setHSL((_hsl.h + 0.04) % 1, Math.min(1, _hsl.s * 1.05 + 0.05), Math.min(0.75, _hsl.l * 1.25 + 0.12));
+  c.setHSL((_hsl.h + 0.035) % 1, Math.min(1, _hsl.s * 1.02 + 0.03), Math.min(0.5, _hsl.l * 1.15 + 0.06));
   // Horn: a bone color nudged toward the secondary scales.
-  u.uHorn.value.set('#d9c9a6').lerp(new Color(look.secondary), 0.18);
+  u.uHorn.value.set('#d9c9a6').lerp(_c.set(look.secondary), 0.18);
   u.uPattern.value = PATTERN_IDS[look.pattern] ?? 0;
 }
 
@@ -178,6 +179,7 @@ uniform vec3 uEyeAxis;
 uniform float uEyeRadius;
 uniform float uBlink;
 uniform float uBodyScale;
+uniform float uContour;
 varying vec3 vBodyPos;
 varying vec4 vMat;
 varying vec2 vUv2;
@@ -217,14 +219,18 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
       float stripe = smoothstep(thr - 0.04, thr + 0.02, band) * (1.0 - smoothstep(0.2, 0.6, belly));
       col = mix(col, uSecondary * 0.8, stripe);
     } else if (pat == 3) {
-      // Dapple: soft blotches, like light through leaves: big dark ones, smaller pale ones.
-      float side = (1.0 - belly) * (0.5 + 0.5 * dorsal);
-      vec3 c = dwCells(bp * 2.4 + n1 * 0.5);
-      float dark = (1.0 - smoothstep(0.2, 0.42, c.x)) * step(0.55, c.z);
-      vec3 c2 = dwCells(bp * 4.4 + 2.0 + n2 * 0.4);
-      float light = (1.0 - smoothstep(0.1, 0.3, c2.x)) * step(0.4, c2.z);
-      col = mix(col, uSecondary * 0.95, dark * side * 0.85);
-      col = mix(col, mix(uPrimary, uBelly, 0.6) * 1.1, light * side * 0.75);
+      // Dapple: bold rounded blotches like a dappled horse — big dark ones ringed a shade
+      // darker, smaller pale ones between — readable from the chase camera.
+      float side = (1.0 - 0.85 * belly) * (0.65 + 0.35 * dorsal);
+      vec3 c = dwCells(bp * 1.6 + n1 * 0.45);
+      float dark = (1.0 - smoothstep(0.26, 0.4, c.x)) * step(0.4, c.z);
+      float ring = smoothstep(0.18, 0.3, c.x) * (1.0 - smoothstep(0.32, 0.4, c.x)) * step(0.4, c.z);
+      vec3 c2 = dwCells(bp * 3.0 + 2.0 + n2 * 0.4);
+      float light = (1.0 - smoothstep(0.14, 0.26, c2.x)) * step(0.45, c2.z) * (1.0 - dark);
+      vec3 spot = mix(uSecondary, uPrimary * 0.5, 0.25);
+      col = mix(col, spot * 0.9, dark * side * 0.92);
+      col = mix(col, spot * 0.62, ring * side * 0.5);
+      col = mix(col, mix(uPrimary, uBelly, 0.75) * 1.15, light * side * 0.85);
     } else if (pat == 4) {
       // Ember veins: a dark hide split by thin glowing seams that brighten after dusk.
       vec3 c = dwCells(bp * 1.5 + vec3(n1 * 0.7));
@@ -239,15 +245,15 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
       emit += ember * v * (0.12 + 1.8 * uNight) * flick;
     } else if (pat == 5) {
       // Starfield: pale freckles, densest along the back, twinkling a little at night.
-      vec3 c = dwCells(bp * 3.2);
-      float r = 0.1 + 0.1 * c.z;
-      float star = (1.0 - smoothstep(r, r + 0.04, c.x)) * step(0.5 - 0.45 * dorsal, c.z);
-      vec3 c2 = dwCells(bp * 7.0 + 4.0);
-      star = max(star, (1.0 - smoothstep(0.08, 0.12, c2.x)) * step(0.4, c2.z) * (0.4 + 0.6 * dorsal));
-      col = mix(col * 0.82, uSecondary * 0.9, 0.3 * dorsal);
-      vec3 pale = mix(uBelly, vec3(1.0), 0.65);
+      vec3 c = dwCells(bp * 4.1);
+      float r = 0.13 + 0.12 * c.z;
+      float star = (1.0 - smoothstep(r, r + 0.04, c.x)) * step(0.35 - 0.35 * dorsal, c.z);
+      vec3 c2 = dwCells(bp * 9.0 + 4.0);
+      star = max(star, (1.0 - smoothstep(0.1, 0.15, c2.x)) * step(0.3, c2.z) * (0.55 + 0.45 * dorsal));
+      col = mix(col * 0.72, uSecondary * 0.8, 0.35 * dorsal);
+      vec3 pale = min(mix(uBelly, vec3(1.0), 0.7) * 1.4, vec3(1.0));
       col = mix(col, pale, star * (1.0 - belly));
-      emit += pale * star * (1.0 - belly) * uNight * 0.7 * (0.7 + 0.3 * sin(uTime * 2.0 + c.z * 40.0));
+      emit += pale * star * (1.0 - belly) * uNight * 0.9 * (0.7 + 0.3 * sin(uTime * 2.0 + c.z * 40.0));
     } else if (pat == 6) {
       // Gilded scales: overlapping fish-scale rows (free edge toward the tail), darker at the
       // base, with gold rims along the back that catch the sun.
@@ -310,8 +316,9 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   if (region == 3) return vec3(0.32, 0.09, 0.11);
   if (region == 4) return uSaddle * (0.9 + 0.12 * n2);
   if (region == 5) {
+    // Brass/gold fittings (linear albedo: a deep warm gold, not a light source).
     gold = 1.0;
-    return vec3(0.86, 0.66, 0.3);
+    return vec3(0.55, 0.37, 0.12) * (0.9 + 0.15 * n2);
   }
   if (region == 6) return uCloth * (0.94 + 0.08 * n2);
   if (region == 7) return vec3(0.42, 0.26, 0.15) * (0.85 + 0.2 * dwVnoise(vec3(vBodyPos.x * 3.0, vBodyPos.y * 40.0, vBodyPos.z * 3.0)));
@@ -321,6 +328,18 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   }
   if (region == 11) return mix(vec3(0.82, 0.76, 0.64), uCloth, 0.25) * (0.9 + 0.1 * n2);
   return uPrimary;
+}
+`;
+
+/**
+ * Silhouette contour: a soft dark band where the surface turns away from the camera (an ink line
+ * in the painterly style), so even a pale palette keeps a readable outline against white cloud.
+ * Applied after the painterly rim, so the rim's glow survives only as a thin sunlit edge.
+ */
+const CONTOUR_GLSL = /* glsl */ `
+{
+  float dwCf = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+  outgoingLight *= 1.0 - uContour * 0.28 * smoothstep(0.55, 0.95, dwCf);
 }
 `;
 
@@ -446,6 +465,7 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
       shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_BEGIN);
       shader.fragmentShader = shader.fragmentShader
         .replace('void main() {', BODY_PARS_FRAG + '\nvoid main() {')
+        .replace('#include <opaque_fragment>', CONTOUR_GLSL + '\n#include <opaque_fragment>')
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
@@ -458,12 +478,14 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
           `#include <emissivemap_fragment>
           totalEmissiveRadiance += dwEmit;
           if (dwGold > 0.0) {
-            // Gold catches the sun: a tight view-dependent glint.
+            // Gold catches the sun: a small, tight glint on the sunlit side only (a broad sheen
+            // here read as a glowing light source in daylight).
             vec3 gL = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
             vec3 gV = normalize(vViewPosition);
             vec3 gH = normalize(gL + gV);
-            float g = pow(max(dot(normal, gH), 0.0), 40.0) * 1.6 + pow(max(dot(normal, gH), 0.0), 6.0) * 0.18;
-            totalEmissiveRadiance += vec3(1.0, 0.8, 0.45) * uSunColor * g * dwGold * (1.0 - uNight);
+            float nh = max(dot(normal, gH), 0.0);
+            float g = pow(nh, 80.0) * 0.55 * smoothstep(0.0, 0.25, dot(normal, gL));
+            totalEmissiveRadiance += vec3(1.0, 0.82, 0.5) * uSunColor * g * dwGold * (1.0 - uNight);
           }`,
         );
     },

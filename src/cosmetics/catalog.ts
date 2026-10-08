@@ -135,7 +135,9 @@ export const PALETTES = {
 export const BREED_DEFAULT_COLORS: Record<BreedId, Pick<WyvernLook, 'primary' | 'secondary' | 'belly' | 'membrane' | 'eyes'>> = {
   harrier: { primary: '#3f7d5a', secondary: '#2f5d50', belly: '#e8dcc0', membrane: '#d89a5a', eyes: '#f0c040' },
   skimmer: { primary: '#2f6f8f', secondary: '#2f4a7a', belly: '#c0d0c8', membrane: '#5aa890', eyes: '#60d0e0' },
-  galewing: { primary: '#d8d0c0', secondary: '#8fa8b8', belly: '#f0e8d8', membrane: '#e8c070', eyes: '#4080f0' },
+  // Storm-slate with a deep blue mantle and amber sails: mid values, so the mount reads against
+  // the white cloud sea (all from the stable's swatches).
+  galewing: { primary: '#8fa8b8', secondary: '#2f4a7a', belly: '#f0e8d8', membrane: '#d89a5a', eyes: '#4080f0' },
   ironback: { primary: '#5a5048', secondary: '#2a2a30', belly: '#c8a878', membrane: '#b5562f', eyes: '#e87830' },
 };
 
