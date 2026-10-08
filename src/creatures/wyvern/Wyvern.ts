@@ -42,6 +42,8 @@ export class Wyvern implements WyvernRenderable {
       this.group.add(wing);
     }
     this.saddle.position.set(0, 1.3, 1.2);
+    this.saddle.userData.halfWidth = 0.55;
+    this.saddle.userData.gripOffset = new Vector3(0, 0.35, 0.45);
     this.group.add(this.saddle);
     this.head.position.set(0, 0.5, 5);
     this.group.add(this.head);

@@ -153,7 +153,11 @@ export interface CameraSystem {
 
 export interface WyvernRenderable {
   readonly group: Group;
-  /** Rider attaches here; +Z forward, +Y up, origin on the saddle seat. */
+  /**
+   * Rider attaches here; +Z forward, +Y up, origin on the saddle seat (where the rider's hips
+   * rest). `saddle.userData.halfWidth` holds the body's half-width at the seat (m) so the rider
+   * can straddle it; `saddle.userData.gripOffset` (Vector3, saddle space) is where the hands hold.
+   */
   readonly saddle: Object3D;
   setLook(look: WyvernLook): void;
   update(dt: number, pose: WyvernPose): void;

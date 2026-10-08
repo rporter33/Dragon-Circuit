@@ -34,6 +34,7 @@ export function createWyvernPose(): WyvernPose {
     groundSpeed: 0,
     gaitTime: 0,
     lookTarget: new Vector3(),
+    groundY: null,
   };
 }
 

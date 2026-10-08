@@ -38,6 +38,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     angularDamping: 3.2,
     maxRollRate: 1.6,
     groundSpeed: 9,
+    standHeight: 2.6,
     ratings: { speed: 0.6, agility: 0.6, glide: 0.6, power: 0.6, stamina: 0.6 },
   },
   skimmer: {
@@ -64,6 +65,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     angularDamping: 4.2,
     maxRollRate: 2.6,
     groundSpeed: 11,
+    standHeight: 2.1,
     ratings: { speed: 0.55, agility: 0.95, glide: 0.4, power: 0.5, stamina: 0.4 },
   },
   galewing: {
@@ -90,6 +92,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     angularDamping: 2.6,
     maxRollRate: 1.05,
     groundSpeed: 7.5,
+    standHeight: 2.5,
     ratings: { speed: 0.5, agility: 0.3, glide: 1.0, power: 0.45, stamina: 0.85 },
   },
   ironback: {
@@ -116,6 +119,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     angularDamping: 2.4,
     maxRollRate: 1.2,
     groundSpeed: 8,
+    standHeight: 2.9,
     ratings: { speed: 0.95, agility: 0.35, glide: 0.5, power: 1.0, stamina: 0.55 },
   },
 };

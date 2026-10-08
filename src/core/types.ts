@@ -137,6 +137,12 @@ export interface BreedStats {
   maxRollRate: number;
   /** Walking/running speed on the ground (m/s). */
   groundSpeed: number;
+  /**
+   * Height of the body's center (the physics position) above the ground when standing (m). The
+   * wyvern model is built so that, posed standing with its center this high, its feet touch the
+   * ground. The player state machine uses it to place a landed wyvern.
+   */
+  standHeight: number;
   /** 0..1 display ratings for the stable UI (derived but hand-tuned for readability). */
   ratings: { speed: number; agility: number; glide: number; power: number; stamina: number };
 }
@@ -230,7 +236,11 @@ export type PlayerMode =
 
 export type WyvernGait = 'idle' | 'walk' | 'run' | 'takeoff' | 'landing' | 'jump';
 
-/** Everything the wyvern renderer needs to pose and animate the model. Interpolated for render. */
+/**
+ * Everything the wyvern renderer needs to pose and animate the model. Interpolated for render.
+ * `position` is ALWAYS the body's center (center of mass, roughly under the saddle), airborne or
+ * not; standing, it sits `BreedStats.standHeight` above the ground.
+ */
 export interface WyvernPose {
   position: Vector3;
   orientation: Quaternion;
@@ -253,6 +263,8 @@ export interface WyvernPose {
   gaitTime: number;
   /** Where the head wants to look (world space), e.g. toward the camera's view or next ring. */
   lookTarget: Vector3;
+  /** Ground height directly below the body (for leg placement and landing poses); null over open air. */
+  groundY: number | null;
 }
 
 export type RiderAction =
@@ -270,6 +282,7 @@ export type RiderAction =
 export interface RiderPose {
   /** When mounted, the rider renderer attaches to the wyvern's saddle and ignores position. */
   mounted: boolean;
+  /** On foot: the point between the feet, on the ground (or wherever the feet are mid-jump). */
   position: Vector3;
   /** Facing yaw (radians) on foot. */
   yaw: number;
