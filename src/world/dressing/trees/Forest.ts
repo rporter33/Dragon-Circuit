@@ -242,6 +242,17 @@ export class Forest {
     this.stats.drawCalls = calls;
   }
 
+  /** Horizontal distance from (x, z) to the nearest tree/prop with a trunk (debug cameras). */
+  clearance(x: number, z: number): number {
+    let best = Infinity;
+    for (let i = 0; i < this.speciesOf.length; i++) {
+      if (SPECIES[SPECIES_IDS[this.speciesOf[i]]].height < 3) continue;
+      const d = Math.hypot(this.pos[i * 3] - x, this.pos[i * 3 + 2] - z);
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
   dispose(): void {
     for (const b of this.buckets.values()) {
       for (const l of b.lods) {

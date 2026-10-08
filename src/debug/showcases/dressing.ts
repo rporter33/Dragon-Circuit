@@ -43,8 +43,24 @@ function spots(game: Game): Record<string, () => Spot> {
       return { cam: [g.x - 260, g.y + 70, g.z - 160], look: [g.x, g.y + 10, g.z], tod: 0.38 };
     },
     forestFloor: () => {
+      // Stand in a small clearing among Rootfall's trees, looking into the wood.
       const g = L('rootfall');
-      return { cam: [g.x + 20, ground(game, g.x + 20, g.z - 40, 1.7), g.z - 40], look: [g.x + 40, ground(game, g.x + 40, g.z + 10, 6), g.z + 10], tod: 0.4 };
+      let best = { x: g.x, z: g.z, c: 0 };
+      for (let i = 0; i < 160; i++) {
+        const a = i * 2.39996;
+        const r = 30 + (i % 16) * 6;
+        const x = g.x + Math.cos(a) * r;
+        const z = g.z + Math.sin(a) * r;
+        const c = game.dressing.forest.clearance(x, z);
+        if (c > 6 && c < 11) {
+          best = { x, z, c };
+          break;
+        }
+        if (c > best.c && c < 14) best = { x, z, c };
+      }
+      const lx = best.x + (g.x - best.x) * 0.25;
+      const lz = best.z + (g.z - best.z) * 0.25;
+      return { cam: [best.x, ground(game, best.x, best.z, 1.7), best.z], look: [lx, ground(game, lx, lz, 5), lz], tod: 0.4 };
     },
     cascade: () => {
       const g = L('cascade');
