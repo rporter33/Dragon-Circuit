@@ -10,6 +10,7 @@ import { QUALITY } from '../render/quality';
 import { globalUniforms } from '../render/uniforms';
 import { Input, emptyFrame } from '../input/Input';
 import { World } from '../world/World';
+import { Dressing } from '../world/dressing/Dressing';
 import { Weather } from '../sky/Weather';
 import { Sky } from '../sky/Sky';
 import { Player } from '../player/Player';
@@ -38,6 +39,7 @@ export class Game implements GameActions {
   readonly save = new LocalSaveStore();
   readonly input: Input;
   readonly world: World;
+  readonly dressing: Dressing;
   readonly weather: Weather;
   readonly sky: Sky;
   readonly player: Player;
@@ -79,6 +81,7 @@ export class Game implements GameActions {
 
     this.input = new Input(this.renderer.canvas, () => this.settings);
     this.world = new World(this.scene, quality);
+    this.dressing = new Dressing({ scene: this.scene, terrain: this.world.terrain, quality, events: this.events });
     this.weather = new Weather(this.scene, this.world.layout, this.events, quality);
     this.sky = new Sky(this.scene, this.renderer, quality);
     this.player = new Player({
@@ -178,6 +181,7 @@ export class Game implements GameActions {
     this.wyvern.update(dt, this.player.wyvernPose);
     this.rider.update(dt, this.player.riderPose, this.player.riderPose.mounted ? this.wyvern.saddle : null);
     this.cameraRig.update(dt, this.screen === 'play' ? input : this.idleInput, this.player);
+    this.dressing.update(dt, this.camera, focus);
     this.races.update(dt, this.camera, this.player);
     this.collectibles.update(dt, this.camera, this.player);
     this.fx.update(dt, this.camera, this.player, this.wyvern);
@@ -255,6 +259,7 @@ export class Game implements GameActions {
       this.camera.far = q.drawDistance;
       this.camera.updateProjectionMatrix();
       this.world.setQuality(q);
+      this.dressing.setQuality(q);
       this.sky.setQuality(q);
       this.fx.setQuality(q);
     }

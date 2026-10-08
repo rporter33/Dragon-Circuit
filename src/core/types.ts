@@ -198,6 +198,19 @@ export interface GroundHit {
   surface: SurfaceKind;
 }
 
+/**
+ * A vertical solid cylinder in the world that the analytic terrain doesn't know about (building
+ * walls, tower bases, big trunks). Walking code can push the rider/wyvern out of these.
+ */
+export interface CylinderCollider {
+  x: number;
+  z: number;
+  radius: number;
+  /** Bottom and top heights (world y). */
+  y0: number;
+  y1: number;
+}
+
 export interface RayHit {
   point: Vector3;
   normal: Vector3;
