@@ -379,7 +379,8 @@ export class Races implements RaceSystem {
 
   private loadGhost(raceId: string): void {
     const req = ++this.ghostRequest;
-    this.bestGhost = null;
+    // Keep the ghost already in hand for this race (a run just finished) while storage answers.
+    if (this.bestGhost?.raceId !== raceId) this.bestGhost = null;
     void this.deps.save.getGhost(raceId).then((g) => {
       // (Keep one handed in meanwhile, e.g. a just-finished run or a showcase's.)
       if (req === this.ghostRequest && this.activeId === raceId) this.bestGhost = g ?? this.bestGhost;
