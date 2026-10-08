@@ -12,6 +12,7 @@ import { LAYOUT } from '../layout';
 import { clamp01, smoothstep } from '../../core/math';
 import { fbm2, noise2, type Noise2 } from '../../core/noise';
 import type { MeshBuilder } from './MeshBuilder';
+import { gullyAt, gullyFade } from './strata';
 
 /** Which part of the island surface a vertex belongs to. */
 export const Region = { Top: 0, Brow: 1, Lip: 2, Cliff: 3, Under: 4 } as const;
@@ -205,6 +206,10 @@ export class IslandPainter {
         const moss = Math.max((1 - smoothstep(0.5, 6, aux)) * 0.85, (1 - smoothstep(2, 22, aux)) * this.pal.mossiness);
         const n = this.detailN(x * 0.03, z * 0.03) * 0.5 + 0.5;
         tmp.copy(CLIFF).lerp(UNDER_NEAR, 0.15 + 0.25 * n + 0.3 * smoothstep(4, 16, aux));
+        // Gullies sit in their own shade; the buttresses between them catch the light.
+        const th = Math.atan2(z - d.z, x - d.x);
+        const g = gullyAt(Math.cos(th), Math.sin(th), this.shape.outlineRadius(th), d.seed) * smoothstep(1, 4, aux);
+        tmp.multiplyScalar(1.08 - 0.42 * g);
         b.setColor(i, tmp.r, tmp.g, tmp.b);
         b.setSurf(i, 1, 0, 0, moss);
         return;
@@ -216,6 +221,10 @@ export class IslandPainter {
         const n = this.patchN(x * 0.02 + 7, z * 0.02 - 3) * 0.5 + 0.5;
         tmp.copy(UNDER_NEAR).lerp(UNDER_MID, smoothstep(0, 0.5, deepT));
         tmp.lerp(UNDER_DEEP, smoothstep(0.4, 1, deepT) * (0.75 + 0.25 * n));
+        // The cliff's gullies run on down the upper underside, in shade.
+        const th = Math.atan2(z - d.z, x - d.x);
+        const g = gullyAt(Math.cos(th), Math.sin(th), this.shape.outlineRadius(th), d.seed) * gullyFade(aux, d.depth);
+        tmp.multiplyScalar(1.06 - 0.36 * g);
         // Cool, faintly lit by the cloud sea below.
         const moss = Math.max((1 - smoothstep(4, 14, total)) * 0.7, (1 - smoothstep(10, 40, total)) * 0.8 * this.pal.mossiness);
         b.setColor(i, tmp.r, tmp.g, tmp.b);

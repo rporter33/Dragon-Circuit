@@ -70,7 +70,7 @@ describe('island meshes', () => {
         const p = m.data.positions;
         for (let i = 0; i < m.footRing.count; i++) {
           const v = m.footRing.start + i;
-          expect(p[v * 3 + 1]).toBeCloseTo(-shape.def.lip, 4);
+          expect(p[v * 3 + 1]).toBeCloseTo(shape.rimBottomAt((i / m.footRing.count) * Math.PI * 2) - shape.def.y, 4);
         }
       }
     }
