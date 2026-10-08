@@ -204,7 +204,26 @@ export class Ui implements UiSystem {
         run: () => this.push(new RacesMenu(this.ctx)),
         sub: (v) => (v.races.defs.length ? `${v.races.defs.length} courses` : ''),
       },
-      { label: 'Stable', run: () => this.actions.openStable() },
+      {
+        label: 'Stable',
+        run: () => {
+          // A race in progress can't change wyvern mid-run: abandon it first (or keep racing).
+          if (view.races.state !== 'running') return this.actions.openStable();
+          const name = view.races.defs.find((d) => d.id === view.races.activeId)?.name ?? 'the race';
+          this.push(
+            new Dialog(this.ctx, 'Abandon the race?', `The Stable is closed while you race. Abandon ${name} and open the Stable?`, [
+              { label: 'Keep racing', run: () => {}, cancel: true, primary: true },
+              {
+                label: 'Abandon',
+                run: () => {
+                  this.actions.quitRace();
+                  this.actions.openStable();
+                },
+              },
+            ]),
+          );
+        },
+      },
       {
         label: 'Collection',
         run: () => this.push(new CollectionMenu(this.ctx)),
@@ -233,12 +252,10 @@ export class Ui implements UiSystem {
   }
 
   private leaveStable(): void {
-    if (this.stableFromTitle && this.actions.quitToTitle) {
-      this.actions.closeStable();
-      this.actions.quitToTitle();
-    } else {
-      this.actions.closeStable();
-    }
+    // Opened from the title: straight back to it, never through 'play' (which would ask for
+    // pointer lock on the way and could leave the mouse captured on the title screen).
+    if (this.stableFromTitle && this.actions.quitToTitle) this.actions.quitToTitle();
+    else this.actions.closeStable();
   }
 
   // --- Panel stack ----------------------------------------------------------------------------
