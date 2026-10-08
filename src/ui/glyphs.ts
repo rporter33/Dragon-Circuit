@@ -271,7 +271,7 @@ export function bindingPadHtml(b: Binding, style: PadStyle): string {
 }
 
 /** Pad controls a label might mention (a note that only makes sense with a controller). */
-const PAD_WORDS = /\b(L3|R3|LS|RS|LB|RB|LT|RT|D-pad|stick)\b/;
+const PAD_WORDS = /\b(L3|R3|LS|RS|LB|RB|LT|RT|D-pad|stick|trigger|pull harder)\b/i;
 
 /**
  * A control's description for one device: notes that name gamepad controls are dropped on the
@@ -281,11 +281,12 @@ export function controlLabel(label: string, dev: GlyphDevice): string {
   if (dev !== 'keyboard') return label;
   return label
     .replace(/\s*\(([^)]*)\)/g, (_all, inner: string) => {
-      const kept = inner
-        .split(/,\s*/)
-        .filter((part) => !PAD_WORDS.test(part))
-        .join(', ');
-      return kept ? ` (${kept})` : '';
+      const parts = inner.split(/\s*([,;])\s*/);
+      // parts: [clause, sep, clause, sep, ...]; keep the clauses that make sense on a keyboard.
+      const kept: string[] = [];
+      for (let i = 0; i < parts.length; i += 2) if (!PAD_WORDS.test(parts[i])) kept.push(parts[i]);
+      const joined = kept.join(inner.includes(';') ? '; ' : ', ');
+      return joined ? ` (${joined})` : '';
     })
     .trim();
 }

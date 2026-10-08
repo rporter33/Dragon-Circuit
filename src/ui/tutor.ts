@@ -51,12 +51,23 @@ export const TIPS: readonly TipDef[] = [
   },
   { id: 'flare', title: 'Coming in to land', body: 'Come in low and slow, then hold {flare} just above the ground to settle.', anchor: 'card', core: true, after: ['flap'], minTime: 4, maxTime: 14 },
   { id: 'tired', title: 'Wings tiring', body: 'No hurry: glide to recover, or land on any island to rest.', anchor: 'gauge', core: false, after: ['flap'], minTime: 4, maxTime: 9, urgent: true },
-  { id: 'rested', title: 'Rested', body: 'Your wyvern rested on the island. While the warm ring glows, its stamina goes further.', anchor: 'gauge', core: false, after: ['flap'], minTime: 6, maxTime: 8 },
+  {
+    id: 'rested',
+    title: 'Rested',
+    body: 'A rest on the island refreshed your wyvern. While the warm ring glows, its stamina lasts longer and refills faster.',
+    anchor: 'gauge',
+    core: false,
+    after: ['flap'],
+    minTime: 6,
+    maxTime: 8,
+  },
   { id: 'thermal', title: 'Rising air', body: 'Glowing motes mark thermals. Circle inside one to climb without beating your wings.', anchor: 'card', core: false, after: ['pitch'], minTime: 5, maxTime: 11 },
   { id: 'race', title: 'Races', body: 'Races start at the stone gates: fly through one, or pick a course from the pause menu {pause}.', anchor: 'card', core: false, after: ['pitch'], minTime: 6, maxTime: 9 },
 ];
 
 const BY_ID = new Map(TIPS.map((t) => [t.id, t]));
+/** Seconds a tip stays once the prompt starts asking for the same thing. */
+const PROMPT_OVERLAP = 3;
 
 export function tipDef(id: TipId): TipDef {
   return BY_ID.get(id)!;
@@ -201,8 +212,13 @@ export class Tutor {
         if (this.doneLeft <= 0) this.finish();
         return;
       }
-      // Superseded: the prompt now says the same thing (winded → "glide or land to rest").
-      if (cur.id === 'tired' && f.winded) {
+      // Superseded: the prompt now says the same thing ("Low on stamina — glide or land to
+      // rest", "Take off", "Flare now"): the tip makes room once it has been read a moment.
+      if (cur.id === 'tired' && (f.winded || f.prompt === 'rest')) {
+        this.finish();
+        return;
+      }
+      if (f.prompt && this.shown >= PROMPT_OVERLAP && tipActions(cur.body).includes(f.prompt as ControlAction)) {
         this.finish();
         return;
       }
@@ -323,7 +339,7 @@ export class Tutor {
         // Coming down over an island, slow enough to land (or the game already says "flare").
         return (flying && this.flyingTime > 6 && f.height !== null && f.height < 60 && f.vy < -0.5 && f.airspeed < 40) || f.prompt === 'flare';
       case 'tired':
-        return flying && f.stamina < 0.4 && !f.winded;
+        return flying && f.stamina < 0.4 && !f.winded && f.prompt !== 'rest';
       case 'rested':
         return f.rested > 0 && f.mode !== 'flying';
       case 'thermal':

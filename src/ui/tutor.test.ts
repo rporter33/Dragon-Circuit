@@ -106,6 +106,26 @@ describe('Tutor', () => {
     expect(t.current?.id).toBe('rested');
   });
 
+  it('makes room for a prompt that asks for the same thing, once read for a moment', () => {
+    const save: TutorSave = { tutorialDone: false, tips: ['walk'] };
+    const t = new Tutor(() => save);
+    run(t, 4, { mode: 'landed' });
+    expect(t.current?.id).toBe('takeoff');
+    const shown = t.shown;
+    run(t, Math.max(0, 3 - shown) + 0.2, { mode: 'landed', prompt: 'flap' }); // "Take off"
+    expect(t.current).toBeNull();
+    expect(save.tips).toContain('takeoff');
+  });
+
+  it('the tired-wings tip yields to the low-stamina prompt', () => {
+    const save: TutorSave = { tutorialDone: false, tips: ['walk', 'takeoff', 'flap'] };
+    const t = new Tutor(() => save);
+    run(t, 3, { mode: 'flying', stamina: 0.3 });
+    expect(t.current?.id).toBe('tired');
+    run(t, 0.2, { mode: 'flying', stamina: 0.15, prompt: 'rest' });
+    expect(t.current).toBeNull();
+  });
+
   it('reset() starts the lessons over', () => {
     const save: TutorSave = { tutorialDone: true, tips: ['walk'] };
     const t = new Tutor(() => save);

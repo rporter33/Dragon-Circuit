@@ -59,5 +59,6 @@ describe('device-correct copy', () => {
     expect(controlLabel('Run (hold, or click L3 to keep running)', 'xbox')).toBe('Run (hold, or click L3 to keep running)');
     expect(controlLabel('Dismount (when landed)', 'keyboard')).toBe('Dismount (when landed)');
     expect(controlLabel('Turn (right stick)', 'keyboard')).toBe('Turn');
+    expect(controlLabel('Beat wings (costs stamina; pull harder for a stronger beat)', 'keyboard')).toBe('Beat wings (costs stamina)');
   });
 });

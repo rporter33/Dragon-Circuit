@@ -481,7 +481,7 @@ export class Hud {
     this.shade.set((flying && !idle) || !(this.fullTime > 1.2 && rested <= 0));
     // Tired reads as a suggestion, not a failure: glide, or land on any island to rest. (Winded,
     // the prompt says it; while the stamina tip is up, the tip says it.)
-    this.restNote.set(flying && low && !rising);
+    this.restNote.set(flying && low && !rising && view.prompt?.action !== 'rest');
 
     // --- Stall -------------------------------------------------------------------------------
     this.stallOn.set(flying && f.stall > 0.35);
