@@ -27,6 +27,10 @@ jobs:
       # The build only ships if the tests still hold.
       - run: npm test
       - run: npm run build
+      # Boot the built game in headless Chromium: title, flight, pause, quality switches, no
+      # console errors (scripts/smoke.mjs).
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/smoke.mjs --no-build
       # Pages must already be enabled with Source: GitHub Actions — the workflow token is not
       # allowed to create the Pages site, so enabling it here fails the run instead.
       - uses: actions/configure-pages@v5

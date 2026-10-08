@@ -46,4 +46,10 @@ src/debug/       URL params, window.__dw automation handle, showcases
 `?manual=1` stops the render loop so a headless browser can drive time with
 `window.__dw.advance(seconds)` and capture with `scripts/shot.mjs`. `?view=<name>` runs a
 showcase from `src/debug/showcases/` (any module can add one). See `src/debug/params.ts` for
-the other URL switches.
+the other URL switches. `window.__dw` exists in dev builds, and in production builds only with
+`?manual=1` or `?debug=1`.
+
+`npm run smoke` builds the game, serves `dist/` under a subpath and plays it in headless
+Chromium with the real frame loop: boot, title, flight, pause/resume, runtime quality switches,
+a plain production boot, and no console errors allowed (`scripts/smoke.mjs`; CI runs it before
+every deploy).

@@ -13,9 +13,21 @@ export default defineConfig({
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 2000,
+    rolldownOptions: {
+      output: {
+        // three.js in its own chunk: it changes far less often than the game, so returning
+        // players keep it cached across releases.
+        codeSplitting: {
+          groups: [{ name: 'three', test: /node_modules[\\/]three[\\/]/ }],
+        },
+      },
+    },
   },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Mesh and course suites build whole islands; on a busy machine the 5 s default is too tight.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 });
