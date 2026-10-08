@@ -69,9 +69,11 @@ void main() {
   float across = 1.0 - vUv.x * vUv.x;
   // Streaky along the ribbon, pinned to the air (birth time), so it shears like real vapor.
   float n = fxNoise(vec2(vUv.y, vUv.x * 1.7 + 3.0)) * 0.65 + 0.35;
-  float a = across * across * n * vAlpha;
+  // Cooler, slightly darker edges: the vapor still reads against white cloud.
+  vec3 col = mix(vColor * vec3(0.62, 0.7, 0.88), vColor, smoothstep(0.35, 0.85, across));
+  float a = smoothstep(0.0, 0.7, across) * n * vAlpha;
   if (a < 0.004) discard;
-  gl_FragColor = vec4(vColor, a);
+  gl_FragColor = vec4(col, a);
 }
 `;
 
@@ -205,7 +207,7 @@ export class WingTrails {
   private now = 0;
   private active = false;
   /** Seconds a sample lives. */
-  life = 1.1;
+  life = 1.3;
   /** Meters between committed samples. */
   spacing = 1.4;
 
@@ -216,7 +218,7 @@ export class WingTrails {
         uPxScale: { value: 600 },
         uNow: { value: 0 },
         uLife: { value: this.life },
-        uWidth: { value: 0.16 },
+        uWidth: { value: 0.22 },
         uCurl: { value: 0.35 },
       },
       vertexShader: VERT,

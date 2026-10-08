@@ -117,7 +117,7 @@ export class Fx implements FxSystem {
     this.glow = new BurstParticles(scene, GLOW_CAP, { additive: true, name: 'fx-glow', renderOrder: 9 });
     this.rings = new ShockRings(scene, 8);
     this.speedLines = new AirStreaks(scene, {
-      name: 'fx-speed-lines', count: 420, box: 56, lenTime: 0.13, width: 0.075, nearFade: 2.5, centerFade: 0.22, wisp: false, seed: 0x5eed,
+      name: 'fx-speed-lines', count: 420, box: 56, lenTime: 0.16, width: 0.075, nearFade: 2.5, centerFade: 0.22, wisp: false, seed: 0x5eed,
     });
     this.wisps = new AirStreaks(scene, {
       name: 'fx-cloud-wisps', count: 64, box: 240, lenTime: 0.32, width: 10, nearFade: 14, centerFade: 0.12, wisp: true, seed: 0x3157,
@@ -173,11 +173,11 @@ export class Fx implements FxSystem {
     const airspeed = flying ? f.airspeed : 0;
     this.speedLines.setPxScale(pxScale);
     this.wisps.setPxScale(pxScale);
-    this.speedLines.update(step, this.camPos, this.airVel, speedLineAmount(airspeed, flying) * (reduced ? 0.6 : 1));
+    this.speedLines.update(step, this.camPos, this.airVel, speedLineAmount(airspeed, flying) * (reduced ? 0.7 : 1.3));
     this.wisps.update(step, this.camPos, this.airVel, wispAmount(airspeed, f.position.y, 0, flying) * 0.8);
     wyvern.getWingtips(this.tipL, this.tipR);
     this.trails.setPxScale(pxScale);
-    this.trails.update(step, this.tipL, this.tipR, trailIntensity(airspeed, f.gLoad, flying) * 0.55);
+    this.trails.update(step, this.tipL, this.tipR, trailIntensity(airspeed, f.gLoad, flying) * 0.75);
 
     // --- World: thermals, fireflies, leaves, launch gust --------------------------------------
     this.thermals.setPxScale(pxScale);

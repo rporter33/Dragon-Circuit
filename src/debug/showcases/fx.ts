@@ -20,6 +20,7 @@ import { launchDeckEnd } from '../../fx/Fx';
  *   leaves    the forest edge on Rootfall in a breeze
  *   gust      the launch-wind gust off the Roost's deck
  *   breath    on foot on cold Highmoor
+ * Flying scenes can take &track=side|chase for a camera locked to the wyvern.
  * The time of day defaults per scene (&tod= overrides). Event scenes re-emit on a timer so any
  * capture time shows the effect; &at0=1 emits once at setup instead.
  */
@@ -181,6 +182,12 @@ function stage(game: Game, scene: string): Stage {
 }
 
 let current: Stage = { tod: 0.4, every: 0 };
+/** &track=side|chase: a camera that follows the wyvern from a fixed offset (flying scenes). */
+let track: string | null = null;
+const _fwd = new Vector3();
+const _right = new Vector3();
+const _cam = new Vector3();
+const _look = new Vector3();
 let timer = 0;
 let count = 0;
 let lights: { sun: DirectionalLight | null; hemi: HemisphereLight | null } = { sun: null, hemi: null };
@@ -216,6 +223,7 @@ const fx: Showcase = {
     } else {
       game.cameraRig.snap(game.player);
     }
+    track = params.get('track');
     const every = Number(params.get('every'));
     if (Number.isFinite(every) && every > 0) current.every = every;
     timer = params.get('at0') === '1' ? 0 : current.every - 0.05;
@@ -234,6 +242,19 @@ const fx: Showcase = {
   },
   update(game, dt) {
     standInNight(game);
+    if (track) {
+      const w = game.player.wyvernPose;
+      _fwd.copy(w.velocity);
+      _fwd.y = 0;
+      if (_fwd.lengthSq() < 1e-4) _fwd.set(0, 0, 1);
+      _fwd.normalize();
+      _right.set(-_fwd.z, 0, _fwd.x);
+      const span = game.player.breed.wingspan;
+      if (track === 'side') _cam.copy(w.position).addScaledVector(_right, 1.6 * span).addScaledVector(_fwd, -1.6 * span).add(_look.set(0, 0.35 * span, 0));
+      else _cam.copy(w.position).addScaledVector(_fwd, -2.4 * span).add(_look.set(0, 0.5 * span, 0));
+      _look.copy(w.position).addScaledVector(_fwd, -0.6 * span);
+      game.cameraRig.setOverride({ position: _cam, target: _look });
+    }
     if (current.every > 0 && current.emit) {
       timer += dt;
       if (timer >= current.every) {
