@@ -59,11 +59,11 @@ function spots(game: Game): Record<string, () => Spot> {
     },
     glowcap: () => {
       const g = L('glowcap');
-      return { cam: [g.x - 70, ground(game, g.x - 70, g.z + 40, 5), g.z + 40], look: [g.x, ground(game, g.x, g.z, 10), g.z], tod: 0.96 };
+      return { cam: [g.x - 150, g.y + 40, g.z + 70], look: [g.x - 20, g.y + 6, g.z], tod: 0.96 };
     },
     observatory: () => {
       const g = L('observatory');
-      return { cam: [g.x + 45, ground(game, g.x, g.z, 14), g.z + 50], look: [g.x, ground(game, g.x, g.z, 8), g.z], tod: 0.66 };
+      return { cam: [g.x + 34, ground(game, g.x, g.z, 9), g.z + 12], look: [g.x, ground(game, g.x, g.z, 7), g.z], tod: 0.66 };
     },
     lantern: () => {
       const s = game.world.layout.spires.find((sp) => sp.lantern)!;

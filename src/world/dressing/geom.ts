@@ -29,6 +29,8 @@ export interface AddOptions {
   glow?: number | ScalarFn;
   /** Rewrite the normal (builder space) after transforming, e.g. canopy normals from a center. */
   normal?: (p: Vector3, n: Vector3) => void;
+  /** Turn the surface inside out (flip normals and winding): the inner face of a shell. */
+  invert?: boolean;
 }
 
 const tmpP = new Vector3();
@@ -71,6 +73,7 @@ export class GeoBuilder {
         tmpP.applyMatrix4(matrix);
         tmpN.applyMatrix3(tmpM3).normalize();
       }
+      if (opts.invert) tmpN.negate();
       if (opts.normal) opts.normal(tmpP, tmpN);
       this.positions.push(tmpP.x, tmpP.y, tmpP.z);
       this.normals.push(tmpN.x, tmpN.y, tmpN.z);
@@ -86,7 +89,7 @@ export class GeoBuilder {
     }
     const index = geo.getIndex();
     // A mirroring transform flips winding; keep faces pointing out.
-    const flip = matrix ? matrix.determinant() < 0 : false;
+    const flip = (matrix ? matrix.determinant() < 0 : false) !== !!opts.invert;
     if (index) {
       for (let i = 0; i < index.count; i += 3) {
         const a = index.getX(i);

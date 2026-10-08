@@ -152,7 +152,7 @@ export class Forest {
       case 'foliage':
         return dressMaterial({ sway: 'tree' });
       case 'glow':
-        return dressMaterial({ sway: 'tree', glow: true, glowDay: 0.1, glowNight: 2.6 });
+        return dressMaterial({ sway: 'tree', glow: true, glowDay: 0.06, glowNight: 1.9 });
       case 'rock':
         return dressMaterial({});
       case 'card':

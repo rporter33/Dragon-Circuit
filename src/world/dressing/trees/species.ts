@@ -295,8 +295,8 @@ function glowcapLod(lod: number): BufferGeometry {
     [1.5, 0], [1.05, 0.7], [0.82, 2.2], [0.7, 5], [0.72, 8], [0.85, H - 0.5], [0.95, H + 0.4],
   ].map(([r, y]) => new Vector2(r, y));
   const stem = new LatheGeometry(stemPts, seg);
-  const stemLo = new Color('#e7ddc9');
-  const stemHi = new Color('#cfc6ec');
+  const stemLo = new Color('#d9cfbb');
+  const stemHi = new Color('#b9b0dc');
   const leanM = (g: BufferGeometry) => {
     const pos = g.getAttribute('position');
     for (let i = 0; i < pos.count; i++) pos.setX(i, pos.getX(i) + lean(pos.getY(i)));
@@ -306,12 +306,13 @@ function glowcapLod(lod: number): BufferGeometry {
   b.add(leanM(welded(stem)), null, {
     color: (p, _n, out) => out.copy(stemLo).lerp(stemHi, Math.min(1, p.y / H)),
     sway: (p) => Math.pow(Math.max(0, p.y) / H, 2) * 0.1,
-    glow: (p) => (p.y > H - 2 ? 0.25 : 0),
+    glow: (p) => (p.y > H - 1.2 ? 0.12 : 0),
   });
   // Skirt ring on the stem.
   if (lod < 2) {
-    const ring = new LatheGeometry([new Vector2(0.75, 0.3), new Vector2(1.5, -0.5), new Vector2(1.6, -0.75)].map((v) => v), seg);
-    b.add(welded(ring), xf(lean(H * 0.7), H * 0.7, 0), { color: '#ece4f4', sway: 0.06, glow: 0.15 });
+    // Lathe profiles run bottom → top so faces point outward.
+    const ring = new LatheGeometry([new Vector2(1.6, -0.75), new Vector2(1.5, -0.5), new Vector2(0.75, 0.3)], seg);
+    b.add(welded(ring), xf(lean(H * 0.7), H * 0.7, 0), { color: '#d6ccec', sway: 0.06, glow: 0.08 });
   }
   // Cap: a dome with a rolled lip, and a glowing gill underside.
   const capR = 5.8;
@@ -319,9 +320,9 @@ function glowcapLod(lod: number): BufferGeometry {
   const capPts = [
     [0.001, 3.3], [1.6, 3.15], [3.2, 2.6], [4.5, 1.7], [5.4, 0.8], [capR, 0.15], [5.65, -0.25], [5.2, -0.3],
   ].map(([r, y]) => new Vector2(r, y));
-  const cap = new LatheGeometry(capPts, seg);
-  const capTop = new Color('#5753b8');
-  const capRim = new Color('#8b6fd6');
+  const cap = new LatheGeometry([...capPts].reverse(), seg);
+  const capTop = new Color('#4a46ad');
+  const capRim = new Color('#8a5fd6');
   const capN = noise3(211);
   const cx = lean(cy);
   b.add(welded(cap), xf(cx, cy, 0), {
@@ -331,10 +332,11 @@ function glowcapLod(lod: number): BufferGeometry {
       out.multiplyScalar(0.9 + 0.2 * capN(p.x * 0.4, p.y * 0.4, p.z * 0.4));
     },
     sway: 0.12,
-    glow: (p) => (Math.hypot(p.x - cx, p.z) > capR * 0.9 ? 0.35 : 0.04),
+    glow: (p) => (Math.hypot(p.x - cx, p.z) > capR * 0.88 ? 0.45 : 0.06),
   });
-  const gills = new LatheGeometry([new Vector2(5.25, -0.28), new Vector2(3.5, 0.2), new Vector2(1.0, 0.55)], seg);
-  b.add(welded(gills), xf(cx, cy, 0), { color: '#8ff3e4', sway: 0.12, glow: 0.85 });
+  // Gills face down: profile runs from the stem outward and down.
+  const gills = new LatheGeometry([new Vector2(1.0, 0.55), new Vector2(3.5, 0.2), new Vector2(5.25, -0.28)], seg);
+  b.add(welded(gills), xf(cx, cy, 0), { color: '#3fd9c8', sway: 0.12, glow: 0.38 });
   // Raised luminous spots.
   if (lod < 2) {
     const spots = lod === 0 ? 16 : 9;
@@ -355,9 +357,9 @@ function glowcapLod(lod: number): BufferGeometry {
       const s = 0.35 + rnd() * 0.4;
       const g = welded(new IcosahedronGeometry(1, lod === 0 ? 1 : 0));
       b.add(g, xf(cx + Math.cos(a) * rr, cy + y + 0.02, Math.sin(a) * rr, 0, 0, 0, s, s * 0.35, s), {
-        color: '#c8f4ff',
+        color: '#66dcff',
         sway: 0.12,
-        glow: 1,
+        glow: 0.85,
       });
     }
   }
@@ -441,12 +443,12 @@ function shroomsLod(lod: number): BufferGeometry {
     const x = Math.cos(a) * d;
     const z = Math.sin(a) * d;
     const seg = lod === 0 ? 8 : 5;
-    b.add(new CylinderGeometry(0.05, 0.08, h, seg - 2), xf(x, h / 2, z, (rnd() - 0.5) * 0.3, 0, (rnd() - 0.5) * 0.3), { color: '#efe6d6', glow: 0.1 });
+    b.add(new CylinderGeometry(0.05, 0.08, h, seg - 2), xf(x, h / 2, z, (rnd() - 0.5) * 0.3, 0, (rnd() - 0.5) * 0.3), { color: '#d8cdbd', glow: 0.04 });
     const capR = h * 0.45 + 0.08;
-    const cap = new LatheGeometry([new Vector2(0.001, capR * 0.6), new Vector2(capR * 0.7, capR * 0.45), new Vector2(capR, 0), new Vector2(capR * 0.4, -0.02)], seg);
+    const cap = new LatheGeometry([new Vector2(capR * 0.4, -0.02), new Vector2(capR, 0), new Vector2(capR * 0.7, capR * 0.45), new Vector2(0.001, capR * 0.6)], seg);
     b.add(welded(cap), xf(x, h, z), {
-      color: (p, nn, out) => out.set(nn.y > 0 ? '#6a62d0' : '#9ff5e8'),
-      glow: (p, nn) => (nn.y > 0 ? 0.45 : 0.95),
+      color: (p, nn, out) => out.set(nn.y > 0 ? '#5a52c8' : '#44d8c6'),
+      glow: (p, nn) => (nn.y > 0 ? 0.35 : 0.9),
     });
   }
   return b.build(true);
