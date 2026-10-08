@@ -8,6 +8,7 @@ import type { BoxCollider, GameEvents, RiderLook, Settings, WyvernLook } from '.
 import { Renderer } from '../render/renderer';
 import { QUALITY } from '../render/quality';
 import { AdaptiveResolution } from '../render/adaptiveResolution';
+import { FrameClock, FrameGuard } from './frameGuard';
 import { globalUniforms } from '../render/uniforms';
 import { Input, emptyFrame } from '../input/Input';
 import { Haptics } from '../input/haptics';
@@ -64,7 +65,6 @@ export class Game implements GameActions {
   uiFade = 0;
   prompt: GameView['prompt'] = null;
   private accumulator = 0;
-  private lastTime = 0;
   private running = false;
   private view: GameView;
   private showcase: Showcase | null = null;
@@ -72,6 +72,10 @@ export class Game implements GameActions {
   private idleInput = emptyFrame();
   /** Lowers the render resolution when frames run long (real GPUs vary wildly). */
   private adaptive = new AdaptiveResolution();
+  /** Seconds before frame times count for adaptive resolution again (boot, screen changes). */
+  private adaptiveGrace = 2;
+  /** Keeps the loop alive through exceptions and reports them (main.ts shows the overlay). */
+  readonly loop = new FrameGuard();
   /** The dressing's decks as solid slabs (filled as decks are built). */
   private deckColliders: BoxCollider[] = [];
 
@@ -176,19 +180,24 @@ export class Game implements GameActions {
     this.setScreen(this.debug.play ? 'play' : 'title');
     if (this.debug.manual) return;
     this.running = true;
-    this.lastTime = performance.now();
+    // Time starts at the first callback (never negative, see FrameClock).
+    const clock = new FrameClock();
     const frame = (now: number) => {
       if (!this.running) return;
-      const dt = Math.min(0.1, (now - this.lastTime) / 1000);
-      this.lastTime = now;
-      this.frame(dt);
+      // Ask for the next frame first: an exception in any system must not end the loop.
       requestAnimationFrame(frame);
+      const raw = clock.tick(now);
+      this.loop.run(() => this.frame(Math.min(0.1, raw), true, raw));
     };
     requestAnimationFrame(frame);
   }
 
-  /** Advance the game by dt seconds (sim + presentation) and, unless told not to, render. */
-  frame(dt: number, render = true): void {
+  /**
+   * Advance the game by dt seconds (sim + presentation) and, unless told not to, render.
+   * `frameTime` is the real, unclamped time since the last frame (feeds adaptive resolution).
+   */
+  frame(dt: number, render = true, frameTime = dt): void {
+    if (!(dt >= 0)) dt = 0;
     this.syncColliders();
     const input = this.input.poll(dt);
     this.haptics.update(dt);
@@ -216,9 +225,11 @@ export class Game implements GameActions {
 
     const focus = this.player.wyvernPose.position;
     globalUniforms.uPlayerPos.value.copy(this.player.riderPosition);
-    this.weather.update(dt, this.camera, focus);
-    this.updateTimeOfDay(dt);
-    this.sky.update(dt, this.camera, focus, this.settings);
+    // Paused (photo mode included) the world holds still: no time of day, weather or sky motion.
+    const worldDt = this.screen === 'pause' ? 0 : dt;
+    this.weather.update(worldDt, this.camera, focus);
+    this.updateTimeOfDay(worldDt);
+    this.sky.update(worldDt, this.camera, focus, this.settings);
     this.world.update(dt, this.camera, focus);
     this.wyvern.update(dt, this.player.wyvernPose);
     this.rider.update(dt, this.player.riderPose, this.player.riderPose.mounted ? this.wyvern.saddle : null);
@@ -241,10 +252,7 @@ export class Game implements GameActions {
     if (this.screen === 'play') this.save.data.playTime += dt;
     if (render) {
       this.renderer.render(this.scene, this.camera, dt);
-      if (!this.debug.manual && this.screen !== 'loading') {
-        const scale = this.adaptive.sample(dt);
-        if (scale !== null) this.renderer.setDynamicResolution(scale);
-      }
+      if (!this.debug.manual) this.sampleFrameTime(frameTime);
     }
   }
 
@@ -337,6 +345,7 @@ export class Game implements GameActions {
 
   private setScreen(screen: GameScreen): void {
     this.screen = screen;
+    this.adaptiveGrace = Math.max(this.adaptiveGrace, 1);
     this.ui.setScreen(screen);
     this.cameraRig.mode = screen === 'title' ? 'title' : screen === 'stable' ? 'stable' : 'follow';
     this.input.setPointerLock(screen === 'play');
@@ -351,6 +360,16 @@ export class Game implements GameActions {
     if (p.restart && this.races.activeId) this.restartRace();
     // The prompt decides what interact does here (mounting wins over the stable door).
     if (p.interact && this.prompt?.action === 'stable') this.openStable();
+  }
+
+  /** Feed adaptive resolution, skipping frames that say nothing about steady-state cost. */
+  private sampleFrameTime(frameTime: number): void {
+    this.adaptiveGrace = Math.max(0, this.adaptiveGrace - frameTime);
+    // Shader links, screen changes and the first seconds after boot are one-off hitches.
+    if (this.renderer.compiledThisFrame) this.adaptiveGrace = Math.max(this.adaptiveGrace, 0.5);
+    if (this.adaptiveGrace > 0 || this.screen === 'loading') return;
+    const scale = this.adaptive.sample(frameTime);
+    if (scale !== null) this.renderer.setDynamicResolution(scale);
   }
 
   private syncColliders(): void {
