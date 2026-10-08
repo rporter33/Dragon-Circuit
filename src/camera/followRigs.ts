@@ -1,5 +1,5 @@
-// The gameplay cameras: the flight chase cam, and an orbit cam used on foot, mounted on the
-// ground and while falling.
+// The gameplay cameras: the flight chase cam, an orbit cam used on foot and mounted on the
+// ground, and the fall cam.
 //
 // Flight: the wyvern's position is followed RIGIDLY (no positional lag, so it can never drift
 // away in a turn and nothing between stick and screen feels late). Only the boom's DIRECTION is
@@ -14,7 +14,7 @@ import { angleDelta, clamp, clamp01, damp, smoothstep, wrapAngle } from '../core
 import type { InputFrame } from '../core/types';
 import type { PlayerSystem } from '../game/contracts';
 import { autoFollowYaw, boomStep, lookReturn, speedFovKick } from './cameraMath';
-import { sphereCast } from './collision';
+import { liftClear, sphereCast } from './collision';
 import { applyLook, type CameraPose, type CameraShot, type Rig, type RigContext } from './rigTypes';
 
 const UP = new Vector3(0, 1, 0);
@@ -41,9 +41,9 @@ const want = new Vector3();
 /** Tuning for the flight chase camera (all distances scale with the breed's wingspan). */
 export const FLIGHT_CAM = {
   /** Boom length = span·distSpan + distBase, +distSpeed at full speed. */
-  distSpan: 1.25,
+  distSpan: 1.1,
   distBase: 5.5,
-  distSpeed: 0.14,
+  distSpeed: 0.06,
   heightSpan: 0.24,
   heightBase: 1.6,
   /** How much the boom aligns to velocity vs. the nose (0..1). */
@@ -229,7 +229,7 @@ export class FlightRig implements Rig {
   }
 }
 
-export type OrbitKind = 'foot' | 'mounted' | 'falling';
+export type OrbitKind = 'foot' | 'mounted';
 
 /** Tuning per orbit flavour. */
 export const ORBIT_CAM: Record<OrbitKind, {
@@ -247,7 +247,6 @@ export const ORBIT_CAM: Record<OrbitKind, {
 }> = {
   foot: { dist: 5.2, orbitMin: -0.12, distSpan: 0, runExtra: 0.9, pitch: 0.14, pitchMin: -0.5, pitchMax: 1.15, shoulder: 0.55, radius: 0.35, follow: 1.0 },
   mounted: { dist: 6.5, orbitMin: -0.1, distSpan: 0.6, runExtra: 1.5, pitch: 0.26, pitchMin: -0.45, pitchMax: 1.2, shoulder: 0, radius: 0.7, follow: 0.85 },
-  falling: { dist: 9, orbitMin: 0.2, distSpan: 0, runExtra: 0, pitch: 0.75, pitchMin: 0.2, pitchMax: 1.3, shoulder: 0, radius: 0.6, follow: 2.0 },
 };
 
 /**
@@ -266,7 +265,7 @@ export class OrbitRig implements Rig {
 
   /** The subject's facing yaw (behind which "recenter" puts the camera). */
   private facing(player: PlayerSystem): number {
-    if (this.kind === 'foot' || this.kind === 'falling') return player.riderPose.yaw;
+    if (this.kind === 'foot') return player.riderPose.yaw;
     fwd.set(0, 0, 1).applyQuaternion(player.wyvernPose.orientation);
     return Math.atan2(fwd.x, fwd.z);
   }
@@ -275,7 +274,7 @@ export class OrbitRig implements Rig {
     if (this.kind === 'mounted') {
       return out.copy(player.wyvernPose.position).addScaledVector(UP, player.breed.wingspan * 0.06 + 1.5);
     }
-    return out.copy(player.riderPose.position).addScaledVector(UP, this.kind === 'foot' ? 1.45 : 1.0);
+    return out.copy(player.riderPose.position).addScaledVector(UP, 1.45);
   }
 
   enter(player: PlayerSystem, from: CameraPose, _ctx: RigContext): void {
@@ -283,7 +282,6 @@ export class OrbitRig implements Rig {
     // Continue from wherever the camera is looking, so the hand-over is short.
     this.view.yaw = Number.isFinite(from.yaw) ? from.yaw : this.facing(player);
     this.view.pitch = clamp(Number.isFinite(from.pitch) ? from.pitch : P.pitch, P.pitchMin, P.pitchMax);
-    if (this.kind === 'falling') this.view.pitch = Math.max(this.view.pitch, 0.5);
     this.lookIdle = 99;
     this.recenterT = 0;
     this.boom = -1;
@@ -306,10 +304,6 @@ export class OrbitRig implements Rig {
       this.recenterT -= dt;
       this.view.yaw += angleDelta(this.view.yaw, this.facing(player)) * (1 - Math.exp(-14 * dt));
       this.view.pitch = damp(this.view.pitch, P.pitch, 14, dt);
-    } else if (this.kind === 'falling') {
-      // Cinematic: look down on the falling rider, swing round behind their drift.
-      if (hspeed > 0.5) this.view.yaw = autoFollowYaw(this.view.yaw, Math.atan2(vel.x, vel.z), P.follow, dt);
-      this.view.pitch = damp(this.view.pitch, P.pitch, 1.5, dt);
     } else if (this.lookIdle > 0.7 && hspeed > 0.7) {
       const strength = P.follow * Math.min(1, hspeed / 4);
       this.view.yaw = autoFollowYaw(this.view.yaw, Math.atan2(vel.x, vel.z), strength, dt);
@@ -349,6 +343,55 @@ export class OrbitRig implements Rig {
       want.subVectors(out.target, out.position).applyAxisAngle(right, tiltUp);
       out.target.copy(out.position).add(want);
     }
+    out.roll = 0;
+    out.fov = ctx.settings.fov;
+    out.shift = 0;
+    return out;
+  }
+}
+
+/**
+ * Falling (walked off an edge): the camera rides down with the rider, a few metres out over the
+ * drop and off to one side, looking down past them — the cliff face slides by on one side of the
+ * frame, the cloud sea opens below, and the wyvern's rescue swoop plays out in view. Rigidly
+ * attached (the world rushing past sells the speed); CameraRig's blend eases the hand-off.
+ */
+export class FallRig implements Rig {
+  private away = new Vector3(0, 0, 1);
+  private side = new Vector3(1, 0, 0);
+  private boom = -1;
+
+  enter(player: PlayerSystem, from: CameraPose, _ctx: RigContext): void {
+    const r = player.riderPose;
+    // Outward = the direction they were travelling when they went over.
+    this.away.set(r.velocity.x, 0, r.velocity.z);
+    if (this.away.lengthSq() < 0.25) {
+      if (Number.isFinite(from.yaw)) this.away.set(Math.sin(from.yaw), 0, Math.cos(from.yaw));
+      else this.away.set(Math.sin(r.yaw), 0, Math.cos(r.yaw));
+    }
+    this.away.normalize();
+    this.side.set(this.away.z, 0, -this.away.x);
+    // Swing out on whichever side the camera already is, so the hand-off is short.
+    if (Number.isFinite(from.yaw)) {
+      diff.subVectors(from.position, r.position);
+      if (diff.dot(this.side) < 0) this.side.multiplyScalar(-1);
+    }
+    this.boom = -1;
+  }
+
+  update(dt: number, _input: InputFrame, player: PlayerSystem, ctx: RigContext, out: CameraShot): CameraShot {
+    const r = player.riderPose.position;
+    pivot.copy(r).addScaledVector(UP, 0.8);
+    want.copy(r).addScaledVector(this.side, 6.5).addScaledVector(this.away, 3).addScaledVector(UP, 3.5);
+    toCam.subVectors(want, pivot);
+    const len = toCam.length();
+    toCam.multiplyScalar(1 / Math.max(1e-6, len));
+    const hit = sphereCast(ctx.terrain, pivot, toCam, len + 0.6, 0.6);
+    this.boom = boomStep(this.boom, len, hit, Infinity, dt, 30, 3);
+    out.position.copy(pivot).addScaledVector(toCam, this.boom);
+    liftClear(ctx.terrain, out.position, 0.8);
+    // Look a little below the rider: the drop is the story.
+    out.target.copy(r).addScaledVector(UP, -0.8);
     out.roll = 0;
     out.fov = ctx.settings.fov;
     out.shift = 0;

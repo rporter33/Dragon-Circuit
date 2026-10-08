@@ -61,7 +61,7 @@ export function applyStage(game: Game, st: Stage): void {
   (game.player as unknown as { mode: PlayerMode }).mode = st.mode;
   const w = game.player.wyvernPose;
   const r = game.player.riderPose;
-  const mounted = st.mode !== 'onFoot';
+  const mounted = st.mode !== 'onFoot' && st.mode !== 'falling';
   w.position.copy(st.wyvern).addScaledVector(UP, game.player.breed.standHeight);
   w.orientation.setFromAxisAngle(UP, st.wyvernYaw);
   w.velocity.copy(mounted ? st.riderVel : new Vector3());
@@ -78,7 +78,7 @@ export function applyStage(game: Game, st: Stage): void {
   r.mounted = mounted;
   r.position.copy(mounted ? w.position : st.rider);
   r.yaw = mounted ? st.wyvernYaw : st.riderYaw;
-  r.velocity.copy(mounted ? new Vector3() : st.riderVel);
+  r.velocity.copy(mounted && st.mode !== 'falling' ? new Vector3() : st.riderVel);
   r.action = mounted ? 'mounted' : st.riderVel.lengthSq() > 0.1 ? 'walk' : 'idle';
   (game.player.riderPosition as Vector3).copy(r.position);
 }

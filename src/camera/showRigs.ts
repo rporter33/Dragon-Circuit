@@ -232,11 +232,21 @@ export class PhotoRig implements Rig {
   private view = { yaw: 0, pitch: 0 };
   private fov = 60;
 
-  enter(_player: PlayerSystem, from: CameraPose, ctx: RigContext): void {
-    this.pos.copy(from.position);
-    this.view.yaw = from.yaw;
-    this.view.pitch = from.pitch;
-    this.fov = ctx.camera.fov;
+  enter(player: PlayerSystem, from: CameraPose, ctx: RigContext): void {
+    if (Number.isFinite(from.yaw) && Number.isFinite(from.pitch)) {
+      this.pos.copy(from.position);
+      this.view.yaw = from.yaw;
+      this.view.pitch = from.pitch;
+    } else {
+      // Entered on a snap: start behind and above the wyvern, looking at it.
+      fwd.set(0, 0, 1).applyQuaternion(player.wyvernPose.orientation);
+      const yaw = Math.atan2(fwd.x, fwd.z);
+      const back = player.breed.wingspan * 1.4 + 4;
+      this.pos.set(-Math.sin(yaw) * back, back * 0.35, -Math.cos(yaw) * back).add(player.wyvernPose.position);
+      this.view.yaw = yaw;
+      this.view.pitch = 0.3;
+    }
+    this.fov = Number.isFinite(ctx.camera.fov) ? ctx.camera.fov : ctx.settings.fov;
   }
 
   update(dt: number, input: InputFrame, player: PlayerSystem, ctx: RigContext, out: CameraShot): CameraShot {

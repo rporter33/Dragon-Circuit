@@ -304,6 +304,44 @@ describe('ground, title and stable framing', () => {
     expect(Math.abs(s.x)).toBeLessThan(0.3);
   });
 
+  it('falling: rides down beside the cliff, out of the rock, rider in frame', () => {
+    const { rig: r, camera } = rig();
+    const p = fakePlayer();
+    onFoot(p);
+    // Find the Roost's southern rim and stand just inside it, facing out.
+    let z = 100;
+    let top = 0;
+    for (; z < 400; z += 0.5) {
+      const g = terrain.groundAt(0, z, 1e6);
+      if (!g) break;
+      top = g.y;
+    }
+    const rider = new Vector3(0, top, z - 4);
+    p.riderPose.position.copy(rider);
+    p.riderPose.yaw = 0;
+    p.riderPose.velocity.set(0, 0, 5);
+    for (let i = 0; i < 30; i++) r.update(DT, idle, p);
+    p.mode = 'falling';
+    p.riderPose.velocity.set(0, 0, 4);
+    rider.z = z + 1;
+    let vy = 0;
+    for (let i = 0; i < 150; i++) {
+      vy = Math.max(-40, vy - 9.81 * DT);
+      rider.y += vy * DT;
+      rider.z += 4 * DT;
+      p.riderPose.position.copy(rider);
+      p.riderPose.velocity.set(0, vy, 4);
+      r.update(DT, idle, p);
+      expect(terrain.distance(camera.position)).toBeGreaterThan(0.3);
+      if (i > 60) {
+        const s = ndc(camera, rider)!;
+        expect(Math.abs(s.x)).toBeLessThan(0.6);
+        expect(Math.abs(s.y)).toBeLessThan(0.6);
+      }
+    }
+    expect(r.rig).toBe('falling');
+  });
+
   it('title: frames both the rider and the wyvern', () => {
     const { rig: r, camera } = rig();
     const p = fakePlayer();

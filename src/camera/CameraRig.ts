@@ -11,7 +11,7 @@ import type { CameraMode, CameraSystem, PlayerSystem } from '../game/contracts';
 import { clamp, smoothstep } from '../core/math';
 import { filmOffsetForShift, springDecay, type SpringState } from './cameraMath';
 import { CameraShake, type ShakeOffsets } from './shake';
-import { FlightRig, OrbitRig } from './followRigs';
+import { FallRig, FlightRig, OrbitRig } from './followRigs';
 import { PhotoRig, StableRig, TitleRig, type StableFocus } from './showRigs';
 import { createShot, type CameraPose, type CameraShot, type Rig, type RigContext } from './rigTypes';
 
@@ -59,7 +59,7 @@ export class CameraRig implements CameraSystem {
     flight: new FlightRig(),
     mounted: new OrbitRig('mounted'),
     foot: new OrbitRig('foot'),
-    falling: new OrbitRig('falling'),
+    falling: new FallRig(),
     title: new TitleRig(),
     stable: this.stableRig,
     photo: new PhotoRig(),
