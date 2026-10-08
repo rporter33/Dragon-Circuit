@@ -324,6 +324,8 @@ export class FlightModel {
   private hitCooldown = 0;
   private smoothG = 1;
   private dt = 1 / 120;
+  /** The event bus the last step reported to (so reset() can close open stall/tuck events). */
+  private bus: GameEventBus | undefined;
   /** Cycle-averaged lift of the current beat (N), which the hands-off trim doesn't ask the wing for. */
   private flapLiftMean = 0;
 
@@ -359,6 +361,9 @@ export class FlightModel {
     this.windup = false;
     this.vDotSmooth = 0;
     this.stallRaw = 0;
+    // Listeners saw a stall/tuck start: tell them it's over.
+    if (this.stalled) this.bus?.emit('stallEnd', {});
+    if (this.tucked) this.bus?.emit('tuckEnd', {});
     this.stalled = false;
     this.tucked = false;
     this.stun = 0;
@@ -423,6 +428,7 @@ export class FlightModel {
     r.contact = false;
     r.impact = 0;
     r.beatStarted = false;
+    this.bus = events;
     this.dt = dt;
     this.time += dt;
     this.grace = Math.max(0, this.grace - dt);

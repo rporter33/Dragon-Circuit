@@ -227,7 +227,7 @@ export class Player implements PlayerSystem {
     this.syncModelFromGround();
     this.lastSafe.set(w.position.x, w.groundY, w.position.z);
     this.lastSafeYaw = ws.yaw;
-    this.setMode('onFoot', true);
+    this.setMode('onFoot');
     this.syncRiderFromFoot();
     this.snapInterpolation();
   }
@@ -249,7 +249,7 @@ export class Player implements PlayerSystem {
           w.speed = 0;
           this.companion.standStill();
           this.syncModelFromGround();
-          this.setMode('onFoot', true);
+          this.setMode('onFoot');
           this.syncRiderFromFoot();
           this.snapInterpolation();
           return;
@@ -261,7 +261,7 @@ export class Player implements PlayerSystem {
         if (w.settle(t, this.breed.standHeight, position.y + 3)) {
           this.companion.standStill();
           this.syncModelFromGround();
-          this.setMode('landed', true);
+          this.setMode('landed');
           this.syncRiderToSeat();
           this.snapInterpolation();
           return;
@@ -274,7 +274,7 @@ export class Player implements PlayerSystem {
     this.model.reset(position, q, v);
     this.model.setGrace(1);
     this.airTime = 99;
-    this.setMode('flying', true);
+    this.setMode('flying');
     this.syncRiderToSeat();
     this.snapInterpolation();
   }
@@ -473,7 +473,8 @@ export class Player implements PlayerSystem {
     this.touchdownQuat.copy(s.orientation);
     this.landBlend = 0;
     this.landKick = clamp01(sink / P.landSink);
-    s.angularVelocity.set(0, 0, 0);
+    // Out of the air: clear the flight state (closing any open stall/tuck events).
+    this.model.reset(s.position, s.orientation, s.velocity);
     this.takeoffTimer = -1;
     this.stillTime = 0;
     this.setMode('landed');
@@ -801,7 +802,7 @@ export class Player implements PlayerSystem {
 
   // --- Shared helpers ---------------------------------------------------------------------------
 
-  private setMode(mode: PlayerMode, quiet = false): void {
+  private setMode(mode: PlayerMode): void {
     const from = this.mode;
     this.mode = mode;
     this.modeTime = 0;
@@ -809,7 +810,7 @@ export class Player implements PlayerSystem {
     this.riderMounted = mode === 'flying' || mode === 'landed' || mode === 'respawning';
     if (this.riderMounted) this.setRiderAction('mounted');
     if (mode === 'onFoot' || mode === 'landed' || mode === 'mounting' || mode === 'dismounting') this.airborne = false;
-    if (!quiet && from !== mode) this.deps.events.emit('modeChange', { from, to: mode });
+    if (from !== mode) this.deps.events.emit('modeChange', { from, to: mode });
   }
 
   private resetTransitions(): void {

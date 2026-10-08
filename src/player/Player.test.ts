@@ -121,6 +121,7 @@ describe('takeoff and landing', () => {
     it(`${id}: takes off from flat ground and climbs away while flapping`, () => {
       const r = rig(id);
       r.player.teleport(new Vector3(0, 250, -40), 0, 'landed');
+      r.log.length = 0;
       const g0 = groundAt(0, -40).y;
       r.run(7, (inp) => (inp.flight.flap = 1));
       expect(r.modes()).toEqual(['flying']);
@@ -175,6 +176,7 @@ describe('takeoff and landing', () => {
     const yaw = Math.atan2(Math.cos(theta), Math.sin(theta)); // facing outward
     r.player.teleport(p, yaw, 'landed');
     expect(r.player.mode).toBe('landed');
+    r.log.length = 0;
     // Push the stick "forward" with the camera behind the wyvern.
     r.run(4, (inp) => (inp.foot.moveY = 1), yaw);
     expect(r.modes()).toContain('flying');
@@ -270,6 +272,7 @@ describe('on foot', () => {
     const p = rimPoint(theta, 4);
     const yaw = Math.atan2(Math.cos(theta), Math.sin(theta));
     r.player.teleport(p, yaw, 'onFoot');
+    r.log.length = 0;
     r.run(5, (inp) => (inp.foot.moveY = 1), yaw);
     expect(r.modes()).toEqual(['falling', 'flying']);
     const fell = r.log.find((e) => e.type === 'fellOff')!;
@@ -292,6 +295,7 @@ describe('respawn', () => {
     const safe = r.player.safeGround.clone();
     expect(Math.hypot(safe.x - 40, safe.z - 40)).toBeLessThan(1);
     r.player.teleport(new Vector3(2400, LAYOUT.cloudFloor + 5, 0), 0, 'flying', 20);
+    r.log.length = 0;
     let maxFade = 0;
     let respawnAt = -1;
     r.events.on('respawn', () => (respawnAt = r.t));
@@ -350,6 +354,16 @@ describe('input handling', () => {
     expect(r.player.mode).toBe('dismounting');
     expect(r2.player.mode).toBe('dismounting');
     expect(r.count('dismount')).toBe(1);
+  });
+});
+
+describe('mode events', () => {
+  it('teleports announce a mode change, quietly when nothing changes', () => {
+    const r = rig();
+    r.player.teleport(new Vector3(0, 250, 0), 0, 'landed');
+    r.player.teleport(new Vector3(0, 250, 10), 0, 'landed');
+    r.player.teleport(new Vector3(0, 600, 0), 0, 'flying');
+    expect(r.modes()).toEqual(['landed', 'flying']);
   });
 });
 
