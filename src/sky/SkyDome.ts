@@ -57,7 +57,7 @@ uniform vec3 uFlashDir;
 varying vec3 vDir;
 
 const float SUN_R = 0.022;
-const float MOON_R = 0.03;
+const float MOON_R = 0.036;
 
 vec3 skyGradient(vec3 d) {
   float h = clamp(d.y, 0.0, 1.0);
@@ -90,13 +90,15 @@ vec3 starLayer(vec2 uv, float face, float cells, float seed, float density) {
   if (h > density) return vec3(0.0);
   vec2 pos = 0.2 + 0.6 * dwHash22(id + 7.7);
   float px = fwidth(g.x) + fwidth(g.y);
-  float r = max(px * 0.75, 0.035);
+  float r = max(px * 0.7, 0.03);
   float dist = length(f - pos);
   float core = smoothstep(r, 0.0, dist);
   core *= core;
+  // Magnitudes: a handful of bright stars, a crowd of faint ones.
   float k = h / density;
-  float bright = mix(0.35, 3.0, pow(1.0 - k, 4.0));
-  float tw = 0.6 + 0.4 * sin(uTime * (1.3 + 3.5 * fract(h * 91.7)) + h * 40.0);
+  float bright = 0.12 + 2.6 * pow(1.0 - k, 7.0);
+  // Faint stars twinkle harder (the eye catches them flickering in and out).
+  float tw = 1.0 - (0.25 + 0.45 * k) * (0.5 + 0.5 * sin(uTime * (1.3 + 3.5 * fract(h * 91.7)) + h * 40.0));
   vec3 tint = mix(vec3(0.72, 0.82, 1.0), vec3(1.0, 0.86, 0.7), fract(h * 53.3));
   return tint * core * bright * tw;
 }
@@ -115,8 +117,8 @@ vec3 stars(vec3 d) {
   float clumps = dwFbm5(uv * 3.0 + face * 13.0);
   float dust = smoothstep(0.45, 0.75, dwFbm3(uv * 7.0 - face * 5.0));
   vec3 col = vec3(0.30, 0.34, 0.58) * mw * (0.2 + 0.8 * clumps) * (1.0 - 0.65 * dust) * 0.38;
-  col += starLayer(uv, face, 60.0, 1.0, 0.07 + 0.08 * mw);
-  col += starLayer(uv, face, 150.0, 2.0, 0.035 + 0.12 * mw) * 0.55;
+  col += starLayer(uv, face, 55.0, 1.0, 0.035 + 0.05 * mw);
+  col += starLayer(uv, face, 140.0, 2.0, 0.012 + 0.07 * mw) * 0.5;
   return col;
 }
 
@@ -131,9 +133,10 @@ vec3 moon(vec3 d, inout vec3 col) {
   vec2 mp = vec2(dot(d, right), dot(d, up)) / MOON_R;
   float maria = dwFbm3(mp * 1.6 + vec2(3.1, 7.4));
   float limb = sqrt(max(0.0, 1.0 - dot(mp, mp)));
-  vec3 face = vec3(0.92, 0.95, 1.0) * mix(0.68, 1.0, smoothstep(0.38, 0.62, maria)) * (0.65 + 0.35 * limb);
-  // Seen in daylight the moon is a pale wash; at night it is the brightest thing in the sky.
-  col = mix(col, face * mix(0.45, 0.8, uMoonLight), disk * mix(0.25, 1.0, uMoonLight));
+  vec3 face = vec3(0.92, 0.95, 1.0) * mix(0.62, 1.0, smoothstep(0.36, 0.6, maria)) * (0.7 + 0.3 * limb);
+  // Seen in daylight the moon is a pale wash; at night it is the brightest thing in the sky, but
+  // kept below the bloom threshold's blow-out so its face still reads.
+  col = mix(col, face * mix(0.42, 0.62, uMoonLight), disk * mix(0.25, 1.0, uMoonLight));
   vec3 glow = vec3(0.55, 0.65, 1.0) * (pow(cm, 2500.0) * 0.25 + pow(cm, 60.0) * 0.1 + pow(cm, 6.0) * 0.05);
   return glow * uMoonLight;
 }
@@ -143,11 +146,13 @@ vec4 highClouds(vec3 d) {
   vec2 p = d.xz / (d.y + 0.12);
   vec2 w = uWindDir;
   vec2 q = vec2(dot(p, w), dot(p, vec2(-w.y, w.x)));
-  // Cirrus: streaks stretched along the wind, combed by a second warp.
-  vec2 cq = q * vec2(0.45, 1.7) + vec2(uCloudOffset.x, 0.0);
-  cq.y += 0.35 * dwVnoise(cq * 0.6 + 3.0);
-  float n = dwFbm5(cq * 1.3);
-  float wisp = smoothstep(0.6 - 0.2 * uCirrus, 0.92 - 0.12 * uCirrus, n) * (0.2 + 0.7 * uCirrus);
+  // Cirrus: patches of fine fibres combed along the wind, with gentle bends.
+  vec2 cq = q * vec2(0.8, 2.4) + vec2(uCloudOffset.x * 1.6, 0.0);
+  cq.y += 0.45 * dwVnoise(cq * vec2(0.35, 0.5) + 3.0);
+  float n = dwFbm5(cq * 0.7);
+  float fibre = dwFbm3(vec2(cq.x * 0.9, cq.y * 6.5) + 11.0);
+  float sheet = smoothstep(0.5 - 0.22 * uCirrus, 0.78 - 0.12 * uCirrus, n);
+  float wisp = sheet * mix(0.35, 1.0, smoothstep(0.3, 0.75, fibre)) * (0.22 + 0.68 * uCirrus);
   // Overcast deck: broad billows that close up as cover rises.
   vec2 dq = q * 0.55 + vec2(uCloudOffset.x * 0.5, 4.0);
   float m = dwFbm5(dq);

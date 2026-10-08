@@ -108,9 +108,12 @@ void main() {
   vec3 col = uCloudShade * sky * (1.0 + 0.5 * (1.0 - D));
   col += uCloudLit * sky * (1.0 - D) * 0.42;
   col += (uCloudLit - uCloudShade * 0.45) * band * height * D;
-  // Silver lining: thin edges glow when the sun is behind the cloud.
-  float back = pow(max(dot(rd, uSunDir), 0.0), 6.0);
-  col += uCloudLit * back * (1.0 - tex.b) * 1.4 * D;
+  // Looking toward the sun the whole bank glows with forward-scattered light (strongest through
+  // its thin parts), and its edges catch a silver lining.
+  float toward = max(dot(rd, uSunDir), 0.0);
+  float fwd = toward * toward * toward;
+  float back = fwd * fwd;
+  col += uCloudLit * D * (fwd * (0.25 + 0.5 * (1.0 - tex.b)) + back * (1.0 - tex.b) * 1.2);
   col += dwFlashGlow(vWorld) * 0.8;
   col = dwApplyFog(col, vWorld, cameraPosition);
   gl_FragColor = vec4(col, alpha);

@@ -318,10 +318,11 @@ export function puffAtlas(cell = 128, seed = 0x9f0ff): DataTexture {
         const len = Math.hypot(nx, ny, 1);
         nx /= len;
         ny /= len;
-        // Ragged, wispy rim: erode the edge with noise.
+        // Ragged, wispy rim: noise only ever eats into the puff, so no stray specks grow
+        // outside its lobes.
         const n = vnoise(x, y) * 0.65 + vnoise(x * 2.3 + 0.7, y * 2.3 - 0.4) * 0.35;
-        const edge = c - (n - 0.5) * 0.28;
-        const alpha = smoothstep(0.0, 0.26, edge) * (1 - smoothstep(0.88, 1.08, Math.hypot(x, y)));
+        const edge = c - Math.max(0, n - 0.35) * 0.3;
+        const alpha = smoothstep(0.02, 0.3, edge) * (1 - smoothstep(0.86, 1.05, Math.hypot(x, y)));
         const k = ((oy + j) * size + ox + i) * 4;
         data[k] = Math.round((nx * 0.5 + 0.5) * 255);
         data[k + 1] = Math.round((ny * 0.5 + 0.5) * 255);

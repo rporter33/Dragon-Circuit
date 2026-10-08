@@ -78,7 +78,7 @@ const NIGHT: PaletteSpec = {
   belt: 0, beltColor: '#000000', stars: 1,
   key: '#a9c0f2', keyI: 0.3, hemiSky: '#3c5590', hemiGround: '#40507e', hemiI: 1.0,
   fog: '#1a2c56', fogSun: '#2e4680', fogDensity: 0.00024, fogFalloff: 0.0021,
-  cloudLit: '#6a7cb2', cloudShade: '#121c42',
+  cloudLit: '#7686b6', cloudShade: '#141d40',
   exposure: 1.45, saturation: 0.94, contrast: 1.06, lift: '#03081c', gain: '#d6e2ff',
   bloom: 0.55, bloomThreshold: 0.72, rim: 0.75,
 };
