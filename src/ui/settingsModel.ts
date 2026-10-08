@@ -35,7 +35,7 @@ export interface ToggleRow {
 
 export interface ActionRow {
   kind: 'action';
-  id: 'resetProgress';
+  id: 'resetProgress' | 'replayTips';
   label: string;
   help: string;
 }
@@ -96,7 +96,11 @@ export const SETTINGS_TABS: SettingsTab[] = [
     rows: [
       { kind: 'toggle', key: 'holdToFlap', label: 'Hold to flap', help: 'On: hold to keep beating. Off: one beat per press.' },
       { kind: 'toggle', key: 'showGhost', label: 'Race ghost', help: 'Race against a ghost of your best run.' },
-      { kind: 'toggle', key: 'showControlHints', label: 'Control hints', help: 'Flying tips like “Flare to land”. Interaction prompts always show.' },
+      {
+        kind: 'toggle', key: 'showControlHints', label: 'Show tips',
+        help: 'First-flight lessons and flying hints like “Flare to land”. Interaction prompts always show.',
+      },
+      { kind: 'action', id: 'replayTips', label: 'Replay tips', help: 'Show the first-flight lessons again, from the start.' },
       { kind: 'choice', key: 'timeOfDay', label: 'Time of day', help: 'Let the sun cross the sky, or hold it at your favourite hour.', options: TIME_OF_DAY } as ChoiceRow,
       {
         kind: 'slider', key: 'dayLengthMinutes', label: 'Day length', help: 'Real minutes for one full day and night.',

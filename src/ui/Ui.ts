@@ -16,7 +16,7 @@ import { ControlsMenu } from './ControlsMenu';
 import { CollectionMenu } from './CollectionMenu';
 import { CreditsMenu } from './CreditsMenu';
 import { Dialog } from './Dialog';
-import { div } from './dom';
+import { LiveClass, div } from './dom';
 import { preloadFonts } from './fonts';
 import { glyphDevice, glyphHtml, keyGlyph, padGlyph, type GlyphDevice } from './glyphs';
 import { Hud } from './Hud';
@@ -28,6 +28,7 @@ import { RacesMenu } from './RacesMenu';
 import { Results, type RaceResult } from './Results';
 import { SettingsMenu } from './SettingsMenu';
 import { Stable } from './Stable';
+import { Tips } from './Tips';
 import { Title } from './Title';
 
 export interface UiDeps {
@@ -49,6 +50,8 @@ export class Ui implements UiSystem {
   private hudNote: HTMLElement;
   private hud: Hud;
   private raceHud: RaceHud;
+  private tips: Tips;
+  private gaugeTip: LiveClass;
   private stack: Panel[] = [];
   private title: Title | null = null;
   private ctx: UiCtx;
@@ -105,13 +108,15 @@ export class Ui implements UiSystem {
 
     this.root = div('dw-ui');
     this.root.dataset.device = 'keyboard';
+    this.gaugeTip = new LiveClass(this.root, 'is-gauge-tip');
     this.hud = new Hud({ events: this.events, fillGlyphs: (el) => this.fillGlyphs(el), reducedMotion: () => this.reduced });
     this.raceHud = new RaceHud({ events: this.events, reducedMotion: () => this.reduced, notify: (n) => this.hud.notify(n) });
+    this.tips = new Tips({ fillGlyphs: (el) => this.fillGlyphs(el) });
     this.veil = div('dw-veil');
     this.stackLayer = div('dw-layer dw-stack');
     this.hudNote = div('dw-hud-note');
     this.hudNote.innerHTML = '<span>HUD hidden</span><span class="dw-hint-g" data-glyph="toggleHud"></span><span>to show</span>';
-    this.root.append(this.hud.root, this.raceHud.root, this.hudNote, this.veil, this.stackLayer, this.hud.toastLayer);
+    this.root.append(this.hud.root, this.raceHud.root, this.tips.root, this.hudNote, this.veil, this.stackLayer, this.hud.toastLayer);
     deps.root.append(this.root);
     this.fillGlyphs(this.root);
     this.subscribe();
@@ -362,6 +367,7 @@ export class Ui implements UiSystem {
       this.root.dataset.device = dev;
       this.hud.refreshGlyphs();
       this.fillGlyphs(this.root);
+      this.tips.refreshGlyphs();
     }
     const reduced = view.save.data.settings.reducedMotion;
     if (reduced !== this.reduced) {
@@ -391,6 +397,8 @@ export class Ui implements UiSystem {
     this.hud.setVisible(hudVisible);
     this.hud.update(dt, view);
     this.raceHud.update(dt, view, hudVisible);
+    this.tips.update(dt, view, hudVisible);
+    this.gaugeTip.set(this.tips.gaugeOn);
     if (this.hudNoteLeft > 0) this.hudNoteLeft -= dt;
     this.hudNote.classList.toggle('is-on', this.hudNoteLeft > 0 && this.screen === 'play');
 

@@ -39,7 +39,7 @@ const ARC_R = 42;
 const ARC_C = 2 * Math.PI * ARC_R;
 const ARC_LEN = (ARC_C * 300) / 360;
 /** The Rested ring hugs the outside of the stamina arc. */
-const REST_R = 49;
+const REST_R = 50.5;
 const REST_C = 2 * Math.PI * REST_R;
 const REST_LEN = (REST_C * 300) / 360;
 /** Prompts that are flying tips (hidden when tips are off). Interactions always show. */
@@ -108,6 +108,8 @@ export class Hud {
 
   // Flight info.
   private flightInfo: HTMLElement;
+  /** The soft shade behind the readouts/gauge, while either is showing. */
+  private shade: LiveClass;
   private readouts: LiveClass;
   private readoutsIdle: LiveClass;
   private speed: LiveText;
@@ -248,7 +250,7 @@ export class Hud {
           <stop offset="0" stop-color="#c88f3a"/><stop offset=".55" stop-color="#ffd27e"/><stop offset="1" stop-color="#fff2cf"/>
         </linearGradient>
         <linearGradient id="dw-rest-grad" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stop-color="#ff9a52"/><stop offset="1" stop-color="#ffd59a"/>
+          <stop offset="0" stop-color="#ff7f5a"/><stop offset=".6" stop-color="#ffb07a"/><stop offset="1" stop-color="#ffe0bd"/>
         </linearGradient></defs>
         <circle class="dw-gauge-track" cx="50" cy="50" r="${ARC_R}" transform="rotate(120 50 50)" stroke-dasharray="${ARC_LEN.toFixed(2)} ${ARC_C.toFixed(2)}"/>
         <circle class="dw-gauge-fill" cx="50" cy="50" r="${ARC_R}" transform="rotate(120 50 50)" stroke-dasharray="${ARC_LEN.toFixed(2)} ${ARC_C.toFixed(2)}"/>
@@ -282,6 +284,7 @@ export class Hud {
     this.readouts = new LiveClass(readouts, 'is-gone');
     this.readoutsIdle = new LiveClass(readouts, 'is-idle');
     this.flightInfo = div('dw-flightinfo', div('dw-flightinfo-notes', liftEl, restNote), readouts, this.gauge);
+    this.shade = new LiveClass(this.flightInfo, 'is-shaded');
 
     // --- Prompt, stall, pointer hint ---------------------------------------------------------
     this.promptGlyph = h('span', { class: 'dw-hint-g' });
@@ -475,6 +478,7 @@ export class Hud {
     const low = st < 0.3 && !f.winded;
     this.gaugeLow.set(low);
     this.gaugeWinded.set(f.winded);
+    this.shade.set((flying && !idle) || !(this.fullTime > 1.2 && rested <= 0));
     // Tired reads as a suggestion, not a failure: glide, or land on any island to rest. (Winded,
     // the prompt says it; while the stamina tip is up, the tip says it.)
     this.restNote.set(flying && low && !rising);

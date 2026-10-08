@@ -127,6 +127,26 @@ export class SettingsMenu extends Panel {
         this.toggle(el, row);
         break;
       case 'action':
+        if (row.id === 'replayTips') {
+          el.append(div('dw-choice', h('span', { class: 'dw-choice-v', text: 'Replay' })));
+          this.scope.add({
+            el,
+            activate: () => {
+              const save = this.ctx.view.save;
+              if (!save.data.tutorialDone && !(save.data.tips?.length ?? 0)) {
+                this.ctx.sound('locked');
+                return;
+              }
+              this.ctx.sound('select');
+              save.data.tips = [];
+              save.data.tutorialDone = false;
+              save.save();
+              if (!this.ctx.settings().showControlHints) this.apply({ showControlHints: true });
+              this.ctx.events.emit('toast', { text: 'Tips will show again', sub: 'From your next steps in the Drift', icon: 'info' });
+            },
+          });
+          break;
+        }
         el.classList.add('dw-row--danger');
         el.append(div('dw-choice', h('span', { class: 'dw-choice-v', text: 'Erase…' })));
         this.scope.add({
