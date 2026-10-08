@@ -375,7 +375,8 @@ export class Hud {
         this.ctx.fillGlyphs(this.prompt);
       }
       this.promptText.set(pr.text);
-      this.promptWarn.set(pr.text.startsWith('Stall') || pr.text.startsWith('Winded'));
+      // Recovery advice (stalling, winded) gets the warm warning edge.
+      this.promptWarn.set(flying && (f.stall > 0.5 || f.winded) && (pr.action === 'tuck' || pr.action === 'flap'));
     }
 
     // --- Pointer lock hint -------------------------------------------------------------------

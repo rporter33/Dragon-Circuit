@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../game/settings';
-import { SETTINGS_TABS, cycleChoice, sliderFraction, sliderValueAt, stepSlider } from './settingsModel';
+import { QUALITY } from '../render/quality';
+import { SETTINGS_TABS, cycleChoice, qualityFacts, sliderFraction, sliderValueAt, stepSlider } from './settingsModel';
 
 describe('settings rows', () => {
   it('cover every setting exactly once', () => {
@@ -47,5 +48,16 @@ describe('cycleChoice', () => {
   it('wraps when asked (A on the row)', () => {
     expect(cycleChoice('high', opts, 1, true)).toBe('low');
     expect(cycleChoice('low', opts, -1, true)).toBe('high');
+  });
+});
+
+describe('qualityFacts', () => {
+  it('summarises each level', () => {
+    const low = Object.fromEntries(qualityFacts(QUALITY.low).map((f) => [f.label, f.value]));
+    expect(low['Shadows']).toBe('Off');
+    expect(low['Anti-aliasing']).toBe('Off');
+    const high = Object.fromEntries(qualityFacts(QUALITY.high).map((f) => [f.label, f.value]));
+    expect(high['View distance']).toBe('7.0 km');
+    expect(high['Grass']).toBe('Lush · 150 m');
   });
 });

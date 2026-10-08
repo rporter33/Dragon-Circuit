@@ -2,12 +2,14 @@
 // actions.applySettings, so you see (and hear) it while the menu is open.
 
 import type { Settings } from '../core/types';
+import { QUALITY } from '../render/quality';
 import { div, h } from './dom';
 import { Dialog } from './Dialog';
 import { Panel, hintBar, sheet, type UiCtx } from './panel';
 import {
   SETTINGS_TABS,
   cycleChoice,
+  qualityFacts,
   sliderFraction,
   sliderValueAt,
   stepSlider,
@@ -86,8 +88,24 @@ export class SettingsMenu extends Panel {
     const rows = div('dw-rows');
     for (const row of SETTINGS_TABS[i].rows) rows.append(this.buildRow(row));
     this.body.append(rows);
+    if (SETTINGS_TABS[i].id === 'graphics') this.body.append(this.qualityCard());
     this.body.scrollTop = 0;
     this.scope.focus(0, { scroll: false });
+  }
+
+  /** What the chosen quality level draws, so the choice means something. */
+  private qualityCard(): HTMLElement {
+    const title = h('div', { class: 'dw-group-title' });
+    const grid = div('dw-qfacts');
+    const card = div('dw-qcard', title, grid);
+    const refresh = () => {
+      const level = this.ctx.settings().quality;
+      title.textContent = `AT ${level.toUpperCase()} THE DRIFT DRAWS`;
+      grid.replaceChildren(...qualityFacts(QUALITY[level]).map((f) => div('dw-qfact', h('span', { text: f.label }), h('b', { text: f.value }))));
+    };
+    this.refreshers.push(refresh);
+    refresh();
+    return card;
   }
 
   private apply(patch: Partial<Settings>): void {

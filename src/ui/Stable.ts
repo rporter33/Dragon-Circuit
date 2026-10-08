@@ -240,13 +240,11 @@ export class Stable extends Panel {
       stats.append(div('dw-stat-row', h('span', { text: k.toUpperCase() }), div('dw-statbar', fill, mark)));
     }
     const nameEl = h('div', { class: 'dw-detail-title' });
-    const tagEl = h('div', { class: 'dw-breed-tag' });
-    const detail = div('dw-breed-detail', nameEl, tagEl, desc, stats, h('div', { class: 'dw-note', text: 'Breeds fly differently. Colors, markings and gear are only for looks.' }));
+    const detail = div('dw-breed-detail', nameEl, desc, stats, h('div', { class: 'dw-note', text: 'Breeds fly differently. Colors, markings and gear are only for looks.' }));
     const show = (id: BreedId) => {
       const b = BREEDS[id];
       const cur = BREEDS[this.wyvern.breed];
       nameEl.textContent = b.name;
-      tagEl.textContent = b.tagline;
       desc.textContent = b.description;
       for (const k of STAT_KEYS) {
         bars[k].fill.style.width = `${Math.round(b.ratings[k] * 100)}%`;
@@ -268,7 +266,10 @@ export class Stable extends Panel {
         el: card,
         onFocus: () => {
           show(id);
-          this.setDetail(b.name, b.tagline);
+          this.setDetail(
+            b.name,
+            id === this.wyvern.breed ? 'The breed you fly now. The white marks on the bars are its numbers.' : `Choose to fly a ${b.name}. White marks show your current breed for comparison.`,
+          );
         },
         activate: () => {
           if (this.wyvern.breed === id) {

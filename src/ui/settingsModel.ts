@@ -2,6 +2,7 @@
 // left/right press changes a value. Pure, unit-tested; SettingsMenu renders it.
 
 import type { QualityLevel, Settings } from '../core/types';
+import type { QualityProfile } from '../render/quality';
 import { percent } from './format';
 
 type KeysOfType<T, V> = { [K in keyof T]: T[K] extends V ? K : never }[keyof T];
@@ -153,4 +154,19 @@ export function cycleChoice<T>(value: T, options: readonly { value: T }[], dir: 
   const raw = i + Math.sign(dir);
   const j = wrap ? ((raw % n) + n) % n : Math.min(n - 1, Math.max(0, raw));
   return options[j].value;
+}
+
+/** What a quality level draws, as short label/value pairs for the Graphics tab. */
+export function qualityFacts(q: QualityProfile): { label: string; value: string }[] {
+  const lush = (d: number) => (d < 0.4 ? 'Sparse' : d < 0.8 ? 'Medium' : d < 1.2 ? 'Lush' : 'Very lush');
+  return [
+    { label: 'View distance', value: `${(q.drawDistance / 1000).toFixed(1)} km` },
+    { label: 'Shadows', value: q.shadows ? `${q.shadowMapSize} px` : 'Off' },
+    { label: 'Grass', value: q.grassDensity <= 0 ? 'Off' : `${lush(q.grassDensity)} · ${q.grassRadius} m` },
+    { label: 'Trees & flowers', value: `${Math.round(q.propDensity * 100)}%` },
+    { label: 'Anti-aliasing', value: q.msaa > 0 ? `${q.msaa}× MSAA` : 'Off' },
+    { label: 'Bloom', value: q.bloom ? 'On' : 'Off' },
+    { label: 'Clouds', value: ['Simple', 'Soft', 'Full'][Math.max(0, Math.min(2, q.clouds))] },
+    { label: 'Particles', value: `${Math.round(q.particles * 100)}%` },
+  ];
 }
