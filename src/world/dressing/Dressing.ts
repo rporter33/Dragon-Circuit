@@ -16,6 +16,8 @@ import { GrassField } from './grass/GrassField';
 import { Forest } from './trees/Forest';
 import { scatterIsland, type PropInstance } from './trees/placement';
 import { Structures } from './structures/Structures';
+import { Waterfalls } from './water/Waterfalls';
+import { planWaterfalls } from './water/waterfallPlan';
 
 export interface DressingDeps {
   scene: Scene;
@@ -51,6 +53,8 @@ export class Dressing implements DressingSystem {
   readonly grass: GrassField;
   forest!: Forest;
   readonly structures: Structures;
+  readonly water: Waterfalls;
+  private bankProps: PropInstance[];
   private terrain: Terrain;
   private quality: QualityProfile;
 
@@ -61,6 +65,11 @@ export class Dressing implements DressingSystem {
 
     this.structures = new Structures(this.terrain, { exclusions: this.exclusions, colliders: this.colliders, decks: this.decks });
     this.group.add(this.structures.group);
+    // Streams avoid built-up ground; their banks then keep trees and grass out of the water.
+    const plans = planWaterfalls(this.terrain, this.exclusions);
+    this.bankProps = Waterfalls.bankProps(this.terrain, plans, this.exclusions);
+    this.water = new Waterfalls(this.terrain, plans, this.quality);
+    this.group.add(this.water.group);
     this.buildForest();
     this.grass = new GrassField(this.terrain, this.exclusions, this.quality);
     this.group.add(this.grass.group);
@@ -73,7 +82,7 @@ export class Dressing implements DressingSystem {
       this.forest.group.removeFromParent();
       this.forest.dispose();
     }
-    const all: PropInstance[] = [];
+    const all: PropInstance[] = [...this.bankProps];
     for (const shape of this.terrain.islands) all.push(...scatterIsland(shape, this.exclusions, { density: this.quality.propDensity }));
     this.forest = new Forest(all, this.quality);
     this.group.add(this.forest.group);
@@ -106,9 +115,10 @@ export class Dressing implements DressingSystem {
     this.grass.setQuality(q);
     if (rebuild) this.buildForest();
     else this.forest.setQuality(q);
+    this.water.setQuality(q);
   }
 
   stats(): DressingStats {
-    return { grass: this.grass.stats, forest: this.forest.stats, structures: this.structures.stats };
+    return { grass: this.grass.stats, forest: this.forest.stats, structures: this.structures.stats, water: this.water.stats };
   }
 }
