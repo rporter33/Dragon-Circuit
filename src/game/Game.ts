@@ -90,7 +90,7 @@ export class Game implements GameActions {
       events: this.events,
       breed: this.save.data.wyvern.breed,
     });
-    this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings);
+    this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings, this.events);
     this.wyvern = new Wyvern(this.save.data.wyvern);
     this.rider = new Rider(this.save.data.rider);
     this.scene.add(this.wyvern.group, this.rider.group);
@@ -181,7 +181,7 @@ export class Game implements GameActions {
     this.world.update(dt, this.camera, focus);
     this.wyvern.update(dt, this.player.wyvernPose);
     this.rider.update(dt, this.player.riderPose, this.player.riderPose.mounted ? this.wyvern.saddle : null);
-    this.cameraRig.update(dt, this.screen === 'play' ? input : this.idleInput, this.player);
+    this.cameraRig.update(dt, this.screen === 'play' || this.screen === 'stable' ? input : this.idleInput, this.player);
     this.races.update(dt, this.camera, this.player);
     this.collectibles.update(dt, this.camera, this.player);
     this.fx.update(dt, this.camera, this.player, this.wyvern);
@@ -343,8 +343,6 @@ export class Game implements GameActions {
   }
 
   private wireEvents(): void {
-    this.events.on('terrainHit', ({ impulse }) => {
-      this.cameraRig.shake(Math.min(1, impulse / 25));
-    });
+    // Camera shake and controller rumble subscribe to the bus themselves (CameraRig, Haptics).
   }
 }
