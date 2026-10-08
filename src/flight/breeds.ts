@@ -4,6 +4,17 @@
 //   - aspect ratio (span² / area) sets induced drag, so glide ratio,
 //   - mass sets momentum: heavy breeds dive harder and carry speed through turns, but are slow
 //     to change direction and need strong flaps to climb.
+//
+// Measured with src/flight/telemetry.ts (still air, 120 Hz) — FlightModel.test.ts holds them:
+//
+//              cruise  stall  best glide  tucked dive  roll rate  roll in/out  climb  stamina
+//   harrier    24 m/s  14.3   8.9 : 1     81 m/s       1.76 r/s   0.34/0.28 s  5.0    9 s
+//   skimmer    23      13.5   7.3         74           2.53       0.33/0.30    4.2    6.5
+//   galewing   22      13.3   12.3        75           1.01       0.62/0.50    3.3    11
+//   ironback   27      17.0   8.0         89           1.16       0.48/0.36    3.2    8
+//
+// The 0..1 display ratings below are read off that table: speed (dive + top flapping speed),
+// agility (roll rate), glide (best glide ratio), power (sustained climb), stamina (seconds).
 
 import type { BreedId, BreedStats } from '../core/types';
 import { DEG } from '../core/math';
@@ -39,7 +50,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     maxRollRate: 1.8,
     groundSpeed: 9,
     standHeight: 2.6,
-    ratings: { speed: 0.6, agility: 0.6, glide: 0.6, power: 0.6, stamina: 0.6 },
+    ratings: { speed: 0.7, agility: 0.68, glide: 0.62, power: 0.85, stamina: 0.75 },
   },
   skimmer: {
     id: 'skimmer',
@@ -66,7 +77,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     maxRollRate: 2.6,
     groundSpeed: 11,
     standHeight: 2.1,
-    ratings: { speed: 0.55, agility: 0.95, glide: 0.4, power: 0.5, stamina: 0.4 },
+    ratings: { speed: 0.45, agility: 0.95, glide: 0.45, power: 0.7, stamina: 0.55 },
   },
   galewing: {
     id: 'galewing',
@@ -93,7 +104,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     maxRollRate: 1.05,
     groundSpeed: 7.5,
     standHeight: 2.5,
-    ratings: { speed: 0.5, agility: 0.3, glide: 1.0, power: 0.45, stamina: 0.85 },
+    ratings: { speed: 0.45, agility: 0.35, glide: 1.0, power: 0.5, stamina: 1.0 },
   },
   ironback: {
     id: 'ironback',
@@ -104,7 +115,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     wingArea: 42,
     wingspan: 13.5,
     liftSlope: 4.4,
-    clMax: 1.4,
+    clMax: 1.46,
     stallAngle: 16 * DEG,
     cd0: 0.034,
     inducedK: inducedK(13.5, 42, 0.78),
@@ -120,7 +131,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     maxRollRate: 1.2,
     groundSpeed: 8,
     standHeight: 2.9,
-    ratings: { speed: 0.95, agility: 0.35, glide: 0.5, power: 1.0, stamina: 0.55 },
+    ratings: { speed: 0.95, agility: 0.42, glide: 0.52, power: 0.48, stamina: 0.68 },
   },
 };
 

@@ -28,8 +28,10 @@ export function computePrompt(player: Player, layout: WorldLayout): Prompt | nul
       const f = player.flight;
       if (f.stall > 0.5) return { action: 'tuck', text: 'Stalling — lower the nose to recover' };
       if (f.winded) return { action: 'flap', text: 'Winded — glide to catch your breath' };
+      // Low, slow and coming down (not just after a takeoff, not while beating to climb away).
       const h = player.heightAboveGround;
-      if (h !== null && h < FLARE_HINT_HEIGHT && f.airspeed < FLARE_HINT_SPEED && f.flare < 0.5 && player.modeTime > 1.5) {
+      const descending = f.velocity.y < -1 && f.flapStrength < 0.2 && player.modeTime > 3;
+      if (h !== null && h < FLARE_HINT_HEIGHT && f.airspeed < FLARE_HINT_SPEED && f.flare < 0.5 && descending) {
         return { action: 'flare', text: 'Flare to land' };
       }
       return null;

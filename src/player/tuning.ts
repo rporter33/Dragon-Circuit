@@ -43,8 +43,10 @@ export const PLAYER_TUNING = {
   /** Launch strokes last until flying speed (≈1.25 × stall), at most this long (s). */
   launchGrace: 4,
   /** Walking off a cliff while mounted. */
-  walkOffGrace: 1.7,
+  walkOffGrace: 2.5,
   walkOffHop: 2.2,
+  /** Seconds the wyvern drops off a cliff with its wings half folded before spreading them. */
+  walkOffTuckTime: 0.6,
   /** Seconds after leaving the ground the gait still reads 'takeoff'. */
   takeoffGaitTime: 0.6,
 

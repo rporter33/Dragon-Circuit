@@ -408,8 +408,12 @@ describe('prompts', () => {
     r.run(2);
     expect(computePrompt(r.player, LAYOUT)?.action).toBe('dismount');
     const g = groundAt(0, -60);
-    r.player.teleport(new Vector3(0, g.y + 12, -60), 0, 'flying', 20);
-    r.run(2);
+    r.player.teleport(new Vector3(0, g.y + 18, -60), 0, 'flying', 20);
+    r.run(1);
+    // Not straight after taking off / teleporting...
+    expect(computePrompt(r.player, LAYOUT)).toBeNull();
+    r.run(2.5);
+    // ...but once it's been gliding down toward the ground for a while.
     expect(computePrompt(r.player, LAYOUT)?.action).toBe('flare');
     r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 13);
     // Hauled back below stall speed: the stall breaks about a second in.

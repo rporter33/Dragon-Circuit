@@ -76,11 +76,21 @@ export const FLIGHT_TUNING = {
    */
   phugoidDamp: 1.3,
   /**
-   * Stick → α: most of the travel (up to `stallStick`) reaches just short of the stall angle; the
-   * last part pushes past it by `alphaOverStall` — full back stick at low speed stalls.
+   * Stick → α: most of the travel (up to `stallStick`) reaches just short of the critical angle;
+   * the last part reaches `alphaOverStall` past it — a light buffet that says "this is the
+   * limit". Full stick alone never breaks the stall (keyboard pitch is all-or-nothing); running
+   * out of airspeed does (see `slowStall`).
    */
   stallStick: 0.85,
-  alphaOverStall: 4.5 * DEG,
+  alphaOverStall: 0.6 * DEG,
+  /**
+   * Below this × stall speed the flow starts to let go (pre-stall buffet), fully by another
+   * `slowStallBand` × stall speed lower. Beating the wings keeps it attached down to
+   * `slowStallFlapping` × stall speed.
+   */
+  slowStall: 1.1,
+  slowStallFlapping: 0.55,
+  slowStallBand: 0.15,
   /** Full forward stick. */
   alphaMin: -10 * DEG,
   /** α the flare pulls toward. */
@@ -97,12 +107,10 @@ export const FLIGHT_TUNING = {
   /** Rate tracking gain = angularDamping × this (1/s). */
   trackGainScale: 2.4,
   /**
-   * Slow flight (below ~stall speed) while launching or beating: the airflow can't weathervane the
-   * body, so the wyvern holds an attitude instead — nose up while beating its wings, nose down
-   * while gliding off a cliff — plus stick.
+   * Slow flight while beating the wings (a takeoff, a climb-out): the airflow is too weak to
+   * weathervane the body, so the wyvern holds a nose-up climbing attitude instead, plus stick.
    */
   slowClimbAttitude: 9 * DEG,
-  slowDiveAttitude: -38 * DEG,
   slowStickAttitude: 25 * DEG,
   attitudeGain: 3,
   /** Beating below this × stall speed, the wyvern holds its climb-out attitude. */
@@ -113,9 +121,13 @@ export const FLIGHT_TUNING = {
   rudderRateScale: 0.42,
   /** How hard the yaw loop cancels sideslip (1/s). */
   betaGain: 3.2,
-  /** Auto-level: roll rate per radian of bank when the stick is centered (subtle). */
-  autoLevelGain: 0.32,
-  autoLevelMaxRate: 0.28,
+  /**
+   * Auto-level: roll rate per radian of bank once the stick has rested centered for a moment
+   * (subtle: a held bank decays over several seconds, it never fights the player).
+   */
+  autoLevelGain: 0.2,
+  autoLevelMaxRate: 0.12,
+  autoLevelDelay: 0.6,
   /** Stall dynamics. */
   stallBand: 6 * DEG,
   /** Hysteresis: once the flow has let go it doesn't reattach until α is this far below critical. */
@@ -305,6 +317,8 @@ export class FlightModel {
   private graceUntilFlying = false;
   private graceAge = 0;
   private vDotSmooth = 0;
+  /** Seconds the roll stick has rested near center (for the auto-level). */
+  private rollRest = 0;
   /** The current beat began with a wind-up (wings rising) and still owes its downstroke. */
   private windup = false;
   private hitCooldown = 0;
@@ -481,9 +495,9 @@ export class FlightModel {
     let drive = clamp01((Math.abs(aw) - stallAngle) / T.stallBand);
     // Too slow to fly: the wing can't hold the body up and the flow lets go. Beating the wings
     // keeps the flow attached a little longer, but not at a near-standstill.
-    const slowEdge = s.flapStrength < 0.3 ? 0.8 : 0.5;
+    const slowEdge = s.flapStrength < 0.3 ? T.slowStall : T.slowStallFlapping;
     if (V < d.vStall * slowEdge) {
-      drive = Math.max(drive, clamp01((d.vStall * slowEdge - V) / (d.vStall * 0.3)) * 0.85);
+      drive = Math.max(drive, clamp01((d.vStall * slowEdge - V) / (d.vStall * T.slowStallBand)));
     }
     if (this.grace > 0) drive *= 1 - smoothstep(0, 0.6, this.grace);
     this.stallRaw = damp(this.stallRaw, drive, drive > this.stallRaw ? T.stallRise : T.stallFall, dt);
@@ -690,16 +704,15 @@ export class FlightModel {
     // Positive body x is nose-down: to raise α the nose must come up (negative x).
     const pathX = Math.abs(pathRate.x);
     let wx = clamp(pathRate.x - T.alphaGain * (alphaCmd - alpha), -d.maxPitchRate - pathX, d.maxPitchRate + pathX);
-    // While beating, the attitude hold lasts until there's speed to spare (a climb-out); gliding,
-    // only until the wing can fly.
+    // The climb-out attitude hold lasts until there's speed to spare.
     const beating = this.beatActive || s.flapStrength > 0.3;
-    const slowTop = beating ? T.climbOutSpeed * d.vStall : 0.95 * d.vStall;
-    // Only while launching (grace) or beating: otherwise a slow wyvern obeys α, and a pull stalls.
-    const holding = beating ? 1 : smoothstep(0, 0.3, this.grace);
-    const slow = (1 - smoothstep(0.45 * d.vStall, slowTop, V)) * holding;
+    const slowTop = T.climbOutSpeed * d.vStall;
+    // Only while beating: a slow glider (a cliff jump, a stall) weathervanes down the airflow
+    // to build speed, and a pull at low speed stalls.
+    const slow = beating ? 1 - smoothstep(0.45 * d.vStall, slowTop, V) : 0;
     if (slow > 0) {
       const theta = Math.asin(clamp(fwd.y, -1, 1));
-      const thetaTarget = (beating ? T.slowClimbAttitude : T.slowDiveAttitude) + pitchIn * T.slowStickAttitude;
+      const thetaTarget = T.slowClimbAttitude + pitchIn * T.slowStickAttitude;
       const wxAttitude = clamp(-T.attitudeGain * (thetaTarget - theta), -d.maxPitchRate, d.maxPitchRate);
       wx = lerp(wx, wxAttitude, slow);
     }
@@ -710,7 +723,8 @@ export class FlightModel {
     // Roll: stick sets a roll rate about the flight path (a stability-axis roll, so a roll at
     // high α doesn't fling the nose sideways). Centered stick: a subtle drift back to level.
     let wz = rollIn * b.maxRollRate;
-    const centered = 1 - smoothstep(0.05, 0.25, Math.abs(rollIn));
+    this.rollRest = Math.abs(rollIn) < 0.1 ? this.rollRest + dt : 0;
+    const centered = smoothstep(T.autoLevelDelay, T.autoLevelDelay + 0.8, this.rollRest);
     if (centered > 0) {
       const bank = Math.atan2(left.y, up.y);
       wz += centered * clamp(-T.autoLevelGain * bank, -T.autoLevelMaxRate, T.autoLevelMaxRate);

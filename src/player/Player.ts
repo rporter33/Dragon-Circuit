@@ -125,6 +125,8 @@ export class Player implements PlayerSystem {
   private beatsAtQueue = 0;
   private queueAge = 0;
   private flightIn: FlightInput = { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flare: 0 };
+  /** Seconds of automatic half-tuck left after walking off a cliff. */
+  private autoTuck = 0;
 
   // Transitions.
   private takeoffTimer = -1;
@@ -373,6 +375,12 @@ export class Player implements PlayerSystem {
     fi.yaw = f.yaw;
     fi.tuck = f.tuck;
     fi.flare = f.flare;
+    if (this.autoTuck > 0) {
+      this.autoTuck -= dt;
+      // Any flap or flare from the player ends the swoop early.
+      if (f.flap > 0.1 || f.flare > 0.1) this.autoTuck = 0;
+      else fi.tuck = Math.max(fi.tuck, 0.55);
+    }
     const hold = this.deps.settings?.().holdToFlap ?? true;
     if (hold) {
       fi.flap = f.flap;
@@ -409,6 +417,10 @@ export class Player implements PlayerSystem {
   private legContact(dt: number): void {
     const s = this.model.state;
     const sh = this.breed.standHeight;
+    // The flight model already found the ground under the start of this step; when that's well
+    // below the legs there's no need to look again.
+    const g0 = this.model.ground;
+    if (g0 && s.position.y - g0.y > sh + 4) return;
     const g = this.deps.terrain.groundAt(s.position.x, s.position.z, s.position.y + 0.5);
     if (!g) return;
     this.groundY = g.y;
@@ -542,7 +554,9 @@ export class Player implements PlayerSystem {
     const q = standingOrientation(w.yaw, UP, 0, -8 * DEG, _q);
     this.model.reset(w.position, q, vel);
     this.model.state.wingSpread = 0.45;
-    this.model.setGrace(P.walkOffGrace);
+    this.model.setGrace(P.walkOffGrace, true);
+    // Drop off the edge with the wings half folded, then spread them into the pull-out.
+    this.autoTuck = P.walkOffTuckTime;
     this.airTime = 0;
     this.noLand = 0.6;
     this.launchGait = 'jump';
@@ -802,6 +816,7 @@ export class Player implements PlayerSystem {
     this.takeoffTimer = -1;
     this.respawnPlaced = false;
     this.flapQueued = 0;
+    this.autoTuck = 0;
     this.landBlend = 1;
     this.noLand = 0;
     this.waveTimer = 0;
