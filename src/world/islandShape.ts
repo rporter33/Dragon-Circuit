@@ -368,6 +368,9 @@ export class ArchShape {
   readonly normal: Vector3;
   readonly full: boolean;
   readonly boundRadius: number;
+  /** Cross-section thickness along the plane normal, relative to the in-plane thickness. */
+  readonly squash = 0.8;
+  private lumpPhase: number[];
 
   constructor(def: ArchDef) {
     this.def = def;
@@ -382,7 +385,28 @@ export class ArchShape {
     this.up = u;
     this.normal = n;
     this.full = def.arcEnd - def.arcStart >= Math.PI * 2 - 1e-6;
-    this.boundRadius = def.radius + def.tube + 2;
+    this.boundRadius = def.radius + def.tube * 1.6 + 2;
+    this.lumpPhase = [0, 1, 2, 3, 4, 5].map((k) => cellHash(k, 29, def.seed % 4093) * Math.PI * 2);
+  }
+
+  /**
+   * Stone thickness at arc angle a and around-the-tube angle phi (0 = away from the arch's
+   * center, pi = facing into the opening): a standing arch flares at its feet and slims at the
+   * crown; every arch swells and pinches in broad lumps, mostly on its outer side so the opening
+   * you fly through keeps its size.
+   */
+  radiusAt(a: number, phi: number): number {
+    const d = this.def;
+    const outer = 0.35 + 0.65 * smoothstep(-0.4, 0.7, Math.cos(phi));
+    let r = d.tube;
+    if (!this.full) {
+      const u = Math.min(1, Math.max(0, (a - d.arcStart) / (d.arcEnd - d.arcStart)));
+      const foot = Math.pow(1 - Math.sin(Math.PI * u), 2);
+      r *= 0.84 + 0.5 * foot * outer;
+    }
+    const p = this.lumpPhase;
+    const lump = 0.6 * Math.sin(2 * a + p[0]) * Math.sin(phi + p[1]) + 0.4 * Math.sin(5 * a + p[2]) * Math.sin(2 * phi + p[3]) + 0.3 * Math.sin(9 * a + p[4] + phi);
+    return r * (1 + 0.11 * lump * outer);
   }
 
   /** World position on the arch's center curve at arc angle a. */
@@ -393,7 +417,10 @@ export class ArchShape {
       .addScaledVector(this.up, Math.sin(a) * this.def.radius);
   }
 
-  /** Signed distance to the tube surface (negative inside the stone). */
+  /**
+   * Signed distance to the stone (negative inside): an elliptical cross-section (squashed along
+   * the plane normal) whose radius follows radiusAt.
+   */
   distance(p: Vector3): number {
     const qx = p.x - this.center.x;
     const qy = p.y - this.center.y;
@@ -402,7 +429,8 @@ export class ArchShape {
     const ly = qx * this.up.x + qy * this.up.y + qz * this.up.z;
     const lz = qx * this.normal.x + qy * this.normal.y + qz * this.normal.z;
     let a = Math.atan2(ly, lx);
-    const { arcStart, arcEnd, radius, tube } = this.def;
+    const { arcStart, arcEnd, radius } = this.def;
+    const k = this.squash;
     if (!this.full) {
       // Bring a into [arcStart, arcStart + 2π).
       while (a < arcStart) a += Math.PI * 2;
@@ -414,12 +442,26 @@ export class ArchShape {
         a = toEnd < toStart ? arcEnd : arcStart;
         const ex = Math.cos(a) * radius;
         const ey = Math.sin(a) * radius;
-        return Math.hypot(lx - ex, ly - ey, lz) - tube;
+        const dr = Math.hypot(lx, ly) - radius;
+        return ellipseDistance(Math.hypot(lx - ex, ly - ey), lz, this.radiusAt(a, Math.atan2(lz / k, dr)), k);
       }
     }
-    const rho = Math.hypot(lx, ly);
-    return Math.hypot(rho - radius, lz) - tube;
+    const dr = Math.hypot(lx, ly) - radius;
+    return ellipseDistance(dr, lz, this.radiusAt(a, Math.atan2(lz / k, dr)), k);
   }
+}
+
+/**
+ * Approximate signed distance from (u, v) to an ellipse with semi-axes r (along u) and k·r (along
+ * v): exact on both axes and close in between (the usual "k0·(k0−1)/k1" ellipsoid estimate).
+ */
+function ellipseDistance(u: number, v: number, r: number, k: number): number {
+  const A = r;
+  const B = r * k;
+  const k0 = Math.hypot(u / A, v / B);
+  const k1 = Math.hypot(u / (A * A), v / (B * B));
+  if (k1 < 1e-9) return -B;
+  return (k0 * (k0 - 1)) / k1;
 }
 
 /**
