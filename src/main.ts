@@ -41,12 +41,15 @@ function showFatal(err: unknown): void {
   box.style.cssText =
     'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);z-index:20;max-width:min(560px,90vw);padding:14px 18px;border-radius:10px;background:#1b2a3fe6;color:#f3e3bf;font:15px system-ui;text-align:center;pointer-events:auto;box-shadow:0 6px 24px #0006';
   const msg = document.createElement('div');
-  msg.textContent = `Something went wrong (${String((err as Error)?.message ?? err).slice(0, 120)}).`;
+  msg.textContent = 'Something went wrong. Reloading should fix it.';
+  const detail = document.createElement('div');
+  detail.style.cssText = 'margin-top:4px;font-size:12px;opacity:0.6';
+  detail.textContent = String((err as Error)?.message ?? err).slice(0, 120);
   const btn = document.createElement('button');
   btn.textContent = 'Reload';
   btn.style.cssText = 'margin-top:10px;padding:6px 18px;border-radius:6px;border:1px solid #f3e3bf88;background:#f3e3bf22;color:inherit;font:inherit;cursor:pointer';
   btn.addEventListener('click', () => location.reload());
-  box.append(msg, btn);
+  box.append(msg, detail, btn);
   document.body.appendChild(box);
 }
 
