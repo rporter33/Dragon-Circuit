@@ -5,13 +5,14 @@
 //   - mass sets momentum: heavy breeds dive harder and carry speed through turns, but are slow
 //     to change direction and need strong flaps to climb.
 //
-// Measured with src/flight/telemetry.ts (still air, 120 Hz) — FlightModel.test.ts holds them:
+// Measured with src/flight/telemetry.ts (still air, 120 Hz) — FlightModel.test.ts and
+// breeds.test.ts hold them. Stall = 1 g stall speed / where a slow hauled-back stall breaks.
 //
-//              cruise  stall  best glide  tucked dive  roll rate  roll in/out  climb  stamina
-//   harrier    24 m/s  14.3   8.9 : 1     81 m/s       1.76 r/s   0.34/0.28 s  5.0    9 s
-//   skimmer    23      13.5   7.3         74           2.53       0.33/0.30    4.2    6.5
-//   galewing   22      13.3   12.3        75           1.01       0.62/0.50    3.3    11
-//   ironback   27      17.0   8.0         89           1.16       0.48/0.36    3.2    8
+//              cruise  stall      best glide  tucked dive  roll rate  roll in/out  climb    stamina
+//   harrier    24 m/s  14.5/14.8  8.9 : 1     81 m/s       1.76 r/s   0.34/0.34 s  5.0 m/s  9 s
+//   skimmer    23      13.6/13.9  7.3         74           2.53       0.33/0.33    4.2      6.5
+//   galewing   22      13.3/13.1  12.3        75           1.01       0.62/0.57    3.3      11
+//   ironback   27      16.4/16.6  8.0         89           1.16       0.48/0.48    3.2      8
 //
 // The 0..1 display ratings below are read off that table: speed (dive + top flapping speed),
 // agility (roll rate), glide (best glide ratio), power (sustained climb), stamina (seconds).
