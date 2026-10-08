@@ -124,8 +124,10 @@ void main() {
   float tPrev = t0;
   float dPrev = (ro.y + rd.y * t0) - seaHeightCoarse((ro + rd * t0).xz, lodM, lodC);
   float tHit = t1;
+  // Starting under the surface (the camera is inside the billows): the cloud is right here. Keep
+  // the hit just past the near plane so the written depth stays finite.
   bool found = dPrev < 0.0;
-  if (found) tHit = t0;
+  if (found) tHit = max(t0, 0.75);
   for (int i = 1; i <= SEA_STEPS; i++) {
     if (found) break;
     float t = t0 + span * pow(float(i) / float(SEA_STEPS), kDist);
