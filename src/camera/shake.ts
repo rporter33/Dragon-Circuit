@@ -9,7 +9,7 @@ import { noise2, type Noise2 } from '../core/noise';
 export class Trauma {
   value = 0;
   /** Trauma lost per second; 1.1 means a full-strength hit settles in ~0.9 s. */
-  constructor(readonly decay = 1.1) {}
+  constructor(public decay = 1.1) {}
 
   add(amount: number): void {
     if (amount > 0) this.value = clamp01(this.value + amount);
