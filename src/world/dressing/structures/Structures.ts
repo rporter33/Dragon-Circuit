@@ -1,0 +1,92 @@
+// All built things: the Roost, the Old Observatory, the Lantern Spire pavilion and the scattered
+// ruins, shrines and cairns. Each site is merged into a handful of meshes by material (solid,
+// glowing, cloth, chimes, light pools) so a whole site costs ~5 draw calls.
+
+import { Group, Mesh, type BufferGeometry, type Material } from 'three';
+import type { Terrain } from '../../terrain';
+import { dressMaterial, swayDepthMaterial } from '../materials';
+import { buildRoost, type SiteOutputs } from './Roost';
+import { roostPlan } from './roostPlan';
+import { siteBuilders, type SiteBuilders } from './kit';
+import { lightPoolMesh } from './lightPools';
+import { beaconSprite, buildObservatory, buildPavilion, observatoryKeepOut } from './Landmarks';
+import { buildRuins, planRuins, type RuinSite } from './Ruins';
+
+export interface StructureStats {
+  sites: number;
+  meshes: number;
+  triangles: number;
+}
+
+export class Structures {
+  readonly group = new Group();
+  readonly stats: StructureStats = { sites: 0, meshes: 0, triangles: 0 };
+  readonly ruins: RuinSite[];
+
+  /**
+   * The Roost is built immediately (it's where the game starts). Distant sites register their
+   * keep-outs now but build their geometry through `defer`, a little per frame.
+   */
+  constructor(terrain: Terrain, out: SiteOutputs, defer: (task: () => void) => void = (t) => t()) {
+    this.group.name = 'dressing:structures';
+    const plan = roostPlan(terrain.layout, terrain);
+    if (plan) {
+      const s = siteBuilders();
+      buildRoost(s, plan, terrain, out);
+      this.addSite('roost', s);
+    }
+    const obs = terrain.islands.find((sh) => sh.def.landmark === 'observatory');
+    if (obs) {
+      observatoryKeepOut(obs, out);
+      defer(() => {
+        const s = siteBuilders();
+        buildObservatory(s, obs, terrain, out);
+        this.addSite('observatory', s);
+      });
+    }
+    const spire = terrain.layout.spires.find((sp) => sp.lantern);
+    if (spire) {
+      defer(() => {
+        const s = siteBuilders();
+        const beacon = buildPavilion(s, spire, out);
+        this.addSite('pavilion', s);
+        this.group.add(beaconSprite(beacon));
+        this.stats.meshes++;
+      });
+    }
+    // Ruins last, so they keep clear of everything above.
+    this.ruins = planRuins(terrain, out);
+    defer(() => {
+      const rs = siteBuilders();
+      buildRuins(rs, this.ruins, out);
+      this.addSite('ruins', rs);
+    });
+  }
+
+  private addSite(name: string, s: SiteBuilders): void {
+    this.stats.sites++;
+    const add = (b: { isEmpty(): boolean; build(force?: boolean): BufferGeometry }, mat: Material, opts: { shadow: boolean; depth?: Material; suffix: string }) => {
+      if (b.isEmpty()) return;
+      const geo = b.build(true);
+      const m = new Mesh(geo, mat);
+      m.name = `${name}-${opts.suffix}`;
+      m.castShadow = opts.shadow;
+      m.receiveShadow = true;
+      if (opts.depth) m.customDepthMaterial = opts.depth;
+      m.matrixAutoUpdate = false;
+      this.group.add(m);
+      this.stats.meshes++;
+      this.stats.triangles += (geo.getIndex()?.count ?? 0) / 3;
+    };
+    add(s.solid, dressMaterial({}), { shadow: true, suffix: 'solid' });
+    add(s.glow, dressMaterial({ glow: true, glowDay: 0.3, glowNight: 3.2, rim: 0 }), { shadow: false, suffix: 'glow' });
+    add(s.windows, dressMaterial({ glow: true, glowDay: 0, glowNight: 2.6, rim: 0.3, color: '#3b3a44' }), { shadow: false, suffix: 'windows' });
+    add(s.cloth, dressMaterial({ sway: 'cloth', doubleSide: true, keepNormals: true }), { shadow: true, depth: swayDepthMaterial('cloth'), suffix: 'cloth' });
+    add(s.chime, dressMaterial({ sway: 'chime' }), { shadow: false, suffix: 'chime' });
+    const pools = lightPoolMesh(s.pools);
+    if (pools) {
+      this.group.add(pools);
+      this.stats.meshes++;
+    }
+  }
+}

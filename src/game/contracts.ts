@@ -7,6 +7,7 @@ import type { GameEventBus } from '../core/events';
 import type {
   BreedId,
   BreedStats,
+  CylinderCollider,
   FlightEnvironment,
   FlightState,
   InputDevice,
@@ -89,6 +90,23 @@ export interface WorldSystem {
   readonly layout: WorldLayout;
   readonly group: Group;
   /** Vegetation LOD, grass streaming around `focus`, animated water. */
+  update(dt: number, camera: PerspectiveCamera, focus: Vector3): void;
+  setQuality(q: QualityProfile): void;
+}
+
+/**
+ * Vegetation, water and structures on top of the islands (world/dressing). Visual, except for
+ * the optional collision hints below.
+ */
+export interface DressingSystem {
+  readonly group: Group;
+  /** Solid cylinders (building walls, towers, big trunks) to keep walkers out of. */
+  readonly colliders: readonly CylinderCollider[];
+  /**
+   * Walkable built surfaces that the terrain doesn't cover (the Roost's launch deck juts out over
+   * the void): the deck top under (x, z) at or below fromY + 2, or null.
+   */
+  deckAt(x: number, z: number, fromY: number): { y: number; surface: 'wood' | 'stone' } | null;
   update(dt: number, camera: PerspectiveCamera, focus: Vector3): void;
   setQuality(q: QualityProfile): void;
 }
