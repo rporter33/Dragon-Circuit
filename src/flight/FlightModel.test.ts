@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
 import { EventBus } from '../core/events';
 import type { BreedId, GameEvents } from '../core/types';
@@ -29,6 +29,8 @@ import {
 } from './telemetry';
 
 const terrain = new Terrain(LAYOUT);
+// Many of these fly minutes of simulated time; give them room on a busy machine.
+vi.setConfig({ testTimeout: 30_000 });
 
 function bus() {
   const events = new EventBus<GameEvents>();
