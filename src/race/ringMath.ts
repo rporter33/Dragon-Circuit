@@ -70,3 +70,31 @@ export function ringSide(x: number, y: number, z: number, ring: RingGeom): numbe
 export function missRadiusFor(radius: number): number {
   return Math.max(45, radius * 5);
 }
+
+/**
+ * The start gate's opening is a rectangle (between the pillars, below the lintel), not a disk:
+ * sweep against its plane and accept a crossing within the half-extents (normal horizontal).
+ * Returns the crossing fraction along the segment, or null.
+ */
+export function sweepGate(
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number,
+  gate: RingGeom,
+  halfWidth: number,
+  halfHeight: number,
+): number | null {
+  const da = ringSide(ax, ay, az, gate);
+  const db = ringSide(bx, by, bz, gate);
+  if (!(da < 0 && db >= 0)) return null;
+  const t = da / (da - db);
+  const px = ax + (bx - ax) * t - gate.cx;
+  const py = ay + (by - ay) * t - gate.cy;
+  const pz = az + (bz - az) * t - gate.cz;
+  // Right axis of a horizontal normal (nx, 0, nz) is (nz, 0, −nx).
+  const across = px * gate.nz - pz * gate.nx;
+  return Math.abs(across) <= halfWidth && Math.abs(py) <= halfHeight ? t : null;
+}

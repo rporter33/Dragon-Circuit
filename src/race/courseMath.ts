@@ -14,12 +14,15 @@ import type { Medal } from '../core/types';
 import type { RaceDef } from '../game/contracts';
 import type { RingGeom } from './ringMath';
 
-/** Rolling start: begin() places the player this far before the gate, flying at this speed. */
-export const RACE_START = { leadDistance: 140, speed: 28 } as const;
+/**
+ * Rolling start: begin() places the player this far before the gate (and a little above its
+ * center, so a hands-off glide sinks through the middle), flying at this speed.
+ */
+export const RACE_START = { leadDistance: 140, speed: 28, rise: 6 } as const;
 
-/** The start gate's opening: you must cross its plane within this radius of its center. */
+/** Clearance kept around a gate's center (validation) — the opening is wider (below). */
 export const GATE_RADIUS = 13;
-/** Visual opening of the gate (m): pillars stand just outside it. */
+/** The gate's opening (m): crossing within it starts the clock; pillars stand just outside. */
 export const GATE_HALF_WIDTH = 16;
 export const GATE_HALF_HEIGHT = 15;
 

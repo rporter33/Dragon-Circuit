@@ -11,8 +11,8 @@ import { FlightModel } from '../flight/FlightModel';
 import { smoothstep } from '../core/math';
 import { yawQuat } from '../flight/telemetry';
 import { Autopilot, CoursePath, type PathNode } from './autopilot';
-import { missRadiusFor, ringGeom, sweepRing, type RingGeom } from './ringMath';
-import { gateRing, RACE_START } from './courseMath';
+import { missRadiusFor, ringGeom, sweepGate, sweepRing, type RingGeom } from './ringMath';
+import { GATE_HALF_HEIGHT, GATE_HALF_WIDTH, gateRing, RACE_START } from './courseMath';
 
 /** A point the line passes through before ring `before` (a thermal to climb in, for sprints). */
 export interface ViaPoint {
@@ -75,7 +75,7 @@ export function thermalAir(thermals: readonly ThermalDef[], terrain: TerrainQuer
 /** Where begin() puts the player: on the gate's axis, `leadDistance` before it. */
 export function raceStartPosition(def: Pick<RaceDef, 'start'>, out: Vector3): Vector3 {
   const g = gateRing(def);
-  return out.set(g.cx - g.nx * RACE_START.leadDistance, g.cy, g.cz - g.nz * RACE_START.leadDistance);
+  return out.set(g.cx - g.nx * RACE_START.leadDistance, g.cy + RACE_START.rise, g.cz - g.nz * RACE_START.leadDistance);
 }
 
 /** The autopilot's line for a course: the run-up, the gate, any via points, every ring. */
@@ -140,10 +140,10 @@ export function flyCourse(def: RaceDef, opts: FlyOptions): FlyResult {
     stuck = m.state.airspeed < 4 ? stuck + dt : 0;
     if (stuck > 3) break;
     if (!started) {
-      const c = sweepRing(prev.x, prev.y, prev.z, p.x, p.y, p.z, gate);
-      if (c?.kind === 'pass') {
+      const c = sweepGate(prev.x, prev.y, prev.z, p.x, p.y, p.z, gate, GATE_HALF_WIDTH, GATE_HALF_HEIGHT);
+      if (c !== null) {
         started = true;
-        raceTime = (1 - c.t) * dt;
+        raceTime = (1 - c) * dt;
         pilot.holdAt(path.nodeS[ringNode[0]]);
       } else if (total > 30) break;
     } else {

@@ -18,8 +18,8 @@ import type { QualityProfile } from '../render/quality';
 import { createWyvernPose } from '../player/poses';
 import { Wyvern } from '../creatures/wyvern/Wyvern';
 import { COURSES } from './courses';
-import { gateRing, medalFor, RACE_START } from './courseMath';
-import { missRadiusFor, ringGeom, ringSide, sweepRing, type RingGeom } from './ringMath';
+import { GATE_HALF_HEIGHT, GATE_HALF_WIDTH, gateRing, medalFor, RACE_START } from './courseMath';
+import { missRadiusFor, ringGeom, ringSide, sweepGate, sweepRing, type RingGeom } from './ringMath';
 import { createGhostSample, ghostDuration, GHOST_RATE, GhostRecorder, sampleGhost } from './ghost';
 import { raceStartPosition } from './flyCourse';
 import { bestMedal, grantUnlocks } from '../progression/unlocks';
@@ -184,9 +184,9 @@ export class Races implements RaceSystem {
 
     if (this.state === 'countdown') {
       const gate = this.gates[idx];
-      const c = sweepRing(a.x, a.y, a.z, b.x, b.y, b.z, gate);
-      if (c?.kind === 'pass') {
-        this.start((1 - c.t) * dt);
+      const c = sweepGate(a.x, a.y, a.z, b.x, b.y, b.z, gate, GATE_HALF_WIDTH, GATE_HALF_HEIGHT);
+      if (c !== null) {
+        this.start((1 - c) * dt);
         return;
       }
       const dist = _p.set(gate.cx, gate.cy, gate.cz).distanceTo(b);

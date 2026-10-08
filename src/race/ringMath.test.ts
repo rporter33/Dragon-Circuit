@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ringGeom, sweepRing, type RingGeom } from './ringMath';
+import { ringGeom, sweepGate, sweepRing, type RingGeom } from './ringMath';
 
 // A ring at the origin facing +Z with a 10 m hole.
 const R: RingGeom = ringGeom({ position: [0, 0, 0], normal: [0, 0, 1], radius: 10 });
@@ -66,5 +66,17 @@ describe('swept ring crossing', () => {
     expect(sweepRing(90, 50, 0, 110, 50, 0, tilted)?.kind).toBe('pass');
     // Backwards along the normal: ignored.
     expect(sweepRing(103, 54, 0, 97, 46, 0, tilted)).toBeNull();
+  });
+});
+
+describe('start gate opening', () => {
+  // A gate facing +X: its opening spans z ±16, y ±15.
+  const G: RingGeom = ringGeom({ position: [0, 100, 0], normal: [1, 0, 0], radius: 13 });
+  it('counts a crossing anywhere in the rectangle, corners included', () => {
+    expect(sweepGate(-1, 100, 0, 1, 100, 0, G, 16, 15)).toBeCloseTo(0.5, 9);
+    expect(sweepGate(-1, 114, 15, 1, 114, 15, G, 16, 15)).not.toBeNull(); // a corner a disk would miss
+    expect(sweepGate(-1, 100, 16.5, 1, 100, 16.5, G, 16, 15)).toBeNull(); // past a pillar
+    expect(sweepGate(-1, 116, 0, 1, 116, 0, G, 16, 15)).toBeNull(); // over the lintel
+    expect(sweepGate(1, 100, 0, -1, 100, 0, G, 16, 15)).toBeNull(); // backwards
   });
 });

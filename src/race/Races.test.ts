@@ -170,7 +170,8 @@ describe('Races: a full run of the Roost Loop', () => {
     const t = player.teleports[0];
     const g = gateRing(def);
     expect(t.speed).toBe(RACE_START.speed);
-    expect(t.position.distanceTo(new Vector3(g.cx, g.cy, g.cz))).toBeCloseTo(RACE_START.leadDistance, 3);
+    expect(Math.hypot(t.position.x - g.cx, t.position.z - g.cz)).toBeCloseTo(RACE_START.leadDistance, 3);
+    expect(t.position.y).toBeCloseTo(g.cy + RACE_START.rise, 6);
     expect(races.state).toBe('countdown');
     expect(races.activeId).toBe('lantern-dash');
     const target = new Vector3(g.cx, g.cy, g.cz).addScaledVector(new Vector3(g.nx, g.ny, g.nz), 10);
