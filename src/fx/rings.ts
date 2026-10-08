@@ -52,14 +52,14 @@ varying float vT;
 varying vec4 vColor;
 void main() {
   float r = length(vUv);
-  float w = mix(0.1, 0.03, vT);
+  float w = mix(0.07, 0.025, vT);
   float ring = exp(-pow((r - 1.0) / w, 2.0));
   // A faint inner fill early on, like a flash of air.
   float fill = (1.0 - smoothstep(0.0, 1.0, r)) * 0.18 * (1.0 - smoothstep(0.0, 0.35, vT));
   float a = (ring + fill) * pow(1.0 - vT, 1.5) * vColor.a;
   if (a < 0.002) discard;
   // Premultiplied, partly occluding: stays golden over a bright sky.
-  gl_FragColor = vec4(vColor.rgb * a, a * 0.45);
+  gl_FragColor = vec4(vColor.rgb * a, a * 0.7);
 }
 `;
 

@@ -101,8 +101,10 @@ void main() {
   vec3 wp = aPos0 + aVel0 * (1.0 - e) / k + g / k * (age - (1.0 - e) / k) + uWind * aExtra.w * age;
   vec3 vel = aVel0 * e + g / k * (1.0 - e) + uWind * aExtra.w;
   float t = age / life;
-  // Grow fast early, slow late, like a puff that spends its energy.
-  float size = mix(aSize.x, aSize.y, 1.0 - (1.0 - t) * (1.0 - t));
+  // Puffs grow fast early and slow late, like a puff spending its energy; glints and sparks
+  // hold their size and shrink away at the end.
+  float k2 = aExtra.x == 0.0 ? 1.0 - (1.0 - t) * (1.0 - t) : t * t;
+  float size = mix(aSize.x, aSize.y, k2);
 
   vec4 mv = viewMatrix * vec4(wp, 1.0);
   vec2 c = position.xy;
@@ -113,7 +115,8 @@ void main() {
     float vlen = length(dir);
     dir = vlen > 1e-4 ? dir / vlen : vec2(0.0, 1.0);
     float len = size + vlen * aExtra.y;
-    off = dir * c.y * len + vec2(-dir.y, dir.x) * c.x * size;
+    // (dir.y, -dir.x) keeps the quad's winding (det +1) so it isn't back-face culled.
+    off = dir * c.y * len + vec2(dir.y, -dir.x) * c.x * size;
   } else {
     float rot = aSize.z + aSize.w * age;
     float cs = cos(rot);
@@ -159,7 +162,8 @@ void main() {
   float r = length(p);
   float a;
   vec3 col = vColor.rgb;
-  if (vShape == 0.0) {
+  // Interpolated varyings aren't exact; compare shapes with a margin.
+  if (vShape < 0.5) {
     // Painterly puff: a cotton-ball blob with a noisy, fairly crisp edge, lit from above (the
     // particle's local axes are rotated on screen, so "up" is rotated back into them).
     float n = fxNoise(p * 2.1 + vSeed * 17.0) * 0.6 + fxNoise(p * 4.7 - vSeed * 9.0) * 0.4;
@@ -169,12 +173,12 @@ void main() {
     float lit = clamp(dot(p, up) * 0.55 + 0.5 - (n - 0.5) * 0.3, 0.0, 1.0);
     col *= 0.78 + 0.34 * lit;
     a *= 0.8 + 0.2 * (1.0 - r);
-  } else if (vShape == 1.0) {
+  } else if (vShape < 1.5) {
     // Spark: bright core line, soft edges.
     float across = 1.0 - smoothstep(0.0, 1.0, abs(p.x));
     float along = 1.0 - smoothstep(0.6, 1.0, abs(p.y));
     a = across * across * along;
-  } else if (vShape == 2.0) {
+  } else if (vShape < 2.5) {
     // Glint: a round core with four thin rays.
     float core = exp(-r * r * 9.0);
     float rays = max(0.0, 1.0 - abs(p.x) * 9.0) * (1.0 - smoothstep(0.0, 1.0, abs(p.y)))
@@ -246,7 +250,7 @@ export class BurstParticles {
         ...globalUniforms,
         uNow: { value: 0 },
         uLit: { value: opts.additive ? 0 : 1 },
-        uOcclude: { value: 0.45 },
+        uOcclude: { value: 0.7 },
         uPxScale: { value: 600 },
       },
       vertexShader: VERT,

@@ -125,7 +125,7 @@ export class Drifters {
   private rand = mulberry32(0x1eaf);
   private time = 0;
   /** Radius around the camera to spawn in (m). */
-  radius = 38;
+  radius = 30;
 
   constructor(scene: Scene, private terrain: DrifterIslandLookup, capacity = 220) {
     this.cap = capacity;
@@ -184,10 +184,11 @@ export class Drifters {
     return this.alive;
   }
 
-  /** Try to spawn one drifter near the camera. */
-  private spawn(cam: Vector3): void {
-    const a = this.rand() * Math.PI * 2;
-    const r = 4 + Math.sqrt(this.rand()) * this.radius;
+  /** Try to spawn one drifter near the camera, mostly in the half it is looking at. */
+  private spawn(cam: Vector3, fwd: Vector3): void {
+    let a = this.rand() * Math.PI * 2;
+    if (this.rand() < 0.7) a = Math.atan2(fwd.z, fwd.x) + (this.rand() - 0.5) * 2.2;
+    const r = 3 + Math.pow(this.rand(), 0.8) * this.radius;
     const x = cam.x + Math.cos(a) * r;
     const z = cam.z + Math.sin(a) * r;
     const isl = this.terrain.islandAt(x, z, cam.y + 40);
@@ -212,7 +213,8 @@ export class Drifters {
     this.phase[i] = this.rand() * Math.PI * 2;
     this.spin[i] = (2.5 + this.rand() * 4) * (this.rand() < 0.5 ? -1 : 1);
     this.kind[i] = k;
-    this.size[i] = k === LEAF ? 0.13 + this.rand() * 0.08 : 0.08 + this.rand() * 0.05;
+    // Stylized: a little larger than life so they read at a glance.
+    this.size[i] = k === LEAF ? 0.24 + this.rand() * 0.14 : 0.16 + this.rand() * 0.08;
     this.settled[i] = 0;
     const pal = k === LEAF ? LEAF_COLORS : PETAL_COLORS;
     const c = pal[Math.floor(this.rand() * pal.length)];
@@ -254,12 +256,12 @@ export class Drifters {
    * `wind` is the world wind (m/s). `body`/`bodyVel` is the wyvern, which blows nearby drifters
    * aside when it passes fast.
    */
-  update(dt: number, cam: Vector3, wind: Vector3, gust: number, body: Vector3, bodyVel: Vector3, enabled: boolean): void {
+  update(dt: number, cam: Vector3, camFwd: Vector3, wind: Vector3, gust: number, body: Vector3, bodyVel: Vector3, enabled: boolean): void {
     this.time += dt;
     if (dt <= 0) return;
     // Spawn a few per frame toward the target population.
     if (enabled) {
-      for (let n = 0; n < 4 && this.alive < this.target; n++) this.spawn(cam);
+      for (let n = 0; n < 4 && this.alive < this.target; n++) this.spawn(cam, camFwd);
     }
     const bodySpeed = bodyVel.length();
     const R2 = (this.radius + 25) * (this.radius + 25);

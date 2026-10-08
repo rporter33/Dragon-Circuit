@@ -33,7 +33,6 @@ interface Stage {
 }
 
 const _p = new Vector3();
-const _n = new Vector3();
 
 function ground(game: Game, x: number, z: number, above = 0): number {
   const g = game.world.terrain.groundAt(x, z, 1e6);
@@ -107,9 +106,16 @@ function stage(game: Game, scene: string): Stage {
       const sh = game.world.terrain.islands.find((i) => i.def.id === g.id)!;
       const th = Math.PI * 1.1;
       const r = sh.outlineRadius(th);
-      const px = g.x + Math.cos(th) * r;
-      const pz = g.z + Math.sin(th) * r;
-      const py = sh.topHeight(px - Math.cos(th) * 4, pz - Math.sin(th) * 4) - 6;
+      // Find the cliff face 8 m below the rim by casting inward, then stand 1.5 m off it: where
+      // the wyvern's body is when it scrapes.
+      const rimY = sh.topHeight(g.x + Math.cos(th) * (r - 4), g.z + Math.sin(th) * (r - 4)) - 8;
+      const origin = new Vector3(g.x + Math.cos(th) * (r + 80), rimY, g.z + Math.sin(th) * (r + 80));
+      const hit = game.world.terrain.raycast(origin, new Vector3(-Math.cos(th), 0, -Math.sin(th)), 200);
+      const face = hit ? hit.point.clone().addScaledVector(hit.normal, 1.5) : origin;
+      const px = face.x;
+      const pz = face.z;
+      const py = face.y;
+      const nrm = hit ? hit.normal.clone() : new Vector3(Math.cos(th), 0.2, Math.sin(th)).normalize();
       return {
         cam: [px + Math.cos(th) * 30 + Math.sin(th) * 14, py + 6, pz + Math.sin(th) * 30 - Math.cos(th) * 14],
         look: [px, py, pz],
@@ -117,16 +123,18 @@ function stage(game: Game, scene: string): Stage {
         every: 1.6,
         emit: (gm) => {
           gm.player.flight.velocity.set(-Math.sin(th) * 30, -4, Math.cos(th) * 30);
-          gm.events.emit('terrainHit', { impulse: 13, point: new Vector3(px, py, pz), normal: _n.set(Math.cos(th), 0.2, Math.sin(th)).normalize().clone() });
+          gm.events.emit('terrainHit', { impulse: 13, point: new Vector3(px, py, pz), normal: nrm.clone() });
         },
       };
     }
     case 'collect': {
       park();
-      const c: [number, number, number] = [30, 300, 60];
+      // Over Gull's Rest's meadow, so the sparkles read against grass rather than bright sky.
+      const g = islandByLandmark('gullrest')!;
+      const c: [number, number, number] = [g.x + 10, ground(game, g.x + 10, g.z, 1.6), g.z];
       return {
-        cam: [c[0] + 9, c[1] + 2, c[2] - 12],
-        look: [c[0], c[1] + 1.2, c[2]],
+        cam: [c[0] + 7, c[1] + 4.5, c[2] - 9],
+        look: [c[0], c[1] + 0.8, c[2]],
         tod: 0.7,
         every: 1.6,
         emit: (gm, n) => {
@@ -136,11 +144,12 @@ function stage(game: Game, scene: string): Stage {
       };
     }
     case 'leaves': {
+      // Rootfall's western edge, looking out past the last trees toward open sky.
       const g = islandByLandmark('rootfall')!;
-      const x = g.x - 120;
-      const z = g.z - 60;
-      p.teleport(new Vector3(x - 6, ground(game, x - 6, z - 8, 1), z - 8), 0, 'onFoot');
-      return { cam: [x, ground(game, x, z, 2.4), z], look: [x + 18, ground(game, x + 18, z + 20, 3), z + 20], tod: 0.4, every: 0 };
+      const x = g.x - 140;
+      const z = g.z - 40;
+      p.teleport(new Vector3(x + 6, ground(game, x + 6, z + 4, 1), z + 4), 0, 'onFoot');
+      return { cam: [x, ground(game, x, z, 1.8), z], look: [x - 20, ground(game, x - 20, z - 8, 4), z - 8], tod: 0.4, every: 0 };
     }
     case 'gust': {
       park();
@@ -158,7 +167,7 @@ function stage(game: Game, scene: string): Stage {
       const x = g.x - 40;
       const z = g.z + 20;
       p.teleport(new Vector3(x, ground(game, x, z, 1), z), Math.PI / 2, 'onFoot');
-      return { cam: [x + 2.5, ground(game, x + 2.5, z - 3, 1.9), z - 3], look: [x + 0.3, ground(game, x, z, 1.4), z], tod: 0.33, every: 0 };
+      return { cam: [x - 1.5, ground(game, x - 1.5, z - 3.2, 2.3), z - 3.2], look: [x + 1.2, ground(game, x + 1.2, z, 1.2), z], tod: 0.33, every: 0 };
     }
     default:
       return { tod: 0.4, every: 0 };

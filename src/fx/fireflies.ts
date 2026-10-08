@@ -54,14 +54,14 @@ void main() {
     cos(t * 0.47) * 1.7 + cos(t * 1.21 + 4.0) * 0.45);
   vec3 wp = aHome.xyz + wander;
   vec4 mv = viewMatrix * vec4(wp, 1.0);
-  float size = 0.55;
+  float size = 0.7;
   float px = size * uPxScale / max(-mv.z, 0.1);
   float grow = px < 3.0 ? 3.0 / max(px, 1e-3) : 1.0;
   mv.xy += position.xy * size * grow;
   gl_Position = projectionMatrix * mv;
   // Slow pulses: mostly dim, then a warm flash every few seconds.
-  float pulse = smoothstep(0.55, 1.0, sin(uNow * (0.9 + 0.8 * s) + s * 37.0));
-  float glow = 0.18 + 0.82 * pulse;
+  float pulse = smoothstep(0.35, 1.0, sin(uNow * (0.9 + 0.8 * s) + s * 37.0));
+  float glow = 0.22 + 0.78 * pulse;
   vAlpha = uFade * glow * fxFogTransmittance(wp) * smoothstep(1.0, 4.0, -mv.z) / (grow * grow);
   // Mostly yellow-green; a few cooler blue-green ones.
   vColor = mix(vec3(0.85, 1.0, 0.35), vec3(0.45, 1.0, 0.85), step(0.82, fract(s * 13.7))) * 2.6;
@@ -93,7 +93,7 @@ export class Fireflies {
   private now = 0;
   private rand = mulberry32(0xf1f1);
   /** Radius around the camera the swarm is spread over (m). */
-  radius = 70;
+  radius = 60;
 
   constructor(scene: Scene, private terrain: IslandLookup, count = 280) {
     this.count = count;
@@ -165,7 +165,8 @@ export class Fireflies {
       if (used && Math.hypot(hx - cam.x, hz - cam.z) < R && Math.abs(H[i * 4 + 1] - cam.y) < 90) continue;
       // Re-home somewhere on the ground around the camera.
       const a = this.rand() * Math.PI * 2;
-      const r = Math.sqrt(this.rand()) * R;
+      // Slightly denser close to the camera, where they are big enough to enjoy.
+      const r = Math.pow(this.rand(), 0.7) * R;
       const x = cam.x + Math.cos(a) * r;
       const z = cam.z + Math.sin(a) * r;
       const isl = this.terrain.islandAt(x, z, cam.y + 60);

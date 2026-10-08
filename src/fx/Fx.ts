@@ -117,7 +117,7 @@ export class Fx implements FxSystem {
     this.glow = new BurstParticles(scene, GLOW_CAP, { additive: true, name: 'fx-glow', renderOrder: 9 });
     this.rings = new ShockRings(scene, 8);
     this.speedLines = new AirStreaks(scene, {
-      name: 'fx-speed-lines', count: 220, box: 70, lenTime: 0.11, width: 0.075, nearFade: 2.5, centerFade: 0.22, wisp: false, seed: 0x5eed,
+      name: 'fx-speed-lines', count: 420, box: 56, lenTime: 0.13, width: 0.075, nearFade: 2.5, centerFade: 0.22, wisp: false, seed: 0x5eed,
     });
     this.wisps = new AirStreaks(scene, {
       name: 'fx-cloud-wisps', count: 36, box: 260, lenTime: 0.32, width: 9, nearFade: 14, centerFade: 0.12, wisp: true, seed: 0x3157,
@@ -190,7 +190,8 @@ export class Fx implements FxSystem {
       // Only spawn new ones near the ground (they'd be invisible specks from the air).
       const pose = player.wyvernPose;
       const near = !flying || (pose.groundY !== null && pose.position.y - pose.groundY < 40);
-      this.drifters.update(step, this.camPos, wind, gust, pose.position, flying ? f.velocity : this.zero, near);
+      camera.getWorldDirection(this.fwd);
+      this.drifters.update(step, this.camPos, this.fwd, wind, gust, pose.position, flying ? f.velocity : this.zero, near);
     }
     this.gust?.update(step, this.camPos);
 
@@ -401,15 +402,16 @@ export class Fx implements FxSystem {
       s.x = point.x + (this.rand() - 0.5) * 2;
       s.y = point.y + (this.rand() - 0.5) * 1;
       s.z = point.z + (this.rand() - 0.5) * 2;
-      const out = 1.5 + 4 * this.rand() * w;
-      s.vx = normal.x * out + tx * 0.25 + (this.rand() - 0.5) * 3;
-      s.vy = normal.y * out + ty * 0.25 + this.rand() * 1.5;
-      s.vz = normal.z * out + tz * 0.25 + (this.rand() - 0.5) * 3;
-      s.life = 1.1 + this.rand() * 0.9;
-      s.drag = 2.2;
+      const out = 2.5 + 7 * this.rand() * w;
+      const drag = 0.15 + 0.4 * this.rand();
+      s.vx = normal.x * out + tx * drag + (this.rand() - 0.5) * 5;
+      s.vy = normal.y * out + ty * drag + this.rand() * 2.5;
+      s.vz = normal.z * out + tz * drag + (this.rand() - 0.5) * 5;
+      s.life = 1.2 + this.rand() * 1.0;
+      s.drag = 1.7;
       s.gravity = -0.01;
-      s.size0 = 0.7 + this.rand() * 0.5;
-      s.size1 = 2.6 + 2 * this.rand() * (0.5 + w);
+      s.size0 = 0.6 + this.rand() * 0.5;
+      s.size1 = 2.2 + 1.8 * this.rand() * (0.5 + w);
       s.rotation = this.rand() * 6.28;
       s.spin = (this.rand() - 0.5) * 0.8;
       this.dustColor(s, pal.a, pal.b);
@@ -430,10 +432,10 @@ export class Fx implements FxSystem {
       s.life = 0.8 + 0.5 * this.rand();
       s.drag = 0.5;
       s.gravity = 1;
-      s.size0 = s.size1 = 0.1 + 0.12 * this.rand();
-      s.r = pal.bits[0];
-      s.g = pal.bits[1];
-      s.b = pal.bits[2];
+      s.size0 = s.size1 = 0.18 + 0.2 * this.rand();
+      s.r = pal.bits[0] * 0.8;
+      s.g = pal.bits[1] * 0.8;
+      s.b = pal.bits[2] * 0.8;
       s.a = 0.95;
       s.fadeIn = 0.02;
       this.soft.emit(s);
@@ -453,13 +455,13 @@ export class Fx implements FxSystem {
         s.life = 0.3 + 0.5 * this.rand();
         s.drag = 1.2;
         s.gravity = 0.8;
-        s.size0 = 0.07;
-        s.size1 = 0.035;
+        s.size0 = 0.13;
+        s.size1 = 0.06;
         s.shape = SHAPE_SPARK;
-        s.stretch = 0.035;
-        s.r = 3.2;
-        s.g = 1.9 + 0.6 * this.rand();
-        s.b = 0.7;
+        s.stretch = 0.06;
+        s.r = 3.0;
+        s.g = 1.6 + 0.5 * this.rand();
+        s.b = 0.45;
         s.a = 1;
         s.fadeIn = 0.01;
         this.glow.emit(s);
@@ -478,8 +480,8 @@ export class Fx implements FxSystem {
     const B = this.basis;
     // Glints keep a share of your speed so they stream past instead of vanishing behind.
     const carry = 0.55;
-    this.rings.spawn(pos.x + v.x * 0.05, pos.y + v.y * 0.05, pos.z + v.z * 0.05, nx, ny, nz, 5, 14, 0.7, 2.2, 1.45, 0.45, 1.2);
-    this.rings.spawn(pos.x, pos.y, pos.z, nx, ny, nz, 2, 8, 0.45, 2.0, 1.7, 0.9, 0.8);
+    this.rings.spawn(pos.x + v.x * 0.05, pos.y + v.y * 0.05, pos.z + v.z * 0.05, nx, ny, nz, 5, 14, 0.7, 1.25, 0.8, 0.22, 1.2);
+    this.rings.spawn(pos.x, pos.y, pos.z, nx, ny, nz, 2, 8, 0.45, 1.3, 1.05, 0.55, 0.8);
     const n = scaledCount(56, this.particles, 12);
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + this.rand() * 0.2;
@@ -506,9 +508,9 @@ export class Fx implements FxSystem {
       s.rotation = this.rand() * 0.8;
       s.spin = (this.rand() - 0.5) * 3;
       s.shape = SHAPE_GLINT;
-      s.r = 2.6;
-      s.g = 1.7;
-      s.b = 0.55;
+      s.r = 1.5;
+      s.g = 0.95;
+      s.b = 0.25;
       s.a = 1;
       s.fadeIn = 0.02;
       this.glow.emit(s);
@@ -532,9 +534,9 @@ export class Fx implements FxSystem {
       s.size0 = 0.6;
       s.size1 = 0.15;
       s.shape = SHAPE_GLOW;
-      s.r = 2.2;
-      s.g = 1.6;
-      s.b = 0.7;
+      s.r = 1.4;
+      s.g = 1.0;
+      s.b = 0.35;
       s.a = 0.8;
       this.glow.emit(s);
     }
@@ -563,27 +565,46 @@ export class Fx implements FxSystem {
       s.life = 1.0 + 0.7 * this.rand();
       s.drag = 1.4;
       s.gravity = -0.04;
-      s.size0 = (relic ? 0.6 : 0.42) + 0.25 * this.rand();
+      s.size0 = (relic ? 0.55 : 0.42) + 0.25 * this.rand();
       s.size1 = 0.06;
       s.rotation = this.rand();
       s.spin = (this.rand() - 0.5) * 4;
       s.shape = i % 3 === 0 ? SHAPE_GLOW : SHAPE_GLINT;
       if (relic) {
         const gold = this.rand() < 0.3;
-        s.r = gold ? 2.2 : 1.3;
-        s.g = gold ? 1.7 : 1.45;
-        s.b = gold ? 0.8 : 2.6;
+        s.r = gold ? 1.5 : 0.7;
+        s.g = gold ? 1.05 : 0.8;
+        s.b = gold ? 0.3 : 1.7;
       } else {
-        s.r = 2.3;
-        s.g = 2.0;
-        s.b = 1.35;
+        // Mostly gold, a few white-hot.
+        const white = this.rand() < 0.3;
+        s.r = white ? 1.4 : 1.35;
+        s.g = white ? 1.3 : 0.95;
+        s.b = white ? 1.0 : 0.3;
       }
       s.a = 1;
       s.fadeIn = 0.03;
       this.glow.emit(s);
     }
+    // A bloom of light where it was.
+    const s = this.spec;
+    this.reset(s);
+    s.x = pos.x;
+    s.y = pos.y;
+    s.z = pos.z;
+    s.life = 0.45;
+    s.drag = 0;
+    s.size0 = relic ? 2.2 : 1.5;
+    s.size1 = relic ? 3.8 : 2.6;
+    s.shape = SHAPE_GLOW;
+    s.r = relic ? 0.55 : 1.0;
+    s.g = relic ? 0.65 : 0.85;
+    s.b = relic ? 1.0 : 0.45;
+    s.a = 0.6;
+    s.fadeIn = 0.05;
+    this.glow.emit(s);
     if (relic) {
-      this.rings.spawn(pos.x, pos.y, pos.z, 0, 1, 0, 1, 12, 1.1, 0.7, 0.75, 1.0, 1.4);
+      this.rings.spawn(pos.x, pos.y, pos.z, 0, 1, 0, 1, 9, 1.1, 0.42, 0.52, 1.25, 0.85);
       this.triggerFlash(0.3, 0.75, 0.82, 1.0);
     } else {
       this.triggerFlash(0.2, 1.0, 0.94, 0.8);
@@ -621,7 +642,7 @@ export class Fx implements FxSystem {
       if (!rp.mounted && (isColdAir(p.x, p.y, p.z, this.moor) || night > 0.85)) {
         this.fwd.set(Math.sin(rp.yaw), 0, Math.cos(rp.yaw));
         this.head.set(p.x + this.fwd.x * 0.22, p.y + 1.58, p.z + this.fwd.z * 0.22);
-        this.breath(this.head, this.fwd, 0.3);
+        this.breath(this.head, this.fwd, 0.38);
       }
     }
   }
@@ -643,13 +664,13 @@ export class Fx implements FxSystem {
       s.drag = 2.1;
       s.gravity = -0.025;
       s.size0 = 0.22 * scale + 0.05;
-      s.size1 = (1.3 + 0.5 * this.rand()) * scale + 0.2;
+      s.size1 = (1.7 + 0.7 * this.rand()) * scale + 0.25;
       s.rotation = this.rand() * 6.28;
       s.spin = (this.rand() - 0.5) * 0.6;
       s.r = 0.96;
       s.g = 0.97;
       s.b = 1.0;
-      s.a = 0.22;
+      s.a = 0.26;
       s.fadeIn = 0.12;
       s.wind = 0.6;
       this.soft.emit(s);

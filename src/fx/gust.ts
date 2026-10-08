@@ -54,11 +54,11 @@ void main() {
   vec3 w = cross(tan, viewV);
   float wl = length(w);
   w = wl > 1e-4 ? w / wl : vec3(0.0, 1.0, 0.0);
-  p += w * position.x * (0.05 + 0.05 * aSeed.y);
+  p += w * position.x * (0.14 + 0.1 * aSeed.y);
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
   float life = sin(ph * 3.14159);
   vAlpha = uAmount * pow(life, 1.4) * fxFogTransmittance(p);
-  vColor = dwApplyFog(fxLitDust(vec3(1.0), p) * 1.25, p, cameraPosition);
+  vColor = dwApplyFog(fxLitDust(vec3(1.0), p) * 1.6, p, cameraPosition);
   vUv = vec2(position.x * 2.0, u);
 }
 `;
@@ -70,7 +70,7 @@ varying vec3 vColor;
 void main() {
   float across = 1.0 - abs(vUv.x);
   float along = smoothstep(0.0, 0.5, vUv.y) * (1.0 - smoothstep(0.85, 1.0, vUv.y));
-  float a = across * across * along * vAlpha;
+  float a = pow(across, 1.5) * along * vAlpha;
   if (a < 0.004) discard;
   gl_FragColor = vec4(vColor, a);
 }
@@ -93,7 +93,7 @@ export class LaunchGust {
   private now = 0;
   private origin = new Vector3();
 
-  constructor(scene: Scene, private deck: DeckEnd, count = 44) {
+  constructor(scene: Scene, private deck: DeckEnd, count = 60) {
     const geo = new InstancedBufferGeometry();
     // A strip of 8 segments along the streak so it can follow the curve.
     const pos: number[] = [];
@@ -145,7 +145,7 @@ export class LaunchGust {
   update(dt: number, cam: Vector3, strength = 1): void {
     this.now += dt;
     const d = cam.distanceTo(this.origin);
-    const amount = 0.5 * strength * (1 - smoothstep(180, 320, d));
+    const amount = strength * (1 - smoothstep(180, 320, d));
     this.mat.uniforms.uNow.value = this.now;
     this.mat.uniforms.uAmount.value = amount;
     this.mesh.visible = amount > 0.003;

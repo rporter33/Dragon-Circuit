@@ -124,10 +124,10 @@ void main() {
   float r = (0.3 + 0.65 * aSeed.x) * A.z;
   float rise = A.w * (0.8 + 0.5 * aSeed.w);
   // Climb slope of the helix (dy per meter along the line).
-  float slope = 0.42;
+  float slope = 0.75;
   float H = uWindow;
   float yy = mod(aSeed.z * H + uNow * rise - B.w, H);
-  float len = 16.0 + 14.0 * aSeed.w;
+  float len = 28.0 + 26.0 * aSeed.w;
   float u = position.y + 0.5; // 0 tail .. 1 head
   float dTheta = len * 0.92 / r;
   float omega = rise / (slope * r) * 0.92;
@@ -142,15 +142,19 @@ void main() {
   side = sl > 1e-4 ? side / sl : vec3(1.0, 0.0, 0.0);
   float dist = length(wp - cameraPosition);
   // Wider with distance (about 2.5 px at 1080p far away) so the column reads from across the sky.
-  float width = max(0.3, dist * 0.0035);
+  float width = max(0.3, dist * 0.0028);
   wp += side * position.x * width;
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
 
   float winFade = smoothstep(0.0, 0.1, yy / H) * (1.0 - smoothstep(0.9, 1.0, yy / H));
   float ends = smoothstep(0.0, 0.35, u) * (1.0 - smoothstep(0.8, 1.0, u));
   float nearFade = smoothstep(6.0, 30.0, dist);
-  vAlpha = 0.6 * B.z * columnFade(B, y) * winFade * ends * nearFade * fxFogTransmittance(wp);
-  vColor = dwApplyFog(fxLitDust(vec3(1.0, 0.97, 0.9), wp) * 1.3, wp, cameraPosition);
+  // The far side of the column is dimmer: reads as a turning column, not a crosshatch.
+  vec2 radial = vec2(cos(theta), sin(theta));
+  vec2 toCam = normalize(cameraPosition.xz - vec2(A.x, A.y) + 1e-4);
+  float front = 0.3 + 0.7 * smoothstep(-0.4, 0.5, dot(radial, toCam));
+  vAlpha = 0.6 * front * B.z * columnFade(B, y) * winFade * ends * nearFade * fxFogTransmittance(wp);
+  vColor = dwApplyFog(fxLitDust(vec3(1.0, 0.96, 0.88), wp) * 1.45, wp, cameraPosition);
   vUv = vec2(position.x * 2.0, u);
 }
 `;
@@ -207,7 +211,7 @@ export class ThermalMotes {
   private dists: number[];
   private byDistance = (a: number, b: number) => this.dists[a] - this.dists[b];
 
-  constructor(scene: Scene, private thermals: readonly ThermalDef[], moteCount = 1400, lineCount = 360) {
+  constructor(scene: Scene, private thermals: readonly ThermalDef[], moteCount = 1400, lineCount = 520) {
     this.counts = [moteCount, lineCount];
     this.thermA = Array.from({ length: THERMAL_SLOTS }, () => new Vector4());
     this.thermB = Array.from({ length: THERMAL_SLOTS }, () => new Vector4());
