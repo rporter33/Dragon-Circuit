@@ -447,6 +447,11 @@ export interface GameEvents {
   discover: { landmarkId: string; name: string };
 
   weatherChange: { from: WeatherKind; to: WeatherKind };
+  /**
+   * Distant lightning in a storm (presentation only: thunder, a rumble). Strikes land kilometres
+   * away; `distance` is from the camera in m (thunder should lag it at ~340 m/s).
+   */
+  lightning: { position: Vector3; distance: number };
   lookChanged: {};
   settingsChanged: { settings: Settings };
   toast: { text: string; sub?: string; icon?: 'feather' | 'relic' | 'unlock' | 'race' | 'info' };

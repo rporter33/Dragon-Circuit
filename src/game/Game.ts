@@ -87,7 +87,7 @@ export class Game implements GameActions {
     this.world = new World(this.scene, quality);
     this.dressing = new Dressing({ scene: this.scene, terrain: this.world.terrain, quality, asyncStreaming: !this.debug.manual });
     this.weather = new Weather(this.scene, this.world.layout, this.events, quality);
-    this.sky = new Sky(this.scene, this.renderer, quality);
+    this.sky = new Sky(this.scene, this.renderer, quality, this.weather);
     this.player = new Player({
       terrain: this.world.terrain,
       env: { windAt: (p, out) => this.weather.windAt(p, out), terrain: this.world.terrain },
