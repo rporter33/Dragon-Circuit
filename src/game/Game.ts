@@ -99,7 +99,15 @@ export class Game implements GameActions {
     this.wyvern = new Wyvern(this.save.data.wyvern);
     this.rider = new Rider(this.save.data.rider);
     this.scene.add(this.wyvern.group, this.rider.group);
-    this.races = new Races();
+    this.races = new Races({
+      scene: this.scene,
+      events: this.events,
+      save: this.save,
+      player: this.player,
+      quality,
+      settings: () => this.settings,
+      camera: this.cameraRig,
+    });
     this.collectibles = new Collectibles();
     this.fx = new Fx({
       scene: this.scene,
