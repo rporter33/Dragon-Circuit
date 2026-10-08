@@ -394,7 +394,7 @@ export function buildRig(breed: BreedId): RigDef {
   const tailBaseKey = keys.length - 1;
   for (let i = 1; i < TAIL_BONES; i++) {
     const t = i / TAIL_BONES;
-    const r = S.tailBaseRadius * Math.max(0.06, Math.pow(1 - t, 0.85));
+    const r = S.tailBaseRadius * Math.max(0.06, Math.pow(1 - t, 0.68));
     keys.push({ p: bones[tail[i]].pos.clone(), hw: r * 1.08, hu: r, hl: r * 0.92, sq: 2 });
   }
   const tipR = S.tailBaseRadius * 0.05;

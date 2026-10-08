@@ -7,13 +7,13 @@
 //   membrane  wings, sails, fans, fins and feathers: veins, darker trailing edges, a fluttering
 //             trailing edge, and the signature backlight: when the sun is behind a membrane as
 //             seen from the camera, light glows through it (fake subsurface transmission).
-//   ghost     race ghosts: translucent bluish-white fresnel, additive, no shadows.
+//   ghost     race ghosts: translucent bluish-white fresnel, no shadows.
 //
 // Colors and pattern switches are uniforms, so a color/pattern change is a uniform update rather
 // than a rebuild.
 
 import {
-  AdditiveBlending,
+  NormalBlending,
   Color,
   DoubleSide,
   FrontSide,
@@ -200,41 +200,49 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
       float stripe = smoothstep(thr - 0.04, thr + 0.02, band) * (1.0 - smoothstep(0.2, 0.6, belly));
       col = mix(col, uSecondary * 0.8, stripe);
     } else if (pat == 3) {
-      // Dapple: soft dark rosettes with light flecks.
-      vec3 c = dwCells(bp * 3.2 + n1 * 0.6);
-      float spot = 1.0 - smoothstep(0.18, 0.36, c.x);
-      float ring = smoothstep(0.12, 0.2, c.x) * (1.0 - smoothstep(0.26, 0.36, c.x));
-      float side = (1.0 - belly) * (0.45 + 0.55 * dorsal);
-      col = mix(col, uSecondary, ring * side * step(0.35, c.z));
-      col = mix(col, mix(uPrimary, uBelly, 0.55) * 1.08, spot * side * step(c.z, 0.35) * 0.8);
+      // Dapple: soft blotches, like light through leaves: big dark ones, smaller pale ones.
+      float side = (1.0 - belly) * (0.5 + 0.5 * dorsal);
+      vec3 c = dwCells(bp * 2.4 + n1 * 0.5);
+      float dark = (1.0 - smoothstep(0.2, 0.42, c.x)) * step(0.55, c.z);
+      vec3 c2 = dwCells(bp * 4.4 + 2.0 + n2 * 0.4);
+      float light = (1.0 - smoothstep(0.1, 0.3, c2.x)) * step(0.4, c2.z);
+      col = mix(col, uSecondary * 0.95, dark * side * 0.85);
+      col = mix(col, mix(uPrimary, uBelly, 0.6) * 1.1, light * side * 0.75);
     } else if (pat == 4) {
-      // Ember veins: a dark hide split by glowing seams that brighten after dusk.
-      vec3 c = dwCells(bp * 2.6 + vec3(n1 * 0.9));
-      float seam = 1.0 - smoothstep(0.02, 0.09, c.y - c.x);
-      col = mix(col * 0.55, uSecondary * 0.5, 0.45);
-      float flick = 0.85 + 0.15 * sin(uTime * 1.7 + c.z * 30.0);
-      vec3 ember = mix(vec3(1.0, 0.42, 0.1), vec3(1.0, 0.75, 0.3), c.z);
-      col = mix(col, ember * 0.9, seam * 0.6);
-      emit += ember * seam * (0.25 + 1.6 * uNight) * flick * (1.0 - belly * 0.5);
+      // Ember veins: a dark hide split by thin glowing seams that brighten after dusk.
+      vec3 c = dwCells(bp * 1.5 + vec3(n1 * 0.7));
+      float seam = 1.0 - smoothstep(0.012, 0.05, c.y - c.x);
+      vec3 c2 = dwCells(bp * 3.4 + 5.0);
+      float fine = (1.0 - smoothstep(0.008, 0.03, c2.y - c2.x)) * 0.6 * step(0.5, c2.z);
+      float v = max(seam, fine) * (1.0 - belly * 0.7);
+      col = mix(col * 0.5, uSecondary * 0.45, 0.5);
+      float flick = 0.8 + 0.2 * sin(uTime * 1.3 + c.z * 30.0);
+      vec3 ember = mix(vec3(1.0, 0.38, 0.08), vec3(1.0, 0.7, 0.25), c.z);
+      col = mix(col, ember * 0.75, v * 0.7);
+      emit += ember * v * (0.12 + 1.8 * uNight) * flick;
     } else if (pat == 5) {
-      // Starfield: pale freckles, densest along the back.
-      vec3 c = dwCells(bp * 7.5);
-      float star = (1.0 - smoothstep(0.05, 0.1 + 0.05 * c.z, c.x)) * step(0.45 - 0.35 * dorsal, c.z);
-      vec3 c2 = dwCells(bp * 15.0 + 4.0);
-      star = max(star, (1.0 - smoothstep(0.03, 0.06, c2.x)) * step(0.6, c2.z) * dorsal);
-      col = mix(col * 0.85, uSecondary, 0.25 * dorsal);
-      vec3 pale = mix(uBelly, vec3(1.0), 0.6);
+      // Starfield: pale freckles, densest along the back, twinkling a little at night.
+      vec3 c = dwCells(bp * 3.2);
+      float r = 0.1 + 0.1 * c.z;
+      float star = (1.0 - smoothstep(r, r + 0.04, c.x)) * step(0.5 - 0.45 * dorsal, c.z);
+      vec3 c2 = dwCells(bp * 7.0 + 4.0);
+      star = max(star, (1.0 - smoothstep(0.08, 0.12, c2.x)) * step(0.4, c2.z) * (0.4 + 0.6 * dorsal));
+      col = mix(col * 0.82, uSecondary * 0.9, 0.3 * dorsal);
+      vec3 pale = mix(uBelly, vec3(1.0), 0.65);
       col = mix(col, pale, star * (1.0 - belly));
-      emit += pale * star * (1.0 - belly) * uNight * 0.6 * (0.7 + 0.3 * sin(uTime * 2.0 + c.z * 40.0));
+      emit += pale * star * (1.0 - belly) * uNight * 0.7 * (0.7 + 0.3 * sin(uTime * 2.0 + c.z * 40.0));
     } else if (pat == 6) {
-      // Gilded scales: overlapping scale cells with gold tips that catch the sun.
-      vec3 sp = vec3(s * 5.5, vUv2.y * 3.2, bp.x * 0.5);
-      vec3 c = dwCells(sp);
-      float edge = smoothstep(0.55, 0.85, c.x / max(c.y, 1e-3));
-      float tip = edge * smoothstep(0.2, 0.9, dorsal + 0.4 * (1.0 - belly));
-      col = mix(col, col * 0.78, edge * 0.5);
-      vec3 goldCol = vec3(1.0, 0.76, 0.3);
-      col = mix(col, goldCol, tip * 0.85);
+      // Gilded scales: overlapping fish-scale rows (free edge toward the tail), darker at the
+      // base, with gold rims along the back that catch the sun.
+      vec2 uv = vec2(vUv2.y * 5.5, s * 6.0);
+      vec2 g = floor(uv);
+      vec2 f = fract(vec2(uv.x + 0.5 * mod(g.y, 2.0), uv.y));
+      float d = length(vec2(f.x - 0.5, f.y));
+      float rim = smoothstep(0.38, 0.47, d) * (1.0 - smoothstep(0.5, 0.58, d));
+      col *= 0.8 + 0.25 * smoothstep(0.1, 0.5, d);
+      float tip = rim * smoothstep(0.1, 0.7, dorsal + 0.3 * (1.0 - belly) - 0.2);
+      vec3 goldCol = vec3(1.0, 0.78, 0.32);
+      col = mix(col, goldCol, tip * 0.9);
       gold = tip;
     }
     // Belly: a soft painterly boundary and faint transverse scutes.
@@ -449,9 +457,10 @@ export function createMembraneMaterial(u: WyvernUniforms): MeshToonMaterial {
           float toward = pow(max(dot(mV, uSunDir), 0.0), 3.0);
           float back = max(dot(-mN, uSunDir), 0.0);
           float sunUp = smoothstep(-0.08, 0.12, uSunDir.y);
-          vec3 glowCol = pow(uMembrane, vec3(0.8)) * vec3(1.15, 1.0, 0.85);
-          vec3 glow = glowCol * uSunColor * (back * 0.6 + toward * 1.9) * dwTrans * sunUp;
-          outgoingLight += glow * 0.9;
+          // Saturate toward the membrane's own hue (thin skin glows deeper than it looks lit).
+          vec3 glowCol = pow(uMembrane, vec3(1.45)) * 1.9 + vec3(0.04, 0.02, 0.0);
+          vec3 glow = glowCol * uSunColor * (back * 0.55 + toward * 2.0) * dwTrans * sunUp;
+          outgoingLight += glow * 0.85;
         }
         ` +
         frag.slice(idx);
@@ -476,7 +485,8 @@ export function createGhostMaterial(u: WyvernUniforms, membrane: boolean): MeshT
     side: membrane ? DoubleSide : FrontSide,
     transparent: true,
     depthWrite: false,
-    blending: AdditiveBlending,
+    blending: NormalBlending,
+    premultipliedAlpha: true,
   });
   m.onBeforeCompile = (shader) => {
     patchShared(shader, u);
@@ -493,9 +503,9 @@ export function createGhostMaterial(u: WyvernUniforms, membrane: boolean): MeshT
           vec3 gV = normalize(vViewPosition);
           float gF = pow(1.0 - abs(dot(normal, gV)), 2.2);
           float band = 0.5 + 0.5 * sin(vBodyPos.z * 3.0 - uTime * 4.0);
-          vec3 gc = mix(vec3(0.45, 0.68, 1.0), vec3(0.92, 0.97, 1.0), gF);
-          float a = ${membrane ? '0.1' : '0.05'} + 0.5 * gF + 0.05 * band;
-          gl_FragColor = vec4(gc * a, 1.0);
+          vec3 gc = mix(vec3(0.42, 0.66, 1.0), vec3(0.9, 0.96, 1.0), gF) * (1.15 + 0.25 * band);
+          float a = clamp(${membrane ? '0.2' : '0.16'} + 0.62 * gF + 0.06 * band, 0.0, 0.9);
+          gl_FragColor = vec4(gc * a, a);
         }`,
       );
   };

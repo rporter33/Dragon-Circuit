@@ -45,7 +45,7 @@ const TAIL_GROUND = [9, -1, -3, -4, -4, -3, -2, 0, 2, 4];
 const TAIL_FLIGHT = [4, 0.5, 0.3, 0, 0, 0, 0, 0, 0, 0];
 const TAIL_FLARE = [-9, -4, -3, -2, -1, 0, 0, 0, 1, 2];
 /** Neck postures (degrees per bone, + pitches down). Base → top. */
-const NECK_GROUND = [-14, -9, -3, 3, 8, 11];
+const NECK_GROUND = [-7, -5, -1, 2, 5, 8];
 const NECK_FLIGHT = [4, 3.5, 3, 3, 2.5, 2];
 const NECK_TUCK = [5, 5, 4, 4, 3, 2];
 const NECK_FLARE = [-5, -4, -3, -1, 1, 3];
@@ -183,7 +183,7 @@ export class WyvernAnimator {
     const hipX = P.hip[0];
     const restHind = (side: number) => new Vector3(hipX * 1.08 * SIDE_SIGN[side], -sh, rig.ball.z + 0.1 * sh);
     const restFore = (side: number) =>
-      new Vector3((P.shoulder[0] + 0.3 * P.arm.humerus + 0.1 * sh) * SIDE_SIGN[side], -sh, P.shoulder[2] + 0.28 * P.arm.forearm);
+      new Vector3((P.shoulder[0] + 0.12 * P.arm.humerus + 0.1 * sh) * SIDE_SIGN[side], -sh, P.shoulder[2] + 0.42 * P.arm.forearm);
     this.gait = new Gait([restHind(0), restHind(1), restFore(0), restFore(1)]);
     this.gaitCtx = {
       dt: 0,
@@ -602,8 +602,8 @@ export class WyvernAnimator {
     const foot = this.gait.feet[2 + side];
     const Wt = this.toModel(foot.pos, _v3).addScaledVector(up, 0.07 * sh);
     const S = _v2.copy(this.modelP[w.humerus]);
-    // Pole: up, back and out.
-    _v4.set(0.6 * sx, 0.85, -0.35);
+    // Pole: back and up, a little out, so the folded wing lies along the flank.
+    _v4.set(0.3 * sx, 0.6, -0.75);
     const E = _v5;
     solveTwoBone(S, A.humerus, A.forearm, Wt, _v4, E);
     const hum = _hum.subVectors(E, S);

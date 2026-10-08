@@ -23,6 +23,9 @@ import { smoothstep } from '../../core/math';
  *   fatigue=0..1  ghost=1  rider=0
  *   lineup=breeds|pattern|horns|frill|tail|saddle   several wyverns side by side
  *   tod= (time of day; default golden hour 0.7), sky=native to skip the lighting stand-in
+ *   real=takeoff|landing|turn|dive|walk|cliff   drive the REAL player (flight model + state
+ *                        machine) from a staged start; scripted input comes from the shot steps.
+ *                        The camera tracks with the same cam= presets.
  */
 
 const FLIGHT = new Set(['glide', 'flap', 'tuck', 'flare', 'stall', 'bankL', 'bankR', 'hover', 'landing']);
@@ -36,6 +39,7 @@ interface Actor {
 }
 
 let poseName = 'glide';
+let realScene: string | null = null;
 let camName = 'three';
 let anchor = new Vector3();
 let heading = 0;
@@ -215,6 +219,100 @@ function synth(p: WyvernPose, name: string, t: number, breed: BreedId, at: Vecto
   }
 }
 
+
+/** Camera azimuth (deg, relative to the heading), elevation (deg) and distance for cam=. */
+function camAngles(game: Game): [number, number, number] {
+  const breed = (params.get('breed') as BreedId) ?? 'harrier';
+  const span = BREEDS[breed].wingspan;
+  let az = 120;
+  let el = 14;
+  let dist = 1.25 * span;
+  switch (camName) {
+    case 'side':
+      az = 90;
+      el = 6;
+      break;
+    case 'front':
+      az = 0;
+      el = 8;
+      break;
+    case 'back':
+      az = 180;
+      el = 12;
+      break;
+    case 'top':
+      az = 160;
+      el = 70;
+      break;
+    case 'low':
+      az = 140;
+      el = -14;
+      break;
+    case 'under':
+      az = 100;
+      el = -45;
+      break;
+    case 'close':
+      az = 60;
+      el = 10;
+      dist = 0.55 * span;
+      break;
+    case 'head':
+      az = 50;
+      el = 8;
+      dist = 0.3 * span;
+      break;
+    case 'sun': {
+      // Look toward the sun through the wings (backlit membranes).
+      const s = globalUniforms.uSunDir.value;
+      az = (Math.atan2(-s.x, -s.z) - heading) * (180 / Math.PI);
+      el = -Math.asin(Math.min(0.9, s.y)) * (180 / Math.PI) * 0.6 - 6;
+      break;
+    }
+  }
+  az = num('camAz', az);
+  el = num('camEl', el);
+  dist = num('camDist', dist);
+  return [az, el, dist];
+}
+
+/** Stage the real player for a scripted sequence. */
+function stageReal(game: Game, scene: string, breed: BreedId): void {
+  game.setWyvernLook(lookFrom(game, breed));
+  game.debug.freeze = false;
+  const p = game.player;
+  const t = game.world.terrain;
+  switch (scene) {
+    case 'landing': {
+      const g = t.standingPoint(-20, 60, new Vector3());
+      p.teleport(new Vector3(-20, g.y + 16, 140), Math.PI, 'flying', 21);
+      break;
+    }
+    case 'turn':
+      p.teleport(new Vector3(-200, 420, 200), Math.PI / 2, 'flying', 30);
+      break;
+    case 'dive':
+      p.teleport(new Vector3(0, 620, -300), Math.PI, 'flying', 26);
+      break;
+    case 'cliff': {
+      // Mounted, facing out over the Roost's southern rim.
+      let z = 60;
+      for (; z < 400; z += 1) if (!t.groundAt(0, z, 1e6)) break;
+      const g = t.standingPoint(0, z - 18, new Vector3());
+      p.teleport(g.add(new Vector3(0, BREEDS[breed].standHeight, 0)), 0, 'landed');
+      break;
+    }
+    case 'walk':
+    case 'takeoff':
+    default: {
+      const g = t.standingPoint(-34, 40, new Vector3());
+      p.teleport(g.add(new Vector3(0, BREEDS[breed].standHeight, 0)), num('yaw', 200) * (Math.PI / 180), 'landed');
+      break;
+    }
+  }
+  game.cameraRig.snap(p);
+}
+
 const wyvernShowcase: Showcase = {
   name: 'wyvern',
   description: 'The wyvern posed from synthesized poses: breed=, pose=, cam=, turntable=1, lineup=, look params',
@@ -228,14 +326,16 @@ const wyvernShowcase: Showcase = {
     };
     params = p;
     time = num('t0', 0);
+    realScene = p.get('real');
     poseName = p.get('pose') ?? 'glide';
     camName = p.get('cam') ?? 'three';
     const breed = (p.get('breed') as BreedId) ?? 'harrier';
     const flight = FLIGHT.has(poseName);
     const bg = p.get('bg') ?? (flight ? 'air' : 'roost');
     const t = game.world.terrain;
+    const lineupStage = !!p.get('lineup');
     if (bg === 'roost') {
-      anchor = t.standingPoint(-34, 40, new Vector3());
+      anchor = lineupStage ? t.standingPoint(6, 8, new Vector3()) : t.standingPoint(-34, 40, new Vector3());
       anchor.y += BREEDS[breed].standHeight;
       heading = num('yaw', 200) * (Math.PI / 180);
       if (flight) anchor.y += poseName === 'landing' ? 0 : 14;
@@ -243,7 +343,26 @@ const wyvernShowcase: Showcase = {
       anchor = new Vector3(60, 345, 190);
       heading = num('yaw', 150) * (Math.PI / 180);
     }
-    if (game.debug.tod === undefined) game.debug.tod = 0.7;
+    if (p.has('tod')) game.debug.tod = Number(p.get('tod'));
+    else if (game.debug.tod === undefined) game.debug.tod = 0.7;
+    if (realScene) {
+      stageReal(game, realScene, breed);
+      lights = { sun: null, hemi: null };
+      game.scene.traverse((o) => {
+        if (o instanceof DirectionalLight && !lights.sun) lights.sun = o;
+        if (o instanceof HemisphereLight && !lights.hemi) lights.hemi = o;
+      });
+      if (lights.sun) {
+        base.sun = lights.sun.intensity;
+        base.sunColor.copy(lights.sun.color);
+      }
+      if (lights.hemi) {
+        base.hemi = lights.hemi.intensity;
+        base.hemiSky.copy(lights.hemi.color);
+        base.hemiGround.copy(lights.hemi.groundColor);
+      }
+      return;
+    }
     game.debug.freeze = true;
     // Park the player's own wyvern at the anchor (we drive its pose), or out of the way.
     game.player.teleport(anchor.clone(), heading, flight ? 'flying' : 'landed', 0);
@@ -265,8 +384,11 @@ const wyvernShowcase: Showcase = {
           | 'saddle';
         for (const c of cosmeticsFor(slot)) list.push({ ...lookFrom(game, breed), [lineup]: c.id });
       }
-      const spacing = lineup === 'breeds' ? 19 : 15;
-      const right = new Vector3(-Math.cos(heading), 0, Math.sin(heading));
+      const spacing = lineup === 'breeds' ? 17 : 12;
+      // Line the wyverns up across the camera's view so every one is seen side by side.
+      const [caz] = camAngles(game);
+      const a = heading + (caz * Math.PI) / 180;
+      const right = new Vector3(Math.cos(a), 0, -Math.sin(a));
       list.forEach((look, i) => {
         const w = new Wyvern(look, { terrain: game.world.terrain });
         game.scene.add(w.group);
@@ -302,6 +424,20 @@ const wyvernShowcase: Showcase = {
     time += dt;
     if (params.get('sky') !== 'native') applyLight(game);
     const breed = (params.get('breed') as BreedId) ?? 'harrier';
+    if (realScene) {
+      // Track the real wyvern by its heading (horizon stays level).
+      const w = game.player.wyvernPose;
+      _v.set(0, 0, 1).applyQuaternion(w.orientation);
+      const hd = Math.atan2(_v.x, _v.z);
+      heading = hd;
+      let [az, el, dist] = camAngles(game);
+      if (params.get('turntable') === '1') az += time * num('spin', 30);
+      const a = hd + (az * Math.PI) / 180;
+      const e = (el * Math.PI) / 180;
+      _cam.set(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)).multiplyScalar(dist).add(w.position);
+      game.cameraRig.setOverride({ position: _cam, target: _tgt.copy(w.position) });
+      return;
+    }
     if (useMain) {
       const pose = game.player.wyvernPose;
       synth(pose, poseName, time, breed, anchor, heading, game);
@@ -322,56 +458,9 @@ const wyvernShowcase: Showcase = {
     // Camera: orbit around the subject relative to its heading.
     const focus = useMain ? (camName === 'head' ? game.wyvern.getHead(_focus) : game.player.wyvernPose.position) : _tgt.copy(anchor);
     const span = BREEDS[breed].wingspan;
-    const spread = actors.length > 1 ? actors.length * (params.get('lineup') === 'breeds' ? 19 : 15) * 0.55 : 0;
-    let az = 120;
-    let el = 14;
-    let dist = 1.25 * span + spread;
-    switch (camName) {
-      case 'side':
-        az = 90;
-        el = 6;
-        break;
-      case 'front':
-        az = 0;
-        el = 8;
-        break;
-      case 'back':
-        az = 180;
-        el = 12;
-        break;
-      case 'top':
-        az = 160;
-        el = 70;
-        break;
-      case 'low':
-        az = 140;
-        el = -14;
-        break;
-      case 'under':
-        az = 100;
-        el = -45;
-        break;
-      case 'close':
-        az = 60;
-        el = 10;
-        dist = 0.55 * span;
-        break;
-      case 'head':
-        az = 50;
-        el = 8;
-        dist = 0.3 * span;
-        break;
-      case 'sun': {
-        // Look toward the sun through the wings (backlit membranes).
-        const s = globalUniforms.uSunDir.value;
-        az = (Math.atan2(-s.x, -s.z) - heading) * (180 / Math.PI);
-        el = -Math.asin(Math.min(0.9, s.y)) * (180 / Math.PI) * 0.6 - 6;
-        break;
-      }
-    }
-    az = num('camAz', az);
-    el = num('camEl', el);
-    dist = num('camDist', dist);
+    const lineLen = actors.length > 1 ? (actors.length - 1) * (params.get('lineup') === 'breeds' ? 17 : 12) : 0;
+    let [az, el, dist] = camAngles(game);
+    if (lineLen > 0 && !params.has('camDist')) dist = Math.max(dist, lineLen * 0.62 + 8);
     if (params.get('turntable') === '1') az += time * num('spin', 30);
     const a = heading + (az * Math.PI) / 180;
     const e = (el * Math.PI) / 180;
