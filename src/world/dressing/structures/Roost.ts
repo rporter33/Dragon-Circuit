@@ -24,6 +24,7 @@ import {
   lanternPost,
   pennant,
   post,
+  isCoarse,
   rand,
   resetJitter,
   saddleRack,
@@ -48,7 +49,7 @@ export interface SiteOutputs {
 
 /** Conical roof built from stacked shingle courses. */
 export function coneRoof(b: GeoBuilder, frame: Matrix4, y: number, r: number, h: number, color: string, alt: string): void {
-  const rows = Math.max(4, Math.round(h / 0.7));
+  const rows = Math.max(isCoarse() ? 3 : 4, Math.round(h / (isCoarse() ? 1.6 : 0.7)));
   for (let i = 0; i < rows; i++) {
     const t0 = i / rows;
     const t1 = (i + 1) / rows;
@@ -266,7 +267,7 @@ function buildTower(s: SiteBuilders, t: TowerPlan, idx: number, out: SiteOutputs
   const shaftH = t.height * 0.72;
   box(b, F, 0, 0.3, 0, r * 2.4, 0.9, r * 2.4, PALETTE.stoneDark, { ry: 0.4 });
   // Stone courses, slightly tapering.
-  const course = 1.3;
+  const course = isCoarse() ? 3.6 : 1.3;
   const n = Math.ceil(shaftH / course);
   for (let i = 0; i < n; i++) {
     const t0 = i / n;

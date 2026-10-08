@@ -81,7 +81,7 @@ export class Dressing implements DressingSystem {
     this.group.name = 'dressing';
 
     const defer = (task: () => void) => this.tasks.push(task);
-    this.structures = new Structures(this.terrain, { exclusions: this.exclusions, colliders: this.colliders, decks: this.decks }, defer);
+    this.structures = new Structures(this.terrain, { exclusions: this.exclusions, colliders: this.colliders, decks: this.decks }, defer, this.quality);
     this.group.add(this.structures.group);
     // Streams avoid built-up ground; their banks then keep trees and grass out of the water.
     const plans = planWaterfalls(this.terrain, this.exclusions);
@@ -118,7 +118,7 @@ export class Dressing implements DressingSystem {
     }
     const all: PropInstance[] = [...this.bankProps];
     for (const shape of this.terrain.islands) all.push(...scatterIsland(shape, this.exclusions, { density: this.quality.propDensity }));
-    this.forest = new Forest(all, this.quality);
+    this.forest = new Forest(all, this.quality, this.terrain.islands);
     this.group.add(this.forest.group);
   }
 
@@ -145,6 +145,7 @@ export class Dressing implements DressingSystem {
     this.grass.update(camera, focus);
     this.forest.update(camera);
     this.roots.update(camera);
+    this.structures.update(camera);
   }
 
   setQuality(q: QualityProfile): void {
@@ -155,6 +156,7 @@ export class Dressing implements DressingSystem {
     else this.forest.setQuality(q);
     this.water.setQuality(q);
     this.roots.setQuality(q);
+    this.structures.setQuality(q);
   }
 
   private colliderDebug: Group | null = null;

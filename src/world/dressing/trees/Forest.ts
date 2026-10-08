@@ -39,9 +39,17 @@ interface SpeciesBucket {
  * LOD distance scale per quality level: 'low' hands trees down to cheaper levels at half the
  * distance (a quarter of the area), 'ultra' keeps detail further out.
  */
-export const FOREST_LOD_SCALE: Record<QualityProfile['level'], number> = { low: 0.5, medium: 0.75, high: 1, ultra: 1.3 };
+export const FOREST_LOD_SCALE: Record<QualityProfile['level'], number> = { low: 0.4, medium: 0.7, high: 1, ultra: 1.3 };
+
+/** What the forest needs to know about an island to tell when it hides its own trees. */
+export interface IslandOccluder {
+  def: { id: number };
+  normRadius(x: number, z: number): number;
+  bottomHeight(x: number, z: number): number;
+}
 
 interface IslandGroup {
+  islandId: number;
   sphere: Sphere;
   /** Indices into the packed instance arrays. */
   start: number;
@@ -138,7 +146,14 @@ export class Forest {
   /** Buckets indexed like SPECIES_IDS (speciesOf values). */
   private bucketList: (SpeciesBucket | undefined)[] = [];
 
-  constructor(instances: PropInstance[], quality: QualityProfile) {
+  private occluders = new Map<number, IslandOccluder>();
+
+  /**
+   * `islands` (optional) lets the forest skip an island's trees while the camera is underneath
+   * it: from below the footprint, the island's own rock hides everything on its top.
+   */
+  constructor(instances: PropInstance[], quality: QualityProfile, islands: readonly IslandOccluder[] = []) {
+    for (const sh of islands) this.occluders.set(sh.def.id, sh);
     this.group.name = 'dressing:forest';
     this.shadows = quality.shadows;
     this.lodScale = FOREST_LOD_SCALE[quality.level];
@@ -182,7 +197,7 @@ export class Forest {
         r = Math.max(r, Math.hypot(p.x - c.x, p.y - c.y, p.z - c.z) + spec.height * p.scale * 1.3);
         reach = Math.max(reach, spec.lodDist[spec.lodDist.length - 1] * Math.sqrt(p.scale));
       }
-      this.groups.push({ sphere: new Sphere(c, r), start, end, reach });
+      this.groups.push({ islandId: island, sphere: new Sphere(c, r), start, end, reach });
       start = end;
     }
 
@@ -275,6 +290,8 @@ export class Forest {
       const dc = g.sphere.center.distanceTo(camera.position) - g.sphere.radius;
       if (dc > g.reach || dc * dc > far2) continue;
       if (!_frustum.intersectsSphere(g.sphere)) continue;
+      const occ = this.occluders.get(g.islandId);
+      if (occ && cy < g.sphere.center.y && occ.normRadius(cx, cz) < 0.95 && cy < occ.bottomHeight(cx, cz) - 2) continue;
       for (let i = g.start; i < g.end; i++) {
         const b = bucketList[this.speciesOf[i]]!;
         const dx = this.pos[i * 3] - cx;

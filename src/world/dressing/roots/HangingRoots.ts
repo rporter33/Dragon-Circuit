@@ -28,6 +28,7 @@ interface IslandRoots {
   far: Group;
   center: Vector3;
   radius: number;
+  shape: { normRadius(x: number, z: number): number; topHeight(x: number, z: number): number };
 }
 
 const barkTop = new Color('#3f3129');
@@ -47,6 +48,8 @@ function rootRadius(s: Strand, t: number, i: number): number {
 
 /** Far detail: every other point along a strand, three sides to a tube. */
 let farDetail = false;
+/** Lean near detail ('low' quality): full length, fewer sides. */
+let leanNear = false;
 
 function strandGeometry(s: Strand, b: GeoBuilder): void {
   let pts = s.points.map((p) => new Vector3(p.x, p.y, p.z));
@@ -76,7 +79,7 @@ function strandGeometry(s: Strand, b: GeoBuilder): void {
 function addStrandTube(s: Strand, b: GeoBuilder, pts: Vector3[], len: number, radius: (t: number, i: number) => number, top: Vector3): void {
   const n = pts.length;
   const radii = pts.map((_, i) => radius(i / (n - 1), i));
-  const radial = farDetail ? (s.kind === 'root' && s.r0 > 1.2 ? 4 : 3) : s.kind === 'root' ? (s.r0 > 1.2 ? 6 : 5) : 3;
+  const radial = farDetail || leanNear ? (s.kind === 'root' && s.r0 > 1.2 ? 4 : 3) : s.kind === 'root' ? (s.r0 > 1.2 ? 6 : 5) : 3;
   const geo = tube(pts, radii, radial, true);
   // Map each vertex to its fraction down the strand by height (strands hang roughly downward).
   const span = Math.max(1, top.y - pts[n - 1].y);
@@ -191,6 +194,7 @@ export class HangingRoots {
   private farDist: number;
   /** Thin strands (vines, glow threads, slim roots) kept at this quality. */
   private thinKeep: number;
+  private lean: boolean;
 
   /**
    * Builds one island per deferred task (Rootfall alone is a few hundred thousand triangles), in
@@ -200,6 +204,7 @@ export class HangingRoots {
     this.group.name = 'dressing:roots';
     this.farDist = FAR_DIST[quality?.level ?? 'high'];
     this.thinKeep = Math.min(1, 0.45 + 0.55 * (quality?.propDensity ?? 1));
+    this.lean = quality?.level === 'low';
     const islands = [...new Set<number>([...plan.strands.map((s) => s.islandId), ...plan.curtains.map((c) => c.islandId)])];
     // Nearest the Roost first.
     const dist = (id: number) => {
@@ -213,8 +218,9 @@ export class HangingRoots {
   private buildIsland(terrain: Terrain, plan: RootPlan, id: number): void {
     const shape = terrain.islands.find((s) => s.def.id === id)!;
     const d = shape.def;
-    const entry: IslandRoots = { near: new Group(), far: new Group(), center: new Vector3(d.x, d.y - d.depth * 0.5, d.z), radius: shape.maxRadius + d.depth * 0.5 };
+    const entry: IslandRoots = { near: new Group(), far: new Group(), center: new Vector3(d.x, d.y - d.depth * 0.5, d.z), radius: shape.maxRadius + d.depth * 0.5, shape };
     entry.far.visible = false;
+    leanNear = this.lean;
     for (const far of [false, true]) {
       farDetail = far;
       const solid = new GeoBuilder();
@@ -243,6 +249,7 @@ export class HangingRoots {
       this.addMesh(into, glow, dressMaterial({ sway: 'root', glow: true, glowDay: 0.2, glowNight: 3.2 }), `glowroots-${id}${far ? '-far' : ''}`, far);
     }
     farDetail = false;
+    leanNear = false;
     this.group.add(entry.near, entry.far);
     this.islands.push(entry);
   }
@@ -264,9 +271,11 @@ export class HangingRoots {
   update(camera: PerspectiveCamera): void {
     const c = camera.position;
     for (const e of this.islands) {
+      // Standing on (or flying low over) the island itself, its rock hides everything under it.
+      const hidden = c.y > e.center.y && e.shape.normRadius(c.x, c.z) < 0.9 && c.y > e.shape.topHeight(c.x, c.z);
       const far = c.distanceTo(e.center) - e.radius > this.farDist;
-      e.near.visible = !far;
-      e.far.visible = far;
+      e.near.visible = !far && !hidden;
+      e.far.visible = far && !hidden;
     }
   }
 

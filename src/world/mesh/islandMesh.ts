@@ -67,6 +67,11 @@ export interface IslandMeshResult {
   rimRing: Ring;
   footRing: Ring;
   topVertexCount: number;
+  /**
+   * Index count of the top, brow and cliff band; the underside follows. A renderer can draw
+   * only one part when the island's own rock hides the other (see World).
+   */
+  splitIndex: number;
 }
 
 /** Per-LOD spacing, shrunk for small islands so islets still get a proper shape. */
@@ -299,6 +304,7 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
     }
   }
   const footRing = prev;
+  const splitIndex = b.indexCount;
   yield;
 
   // --- Underside --------------------------------------------------------------------------------
@@ -348,7 +354,7 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
     painter.paint(b, i, region[i] as Region, aux[i], normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
     if (i % (SLICE / 4) === SLICE / 4 - 1) yield;
   }
-  return { data: b.finish(normals), rimRing, footRing, topVertexCount };
+  return { data: b.finish(normals), rimRing, footRing, topVertexCount, splitIndex };
 }
 
 /** Drives a builder generator to completion synchronously. */
