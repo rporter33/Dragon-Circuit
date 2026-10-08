@@ -10,7 +10,8 @@ import { buildRig } from './rig';
 import { PATTERN_IDS } from './materials';
 import { aimRotation, solveTwoBone } from './ik';
 import { Gait, footPhase, type GaitContext } from './gait';
-import { flapPose, stroke, upstrokeFold, W } from './wingPoses';
+import { flapPose, heavyStroke, stroke, strokeLoad, upstrokeFold, W } from './wingPoses';
+import { STAND_ROOT_PITCH } from './animator';
 
 const look = (breed: BreedId, extra: Partial<WyvernLook> = {}): WyvernLook => ({ ...DEFAULT_WYVERN, breed, ...extra });
 
@@ -405,5 +406,202 @@ describe('pure helpers', () => {
     expect(swings).toBeGreaterThan(20);
     expect(footPhase(0.1, 0, 0.6).swing).toBe(false);
     expect(footPhase(0.7, 0, 0.6).swing).toBe(true);
+  });
+});
+
+describe('weight and life (client direction: a big, heavy dragon)', { timeout: 60000 }, () => {
+  /** Saddle and head heights (relative to the body center) over the last wingbeat of a flight. */
+  function beat(breed: BreedId) {
+    const w = new Wyvern(look(breed));
+    const pose = gliding();
+    pose.flapStrength = 1;
+    const rate = BREEDS[breed].flapRate;
+    const samples: { phase: number; saddle: number; head: number }[] = [];
+    const n = Math.round(60 / rate);
+    for (let i = 0; i < 600; i++) {
+      pose.flapPhase = ((i / 60) * rate) % 1;
+      pose.position.z += 24 / 60;
+      pose.lookTarget.z += 24 / 60;
+      w.update(1 / 60, pose);
+      if (i >= 600 - n) {
+        samples.push({
+          phase: pose.flapPhase,
+          saddle: w.saddle.getWorldPosition(_p).y - pose.position.y,
+          head: w.getHead(_q).y - pose.position.y,
+        });
+      }
+    }
+    w.dispose();
+    const range = (k: 'saddle' | 'head') => Math.max(...samples.map((s) => s[k])) - Math.min(...samples.map((s) => s[k]));
+    const peak = (k: 'saddle' | 'head') => samples.reduce((a, b) => (b[k] > a[k] ? b : a)).phase;
+    return { saddleRange: range('saddle'), headRange: range('head'), saddlePeak: peak('saddle'), headPeak: peak('head') };
+  }
+
+  it('heaves the saddle up through the downstroke and lets it sink on the recovery; heavier breeds heave more', () => {
+    const h = beat('harrier');
+    // Highest around the bottom of the stroke (phase 0.5), lowest near the top.
+    expect(h.saddlePeak).toBeGreaterThan(0.35);
+    expect(h.saddlePeak).toBeLessThan(0.65);
+    expect(h.saddleRange).toBeGreaterThan(0.15);
+    expect(h.saddleRange).toBeLessThan(0.6);
+    expect(beat('ironback').saddleRange).toBeGreaterThan(beat('skimmer').saddleRange * 1.4);
+  });
+
+  it('holds the head steadier than the body, trailing it (neck lag)', () => {
+    const h = beat('harrier');
+    expect(h.headRange).toBeLessThan(h.saddleRange * 0.8);
+    // The head's high point comes after the body's (modulo the cycle).
+    const lag = (h.headPeak - h.saddlePeak + 1) % 1;
+    expect(lag).toBeGreaterThan(0.01);
+    expect(lag).toBeLessThan(0.3);
+  });
+
+  it('hangs at the top of the stroke and loads the wing hardest on the way down', () => {
+    // Same endpoints as the plain stroke, so the flap event still lands at the bottom.
+    expect(heavyStroke(0, 1)).toBeCloseTo(0);
+    expect(heavyStroke(0.5, 1)).toBeCloseTo(1);
+    // The heavy wing has barely left the top a fifth of the way into the downstroke.
+    expect(heavyStroke(0.1, 1)).toBeLessThan(stroke(0.1) * 0.75);
+    // Load: positive through the downstroke, slack (negative) on the recovery.
+    expect(strokeLoad(0.3)).toBeGreaterThan(0.8);
+    expect(strokeLoad(0.75)).toBeLessThan(0);
+    // A loaded wing bows its membrane up (billow uniform) on the downstroke.
+    const w = new Wyvern(look('harrier'));
+    const pose = gliding();
+    pose.flapStrength = 1;
+    let down = 0;
+    let up = 0;
+    for (let i = 0; i < 240; i++) {
+      pose.flapPhase = ((i / 60) * 1.6) % 1;
+      w.update(1 / 60, pose);
+      const b = w.uniforms.uWingLoad.value.x;
+      if (pose.flapPhase > 0.3 && pose.flapPhase < 0.45) down = Math.max(down, b);
+      if (pose.flapPhase > 0.75 && pose.flapPhase < 0.95) up = Math.max(up, b);
+    }
+    expect(down).toBeGreaterThan(0.15);
+    expect(up).toBeLessThan(down * 0.5);
+    w.dispose();
+  });
+
+  it('folds the wings back along the flank on the ground: tips up off the ground, behind the shoulder (VIS-17)', () => {
+    for (const breed of BREED_ORDER) {
+      const w = new Wyvern(look(breed));
+      const pose = standing(breed);
+      for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
+      const l = new Vector3();
+      const r = new Vector3();
+      w.getWingtips(l, r);
+      const sh = BREEDS[breed].standHeight;
+      const shoulder = boneWorld(w, 'humerusL');
+      for (const tip of [l, r]) {
+        // Not a second pair of stilts: the tips ride well above the ground...
+        expect(tip.y - 10).toBeGreaterThan(0.5 * sh);
+        // ...back along the body, behind the shoulder, and close in to the flank.
+        expect(tip.z).toBeLessThan(shoulder.z - 0.4);
+        expect(Math.abs(tip.x)).toBeLessThan(BREEDS[breed].wingspan * 0.2);
+      }
+      expect(w.uniforms.uFold.value).toBeGreaterThan(0.95);
+      w.dispose();
+    }
+  });
+
+  it('settles on landing: the body sinks into the legs and springs back', () => {
+    const w = new Wyvern(look('harrier'));
+    const sh = BREEDS.harrier.standHeight;
+    const pose = standing('harrier');
+    pose.airborne = true;
+    pose.wingSpread = 1;
+    pose.velocity.set(0, -6, 6);
+    for (let i = 0; i < 30; i++) w.update(1 / 60, pose);
+    pose.airborne = false;
+    pose.wingSpread = 0.22;
+    pose.velocity.set(0, 0, 0);
+    const ys: number[] = [];
+    for (let i = 0; i < 150; i++) {
+      w.update(1 / 60, pose);
+      ys.push(w.saddle.getWorldPosition(_p).y);
+    }
+    const rest = ys[ys.length - 1];
+    const low = Math.min(...ys.slice(0, 40));
+    // A visible sink (several cm on a hard landing), then back to rest.
+    expect(rest - low).toBeGreaterThan(0.04);
+    expect(rest - low).toBeLessThan(0.5 * sh);
+    expect(Math.abs(ys[ys.length - 2] - rest)).toBeLessThan(0.005);
+    w.dispose();
+  });
+
+  it('shakes out on the ruffle (head, wings, tail) and settles back to the folded stance', () => {
+    const w = new Wyvern(look('harrier'));
+    const pose = standing('harrier');
+    for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
+    const l0 = new Vector3();
+    const r0 = new Vector3();
+    w.getWingtips(l0, r0);
+    const head0 = w.getHead(new Vector3());
+    let headSwing = 0;
+    let wingLift = 0;
+    for (let i = 0; i <= 84; i++) {
+      pose.ruffle = Math.min(1, i / 84);
+      w.update(1 / 60, pose);
+      headSwing = Math.max(headSwing, Math.abs(w.getHead(_p).x - head0.x));
+      w.getWingtips(_p, _q);
+      wingLift = Math.max(wingLift, _p.y - l0.y);
+    }
+    expect(headSwing).toBeGreaterThan(0.15);
+    expect(wingLift).toBeGreaterThan(1);
+    pose.ruffle = 0;
+    for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
+    w.getWingtips(_p, _q);
+    expect(_p.distanceTo(l0)).toBeLessThan(0.1);
+    w.dispose();
+  });
+
+  it('builds up exertion on a long climb and pants it off at rest', () => {
+    const w = new Wyvern(look('harrier'));
+    const pose = gliding();
+    pose.flapStrength = 1;
+    for (let i = 0; i < 60 * 12; i++) {
+      pose.flapPhase = ((i / 60) * 1.6) % 1;
+      w.update(1 / 60, pose);
+    }
+    const anim = (w as unknown as { animator: { exertion: number } }).animator;
+    const after = anim.exertion;
+    expect(after).toBeGreaterThan(0.4);
+    const rest = standing('harrier');
+    for (let i = 0; i < 60 * 10; i++) w.update(1 / 60, rest);
+    expect(anim.exertion).toBeLessThan(after - 0.4);
+    w.dispose();
+  });
+});
+
+describe('seat', () => {
+  it('reports the standing seat in the body frame, matching the saddle anchor (mount/dismount line-up)', () => {
+    for (const breed of BREED_ORDER) {
+      for (const saddle of ['rider', 'racing', 'royal', 'nomad']) {
+        const w = new Wyvern(look(breed, { saddle }));
+        const pose = standing(breed);
+        for (let i = 0; i < 90; i++) w.update(1 / 60, pose);
+        const seat = w.seatOffset(new Vector3());
+        const anchor = w.saddle.getWorldPosition(new Vector3()).sub(pose.position);
+        // Within a couple of cm (breathing moves the body a hair).
+        expect(seat.distanceTo(anchor)).toBeLessThan(0.025);
+        expect(seat.y).toBeGreaterThan(0.5);
+        expect(seat.z).toBeGreaterThan(0);
+        w.dispose();
+      }
+    }
+    expect(STAND_ROOT_PITCH).toBeLessThan(0);
+  });
+
+  it('straddles a horse-like width at the seat and holds the grip up and forward', () => {
+    for (const breed of BREED_ORDER) {
+      const w = new Wyvern(look(breed));
+      expect(w.saddle.userData.halfWidth).toBeGreaterThan(0.4);
+      expect(w.saddle.userData.halfWidth).toBeLessThanOrEqual(0.5);
+      const g = w.saddle.userData.gripOffset as Vector3;
+      expect(g.y).toBeGreaterThan(0.32);
+      expect(g.z).toBeGreaterThan(0.45);
+      w.dispose();
+    }
   });
 });

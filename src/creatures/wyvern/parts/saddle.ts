@@ -151,13 +151,17 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
   const topY = st.center.y + st.upper;
   const scale = clamp(S.torsoHalfWidth / 0.8, 0.75, 1.25);
   const m = (x: number) => x * scale;
-  // Half-width where the thighs grip: ~0.3 m below the top of the back.
+  // Half-width where the thighs grip: ~0.3 m below the top of the back, capped so a rider on a
+  // broad back still sits a horse-like straddle (knees in, shins down the flanks) rather than
+  // splaying (the saddle flaps and blanket cover the difference).
   const depth = 0.3;
   const c = clamp(1 - depth / st.upper, -1, 1);
   const sn = Math.sqrt(1 - Math.pow(Math.abs(c), st.squareness));
-  const halfWidth = Math.pow(sn, 2 / st.squareness) * st.halfWidth;
+  const bodyHalfWidth = Math.pow(sn, 2 / st.squareness) * st.halfWidth;
+  const halfWidth = Math.min(bodyHalfWidth, 0.44 + 0.06 * clamp((S.torsoHalfWidth - 0.5) / 0.5, 0, 1));
   const seat = new Vector3(0, topY + 0.12, rig.seat.z);
-  const grip = new Vector3(0, 0.3, 0.42);
+  // Hands on the pommel: up and forward of the hips, so the arms reach naturally.
+  const grip = new Vector3(0, 0.36, 0.5);
   const p = new Vector3();
   const n = new Vector3();
 
@@ -331,7 +335,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       girth(b, rig, sc - m(0.75), 0.12, skin);
       girth(b, rig, sc + m(0.85), 0.12, skin);
       seat.y = topY + 0.24;
-      grip.set(0, 0.32, 0.4);
+      grip.set(0, 0.38, 0.47);
       break;
     }
     case 'nomad':

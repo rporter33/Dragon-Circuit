@@ -147,30 +147,60 @@ export function upstrokeFold(phase: number): number {
 }
 
 /**
+ * Stroke position of a heavy wing: like `stroke` (0 high, 1 at the bottom, same timing at 0 and
+ * 0.5 so the flap event still lands on the bottom), but the wing hangs at the top while it
+ * loads, then drives through the middle of the downstroke; the recovery is quicker. `heft`
+ * (0 light … 1 heaviest breed) deepens the hang.
+ */
+export function heavyStroke(phase: number, heft: number): number {
+  let p = phase - Math.floor(phase);
+  if (p < 0.5) {
+    const x = p * 2;
+    return 0.5 - 0.5 * Math.cos(Math.PI * Math.pow(x, 1.25 + 0.35 * heft));
+  }
+  p = (p - 0.5) * 2;
+  return 0.5 + 0.5 * Math.cos(Math.PI * Math.pow(p, 0.85));
+}
+
+/**
+ * How hard the air pushes on the wing over a beat (0 slack … 1 peak of the power stroke, slightly
+ * negative while the wing feathers up through the recovery). Peaks in the second half of the
+ * downstroke, when the heavy wing is moving fastest.
+ */
+export function strokeLoad(phase: number): number {
+  const p = phase - Math.floor(phase);
+  if (p < 0.5) return Math.pow(Math.sin(Math.PI * Math.pow(p * 2, 1.15)), 1.4);
+  return -0.35 * Math.sin(Math.PI * (p - 0.5) * 2);
+}
+
+/**
  * The flapping wing at a phase: a powerful, fully extended downstroke with the leading edge
  * pronated, then an upstroke with the elbow and wrist flexed so the tips fold and trail.
  * Distal joints lag the shoulder, so the wave runs out to the tips. `labor` (fatigue) deepens
- * the stroke and droops the tips.
+ * the stroke and droops the tips; `heft` (0 light … 1 heaviest) makes the stroke bigger, the
+ * hang at the top longer and the tips lag further behind the arm.
  */
-export function flapPose(phase: number, labor: number, out: WingPose): WingPose {
-  const c = (lag: number) => stroke(phase - lag);
+export function flapPose(phase: number, labor: number, out: WingPose, heft = 0.4): WingPose {
   const u = upstrokeFold(phase - 0.03);
   const s2 = Math.sin((phase - 0.02) * Math.PI * 2);
   out.fill(0);
-  const top = 50 + 6 * labor;
-  const bottom = -34 - 4 * labor;
-  out[W.humEl] = (top + (bottom - top) * c(0)) * DEG;
+  const top = 50 + 6 * labor + 5 * heft;
+  const bottom = -34 - 4 * labor - 4 * heft;
+  out[W.humEl] = (top + (bottom - top) * heavyStroke(phase, heft)) * DEG;
   out[W.humSw] = (-7 * s2 + 10 * u) * DEG;
   out[W.humTw] = (13 * s2) * DEG;
-  out[W.foreEl] = (12 - 22 * c(0.05)) * DEG;
+  out[W.foreEl] = (12 - 22 * heavyStroke(phase - 0.05, heft)) * DEG;
   out[W.foreSw] = (-34 * u) * DEG;
   out[W.foreTw] = (4 * s2) * DEG;
-  out[W.handEl] = (10 - 22 * c(0.09) - 6 * u) * DEG;
+  out[W.handEl] = (10 - 22 * heavyStroke(phase - 0.09, heft) - 6 * u) * DEG;
   out[W.handSw] = (46 * u) * DEG;
   out[W.handTw] = (6 * s2 - 8 * u) * DEG;
-  const tipEl = (14 * Math.sin((phase - 0.14) * Math.PI * 2) - 8 * labor * u) * DEG;
+  // The tips trail the arm: bent up while the arm drives down, flicking through at the bottom,
+  // trailing low on the way up. Heavier wings lag more.
+  const lag = 0.14 + 0.04 * heft;
+  const tipEl = ((14 + 9 * heft) * Math.sin((phase - lag) * Math.PI * 2) - 8 * labor * u) * DEG;
   for (let f = 0; f < 3; f++) {
-    const el = (10 - 20 * c(0.13 + 0.02 * f)) * DEG;
+    const el = (10 - 20 * heavyStroke(phase - 0.13 - 0.02 * f - 0.03 * heft, heft)) * DEG;
     out[W.f0El + f * 3] = el;
     out[W.f0Sw + f * 3] = (-(10 + 12 * f) * u) * DEG;
     out[W.f0Tw + f * 3] = (4 * s2) * DEG;
@@ -178,6 +208,22 @@ export function flapPose(phase: number, labor: number, out: WingPose): WingPose 
     out[W.f0bSw + f * 2] = 6 * u * DEG;
   }
   return out;
+}
+
+/**
+ * Bend the fingers under the air load (`load` ≈ −0.4 slack … 1.5 hard power stroke): loaded
+ * fingers bow up toward their tips like fishing rods, the wrist gives a little and the tips
+ * spread; slack fingers droop. Added on top of a blended pose.
+ */
+export function loadPose(out: WingPose, load: number): void {
+  out[W.handEl] += 3 * load * DEG;
+  for (let f = 0; f < 3; f++) {
+    const k = 1 - 0.18 * f;
+    out[W.f0El + f * 3] += 4.5 * load * k * DEG;
+    out[W.f0bEl + f * 2] += 8 * load * k * DEG;
+    // Spread under load: the outer finger sweeps forward, the inner ones back.
+    out[W.f0Sw + f * 3] += (f - 1) * 2 * Math.max(0, load) * DEG;
+  }
 }
 
 /**
@@ -203,6 +249,40 @@ export function adjustPose(out: WingPose, gLoad: number, asym: number, buffet: n
   out[W.humTw] += buffetTw * 10 * DEG;
   out[W.handEl] += buffet * 6 * DEG;
   for (let f = 0; f < 3; f++) out[W.f0bEl + f * 2] += buffet * (8 + 3 * f) * DEG;
+}
+
+/**
+ * Wing shake-out (a dog-like ruffle): half open and raised, then shuddering at `shudder`
+ * (−1..1, the oscillation value) with the fingers flicking. Blend weight is the caller's.
+ */
+export const RUFFLE = pose({
+  humEl: 34,
+  humSw: 22,
+  humTw: -6,
+  foreEl: 8,
+  foreSw: -78,
+  handEl: -10,
+  handSw: 92,
+  f0El: 4,
+  f0Sw: 4,
+  f1El: 4,
+  f1Sw: -16,
+  f2El: 4,
+  f2Sw: -34,
+  f0bEl: -4,
+  f1bEl: -4,
+  f2bEl: -4,
+});
+
+export function shudderPose(out: WingPose, shudder: number, flick: number): void {
+  out[W.humEl] += 9 * shudder * DEG;
+  out[W.humTw] += 7 * shudder * DEG;
+  out[W.foreSw] += 10 * shudder * DEG;
+  out[W.handSw] += -12 * shudder * DEG;
+  for (let f = 0; f < 3; f++) {
+    out[W.f0El + f * 3] += (6 + 2 * f) * flick * DEG;
+    out[W.f0bEl + f * 2] += (10 + 3 * f) * flick * DEG;
+  }
 }
 
 /** Ease for the takeoff/landing opening of the wings on the ground. */

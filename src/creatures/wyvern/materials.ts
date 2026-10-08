@@ -18,6 +18,7 @@ import {
   DoubleSide,
   FrontSide,
   MeshToonMaterial,
+  Vector2,
   Vector3,
   type IUniform,
   type WebGLProgramParametersWithUniforms,
@@ -58,6 +59,18 @@ export interface WyvernUniforms {
   uRipple: IUniform<number>;
   /** Scale of the body (patterns are authored for a ~3.3 m torso). */
   uBodyScale: IUniform<number>;
+  /**
+   * Membrane billow under the air load (m at the panel's middle), left wing in x, right in y:
+   * + bows the membrane up like a filled sail (power stroke, g-load), − lets it sag (recovery).
+   */
+  uWingLoad: IUniform<Vector2>;
+  /** 0..1 how folded the wings are on the ground: bunched membranes read darker and denser. */
+  uFold: IUniform<number>;
+  /**
+   * 0..1 dark contour where the surface turns away from the camera, so pale palettes keep a
+   * silhouette against white cloud. 1 for the player's mount, 0 for ghosts and showroom extras.
+   */
+  uContour: IUniform<number>;
 }
 
 export function createWyvernUniforms(): WyvernUniforms {
@@ -79,10 +92,14 @@ export function createWyvernUniforms(): WyvernUniforms {
     uFlutterRate: { value: 20 },
     uRipple: { value: 0 },
     uBodyScale: { value: 1 },
+    uWingLoad: { value: new Vector2() },
+    uFold: { value: 0 },
+    uContour: { value: 1 },
   };
 }
 
 const _hsl = { h: 0, s: 0, l: 0 };
+const _c = new Color();
 
 /** Write a look's colors into the uniforms (cheap; no rebuild). */
 export function applyLookUniforms(u: WyvernUniforms, look: WyvernLook): void {
@@ -314,6 +331,8 @@ uniform vec3 uMembrane;
 uniform vec3 uSaddle;
 uniform vec3 uCloth;
 uniform float uBodyScale;
+uniform float uFold;
+uniform float uContour;
 varying vec3 vBodyPos;
 varying vec4 vMat;
 varying vec2 vUv2;
@@ -337,6 +356,11 @@ vec3 dwMembraneAlbedo(out float trans) {
     c = mix(c, mix(uPrimary, uSecondary, 0.5), (1.0 - thin) * 0.45);
     c = mix(c, uSecondary * 0.7, smoothstep(0.93, 1.0, edge) * 0.6);
     trans = clamp(thin * (1.0 - 0.75 * vein) * (1.0 - bone * 0.5), 0.0, 1.0);
+    // Folded on the ground the membrane bunches into deep pleats along the bones: darker, banded
+    // light and shade, little light through.
+    float pleat = 0.5 + 0.5 * sin(vUv2.y * 25.13 + vUv2.x * 3.0);
+    c *= 1.0 - uFold * (0.24 + 0.1 * vein + 0.26 * pleat * thin);
+    trans *= 1.0 - 0.7 * uFold;
     return c;
   }
   if (region == 1) {
@@ -375,6 +399,9 @@ varying vec2 vUv2;
 uniform float uFlutter;
 uniform float uFlutterRate;
 uniform float uRipple;
+uniform vec2 uWingLoad;
+uniform float uFold;
+uniform float uBodyScale;
 `;
 
 const VERT_BEGIN = /* glsl */ `
@@ -393,6 +420,14 @@ vUv2 = aUv2;
   float f = aMat.w * (uFlutter * sin(ph) + uFlutter * 0.4 * sin(ph * 2.3 + 1.7));
   float r = aMat.w * uRipple * 0.08 * sin(uTime * 3.1 - position.z * 2.4 + position.y * 1.3);
   transformed += objectNormal * (f + r);
+  // Wing membranes bow under the air load like a filled sail: most in the middle of each panel
+  // (aMat.y, 0 at the bones), up along the bind pose's dorsal axis, per wing.
+  if (aMat.x < 0.5) {
+    float load = position.x > 0.0 ? uWingLoad.x : uWingLoad.y;
+    transformed.y += load * aMat.y * (1.0 - 0.35 * aMat.y);
+    // Folded, the skin gathers into pleats running along the bones (an accordion across v).
+    transformed.y += uFold * 0.045 * uBodyScale * aMat.y * sin(aUv2.y * 25.13 + aUv2.x * 3.0);
+  }
 }
 `;
 
