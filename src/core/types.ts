@@ -435,7 +435,18 @@ export interface Settings {
   quality: QualityLevel;
   /** 0.5..1 render scale on top of devicePixelRatio cap. */
   resolutionScale: number;
+  /** Invert flight pitch (pull forward = climb) on every device, unless overridden below. */
   invertPitch: boolean;
+  /** Optional per-device overrides of invertPitch: the stick, and the keys (and mouse steering). Absent = follow invertPitch. */
+  invertPitchPad?: boolean;
+  invertPitchKeys?: boolean;
+  /** Optional: invert the camera's vertical look (stick and mouse). Absent = not inverted. */
+  invertLookY?: boolean;
+  /**
+   * Optional, keyboard + mouse: while the mouse is captured in flight it steers (a virtual stick
+   * for bank and pitch); hold the middle button to look around instead. Absent = off.
+   */
+  mouseFlight?: boolean;
   /** 0.25..2 */
   lookSensitivity: number;
   /** Base vertical FOV in degrees. */
