@@ -160,9 +160,11 @@ export class Input implements InputSystem, RumbleSink {
       // macOS swallows keyups for other keys while Cmd is held; drop everything when it lifts.
       if (e.key === 'Meta') this.keys.clear();
     });
-    window.addEventListener('blur', () => this.releaseAll());
+    // Losing focus mid-flight (alt-tab on a controller, a notification) pauses, like losing the
+    // captured mouse does; and nothing stays "held" while we can't see the key going up.
+    window.addEventListener('blur', () => this.focusLost());
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.releaseAll();
+      if (document.hidden) this.focusLost();
     });
 
     window.addEventListener('mousemove', (e) => this.onMouseMove(e));
@@ -412,6 +414,11 @@ export class Input implements InputSystem, RumbleSink {
     }
     // Uncaptured look: right-drag in play; any drag in menus / the stable.
     if (e.button === 2 || (e.button === 0 && !this.wantLock)) this.dragButton = e.button;
+  }
+
+  private focusLost(): void {
+    this.releaseAll();
+    if (this.wantLock) this.pendingPause = true;
   }
 
   private releaseAll(): void {

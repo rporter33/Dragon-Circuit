@@ -18,7 +18,8 @@
 //  - Tap-to-flap (Settings.holdToFlap = false): each press gives exactly one wingbeat whose
 //    strength is the trigger's peak during the press. Held mode beats continuously.
 //  - Esc (or anything else that releases the captured mouse during play, like alt-tab) pauses.
-//    A controller disconnecting during play also pauses.
+//    Losing window focus and a controller disconnecting during play also pause.
+//  - X is deliberately unbound: free for a future action (e.g. whistle for your wyvern).
 //  - Menus: left stick, D-pad, arrows or WASD navigate with auto-repeat (380 ms, then 90 ms).
 //    In the stable, the right stick or a mouse drag turns the view, and RT/LT or the wheel zoom.
 
