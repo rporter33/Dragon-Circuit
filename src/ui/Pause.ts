@@ -134,7 +134,13 @@ export class Pause extends Panel {
     this.root.style.opacity = '0';
   }
 
-  override update(_dt: number, view: GameView): void {
+  private refreshIn = 0;
+
+  override update(dt: number, view: GameView): void {
+    // The world is paused; a few refreshes a second keep "where / when" honest.
+    this.refreshIn -= dt;
+    if (this.refreshIn > 0) return;
+    this.refreshIn = 0.25;
     this.refresh(view);
   }
 

@@ -25,6 +25,8 @@ export interface Requirement {
   /** Short progress label, e.g. "4/10", "Best: Silver", "Not found". */
   progress: string;
   met: boolean;
+  /** True when progress is a count worth drawing as a bar (feathers, medal tallies). */
+  countable: boolean;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -34,7 +36,7 @@ function plural(n: number, one: string, many: string): string {
 export function describeUnlock(u: Unlock, ctx: UnlockContext): Requirement {
   switch (u.type) {
     case 'default':
-      return { text: 'Available from the start', have: 1, need: 1, progress: '', met: true };
+      return { text: 'Available from the start', have: 1, need: 1, progress: '', met: true, countable: false };
     case 'feathers': {
       const have = Math.min(ctx.feathersFound, u.count);
       return {
@@ -43,6 +45,7 @@ export function describeUnlock(u: Unlock, ctx: UnlockContext): Requirement {
         need: u.count,
         progress: `${have}/${u.count}`,
         met: have >= u.count,
+        countable: true,
       };
     }
     case 'relic': {
@@ -53,6 +56,7 @@ export function describeUnlock(u: Unlock, ctx: UnlockContext): Requirement {
         need: 1,
         progress: found ? 'Found' : 'Not found',
         met: found,
+        countable: false,
       };
     }
     case 'medal': {
@@ -64,6 +68,7 @@ export function describeUnlock(u: Unlock, ctx: UnlockContext): Requirement {
         need: MEDAL_RANK[u.medal],
         progress: best === 'none' ? 'Not yet raced' : `Best: ${medalName(best)}`,
         met: MEDAL_RANK[best] >= MEDAL_RANK[u.medal],
+        countable: false,
       };
     }
     case 'medals': {
@@ -74,6 +79,7 @@ export function describeUnlock(u: Unlock, ctx: UnlockContext): Requirement {
         need: u.count,
         progress: `${have}/${u.count}`,
         met: have >= u.count,
+        countable: true,
       };
     }
   }

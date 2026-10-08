@@ -350,9 +350,16 @@ export class Stable extends Panel {
     name.append(h('span', { text: opt.name }));
     const tile = div(`dw-opt${req ? ' is-locked' : ''}`, name);
     if (req) {
-      const bar = div('dw-bar', h('i'));
-      (bar.firstElementChild as HTMLElement).style.width = `${Math.round((req.have / Math.max(1, req.need)) * 100)}%`;
-      tile.append(div('dw-opt-req', h('span', { text: req.progress && /\d/.test(req.progress) ? `${req.text} · ${req.progress}` : req.text }), bar));
+      const line = req.countable ? `${req.text} · ${req.progress}` : req.text;
+      const reqEl = div('dw-opt-req', h('span', { text: line }));
+      if (req.countable) {
+        const bar = div('dw-bar', h('i'));
+        (bar.firstElementChild as HTMLElement).style.width = `${Math.round((req.have / Math.max(1, req.need)) * 100)}%`;
+        reqEl.append(bar);
+      } else if (req.progress) {
+        reqEl.append(h('div', { class: 'dw-opt-sub', text: req.progress }));
+      }
+      tile.append(reqEl);
     } else {
       tile.append(h('div', { class: 'dw-opt-desc', text: opt.description }));
     }

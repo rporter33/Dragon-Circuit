@@ -46,6 +46,7 @@ interface Marker {
   el: HTMLElement;
   label: LiveText;
   pos: LiveStyle;
+  labelPos: LiveStyle;
   shown: LiveClass;
   near: LiveClass;
   unknown: LiveClass;
@@ -91,16 +92,20 @@ export class Hud {
   private gaugeLow: LiveClass;
   private gaugeWinded: LiveClass;
   private fullTime = 0;
+  private lastArc = -1;
+  private lastStrip = NaN;
 
   // Compass.
   private compass: HTMLElement;
   private compassIdle: LiveClass;
+  private compassLabels: HTMLElement;
   private strip: HTMLElement;
   private stripPos: LiveStyle;
   private markers: Marker[] = [];
   private home: Marker;
   private waypoint: Marker;
   private waypointOn: LiveClass;
+  private startGate: Marker;
   private wp = new Vector3();
   private ribbon = { x: 0, edge: false };
 
@@ -155,10 +160,13 @@ export class Hud {
     }
     this.stripPos = new LiveStyle(this.strip, 'transform');
     const marks = div('dw-compass-marks');
+    // Labels hang below the ribbon in their own layer: the ribbon's edge mask would swallow them.
+    const labels = div('dw-compass-labels');
     const mk = (id: string, x: number, z: number, name: string, icon: string, cls: string): Marker => {
-      const label = h('span', { class: 'dw-mark-label' });
-      const el = div(`dw-mark ${cls}`, fromHtml(icon), label);
+      const label = h('span', { class: `dw-mark-label ${cls}` });
+      const el = div(`dw-mark ${cls}`, fromHtml(icon));
       marks.append(el);
+      labels.append(label);
       return {
         id, x, z, name, el,
         realName: name,
@@ -166,8 +174,9 @@ export class Hud {
         lastName: '',
         label: new LiveText(label),
         pos: new LiveStyle(el, 'transform'),
+        labelPos: new LiveStyle(label, 'transform'),
         shown: new LiveClass(el, 'dw-hidden'),
-        near: new LiveClass(el, 'is-near'),
+        near: new LiveClass(label, 'is-on'),
         unknown: new LiveClass(el, 'is-unknown'),
         lastX: NaN,
       };
@@ -180,13 +189,10 @@ export class Hud {
     this.home = mk('roost', roost?.position[0] ?? 0, roost?.position[2] ?? 0, roost?.name ?? 'The Roost', ICONS.home, 'is-home');
     this.waypoint = mk('waypoint', 0, 0, '', ICONS.waypoint, 'is-waypoint');
     this.waypointOn = new LiveClass(this.waypoint.el, 'dw-hidden');
-    this.compass = div(
-      'dw-compass dw-fadeable',
-      div('dw-compass-band'),
-      this.strip,
-      div('dw-compass-center'),
-      marks,
-    );
+    // Outside a race the waypoint is just the nearest start gate: a quieter ring marker.
+    this.startGate = mk('start', 0, 0, 'Race start', ICONS.race, 'is-start');
+    this.compass = div('dw-compass dw-fadeable', div('dw-compass-band'), this.strip, div('dw-compass-center'), marks);
+    this.compassLabels = labels;
     this.compassIdle = new LiveClass(this.compass, 'is-idle');
 
     // --- Stamina gauge + readouts ------------------------------------------------------------
@@ -245,7 +251,7 @@ export class Hud {
     this.bannerSub = h('div', { class: 'dw-banner-sub' });
     this.banner = div('dw-banner', this.bannerKicker, this.bannerName, fromHtml(RULE), this.bannerSub);
 
-    this.root.append(this.compass, this.stall, this.banner, this.prompt, this.pointerHint, this.flightInfo);
+    this.root.append(this.compass, this.compassLabels, this.stall, this.banner, this.prompt, this.pointerHint, this.flightInfo);
     this.toastLayer = div('dw-toasts');
 
     this.subscribe(ctx.events);
@@ -342,9 +348,12 @@ export class Hud {
     const full = st >= 0.995 && !f.winded;
     this.fullTime = full ? this.fullTime + dt : 0;
     this.gaugeFull.set(this.fullTime > 1.2);
-    // Quantize to a tenth of a percent so the style is only rewritten when the arc moves.
+    // Quantized, and the dash string is only rebuilt when the arc actually moves.
     const len = Math.round(ARC_LEN * st * 10) / 10;
-    this.gaugeDash.set(`${len} ${ARC_C}`);
+    if (len !== this.lastArc) {
+      this.lastArc = len;
+      this.gaugeDash.set(`${len} ${ARC_C}`);
+    }
     this.gaugeLow.set(st < 0.3 && !f.winded);
     this.gaugeWinded.set(f.winded);
 
@@ -384,7 +393,10 @@ export class Hud {
     const halfW = (this.unit * RIBBON_U) / 2;
     // Strip: the current heading sits at the ribbon's center.
     const sx = Math.round((halfW - (heading / DEG / 120) * RIBBON_U * this.unit) * 2) / 2;
-    this.stripPos.set(`translate3d(${sx}px,0,0)`);
+    if (sx !== this.lastStrip) {
+      this.lastStrip = sx;
+      this.stripPos.set(`translate3d(${sx}px,0,0)`);
+    }
 
     const p = view.player.position;
     const discovered = view.save.data.discovered;
@@ -398,11 +410,16 @@ export class Hud {
     this.placeMarker(this.home, p, heading, halfW, false);
 
     const wp = view.races.waypoint(this.wp);
-    this.waypointOn.set(wp === null);
+    const racing = view.races.activeId !== null && view.races.state !== 'idle';
+    this.waypointOn.set(!wp || !racing);
+    this.startGate.shown.set(!wp || racing);
+    if (!wp || !racing) this.waypoint.near.set(false);
+    if (!wp || racing) this.startGate.near.set(false);
     if (wp) {
-      this.waypoint.x = wp.x;
-      this.waypoint.z = wp.z;
-      this.placeMarker(this.waypoint, p, heading, halfW, true);
+      const m = racing ? this.waypoint : this.startGate;
+      m.x = wp.x;
+      m.z = wp.z;
+      this.placeMarker(m, p, heading, halfW, racing);
     }
   }
 
@@ -414,14 +431,20 @@ export class Hud {
     // The waypoint pins to the edge when behind you, so it always says which way to turn.
     const visible = isWaypoint || !this.ribbon.edge;
     m.shown.set(!visible);
-    if (!visible) return;
+    if (!visible) {
+      m.near.set(false);
+      return;
+    }
     const x = Math.round(this.ribbon.x * halfW * 0.92 * 2) / 2;
     if (x !== m.lastX) {
       m.lastX = x;
       m.pos.set(`translate3d(${x}px,0,0)`);
+      // Keep the label inside the readable middle of the ribbon.
+      const lx = Math.max(-halfW * 0.74, Math.min(halfW * 0.74, x));
+      m.labelPos.set(`translate3d(${lx}px,0,0) translateX(-50%)`);
     }
     const near = isWaypoint || Math.abs(rel) < 9 * DEG;
-    if (!isWaypoint) m.near.set(near);
+    m.near.set(near);
     if (!near) return;
     // Distance labels: quantized first, so the string is only rebuilt when it would change.
     const d = isWaypoint ? Math.hypot(dx, dz, this.wp.y - p.y) : Math.hypot(dx, dz);

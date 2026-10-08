@@ -115,6 +115,7 @@ export class Ui implements UiSystem {
     this.hudNote.innerHTML = '<span>HUD hidden</span><span class="dw-hint-g" data-glyph="toggleHud"></span><span>to show</span>';
     this.root.append(this.hud.root, this.raceHud.root, this.hudNote, this.veil, this.stackLayer, this.hud.toastLayer);
     deps.root.append(this.root);
+    this.fillGlyphs(this.root);
     this.subscribe();
     this.setScreen('title');
   }

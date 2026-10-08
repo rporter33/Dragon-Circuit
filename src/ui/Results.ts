@@ -99,6 +99,10 @@ export class Results extends Panel {
       this.retry();
       return;
     }
+    if (p.pause && !p.back) {
+      this.cont();
+      return;
+    }
     super.input(p);
   }
 

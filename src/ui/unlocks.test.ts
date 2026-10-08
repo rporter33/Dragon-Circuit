@@ -19,12 +19,12 @@ function ctx(over: Partial<UnlockContext> = {}): UnlockContext {
 describe('describeUnlock', () => {
   it('feathers: count and progress', () => {
     const r = describeUnlock({ type: 'feathers', count: 10 }, ctx());
-    expect(r).toMatchObject({ text: 'Find 10 feathers', have: 4, need: 10, progress: '4/10', met: false });
+    expect(r).toMatchObject({ text: 'Find 10 feathers', have: 4, need: 10, progress: '4/10', met: false, countable: true });
     expect(describeUnlock({ type: 'feathers', count: 1 }, ctx()).text).toBe('Find 1 feather');
     expect(describeUnlock({ type: 'feathers', count: 3 }, ctx()).met).toBe(true);
   });
   it('relic: names the relic', () => {
-    expect(describeUnlock({ type: 'relic', relicId: 'relic-ember' }, ctx())).toMatchObject({ text: 'Relic: The Ember Heart', progress: 'Not found', met: false });
+    expect(describeUnlock({ type: 'relic', relicId: 'relic-ember' }, ctx())).toMatchObject({ text: 'Relic: The Ember Heart', progress: 'Not found', met: false, countable: false });
     expect(describeUnlock({ type: 'relic', relicId: 'relic-charts' }, ctx()).met).toBe(true);
   });
   it('medal in a race: names the race and your best so far', () => {

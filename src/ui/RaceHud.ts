@@ -54,18 +54,20 @@ export class RaceHud {
   private ringIndex = 0;
   private ringTotal = 0;
   private finalMs = 0;
+  private shownTotal = -1;
+  private shownCs = -1;
+  private shownBest: number | null = -1;
 
   constructor(ctx: RaceHudCtx) {
     this.ctx = ctx;
     const ringsV = h('b', { text: '0' });
     const ringsT = h('span', { text: '/0' });
     const timeV = h('div', { class: 'dw-race-time', text: '0:00.00' });
-    const bestV = h('div', { class: 'dw-race-best' });
+    const bestV = h('span', { text: '—' });
     this.delta = div('dw-race-delta');
     this.cluster = div(
       'dw-race',
-      div('dw-race-row', div('dw-race-rings', fromHtml(ICONS.race), ringsV, ringsT), timeV),
-      bestV,
+      div('dw-race-row', div('dw-race-rings', fromHtml(ICONS.race), ringsV, ringsT), timeV, div('dw-race-best', h('small', { text: 'BEST' }), bestV)),
       this.delta,
     );
     this.rings = new LiveText(ringsV);
@@ -90,7 +92,7 @@ export class RaceHud {
     this.edgeOn = new LiveClass(this.edge, 'is-on');
     this.edgeMissed = new LiveClass(this.edge, 'is-missed');
     this.edgePos = new LiveStyle(this.edge, 'transform');
-    this.missed = div('dw-missed', h('span', { text: 'Missed a ring — turn back' }));
+    this.missed = div('dw-missed', fromHtml(ICONS.race), h('span', { text: 'MISSED A RING — TURN BACK' }));
     this.missedOn = new LiveClass(this.missed, 'is-on');
 
     this.root = div('dw-layer dw-racehud', this.cluster, this.gate, this.count, this.missed, this.edge);
@@ -198,9 +200,20 @@ export class RaceHud {
       const total = def ? def.rings.length : this.ringTotal;
       const passed = running ? Math.min(races.nextRingIndex, total) : total;
       this.rings.set(Math.max(passed, running ? 0 : this.ringIndex));
-      this.ringsTotal.set(`/${total}`);
-      this.time.set(formatTime(running ? races.elapsedMs : this.finalMs));
-      this.best.set(races.bestMs !== null ? `Best ${formatTime(races.bestMs)}` : 'No best time yet');
+      if (total !== this.shownTotal) {
+        this.shownTotal = total;
+        this.ringsTotal.set(`/${total}`);
+      }
+      // The clock shows hundredths, so it changes every frame; only rebuild when it does.
+      const ms = Math.floor((running ? races.elapsedMs : this.finalMs) / 10);
+      if (ms !== this.shownCs) {
+        this.shownCs = ms;
+        this.time.set(formatTime(ms * 10));
+      }
+      if (races.bestMs !== this.shownBest) {
+        this.shownBest = races.bestMs;
+        this.best.set(races.bestMs !== null ? formatTime(races.bestMs) : '—');
+      }
     }
 
     this.gateOn.set(hudVisible && this.armed && races.state !== 'running');

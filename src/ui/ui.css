@@ -21,7 +21,8 @@
   --warn: #ffbd5c;
   --display: 'Cinzel', 'Marcellus', Georgia, 'Times New Roman', serif;
   --body: 'Alegreya Sans', 'Nunito', 'Segoe UI', system-ui, sans-serif;
-  --shadow-text: 0 0 0.3em rgba(22, 13, 7, 0.55), 0 0.05em 0.12em rgba(22, 13, 7, 0.65);
+  --shadow-text: 0 0 0.35em rgba(22, 13, 7, 0.65), 0 0.05em 0.12em rgba(22, 13, 7, 0.8);
+  --plate: linear-gradient(180deg, rgba(42, 30, 23, 0.74), rgba(28, 20, 15, 0.7));
   --ease: cubic-bezier(0.22, 0.8, 0.26, 1);
 
   position: absolute;
@@ -610,9 +611,9 @@
   right: 0;
   top: 0.55em;
   height: 1.55em;
-  background: linear-gradient(180deg, rgba(28, 20, 15, 0.38), rgba(28, 20, 15, 0.22));
-  border-top: 1px solid rgba(246, 234, 208, 0.22);
-  border-bottom: 1px solid rgba(246, 234, 208, 0.22);
+  background: linear-gradient(180deg, rgba(34, 24, 18, 0.62), rgba(28, 20, 15, 0.5));
+  border-top: 1px solid rgba(232, 187, 95, 0.4);
+  border-bottom: 1px solid rgba(232, 187, 95, 0.4);
 }
 .dw-compass-strip {
   position: absolute;
@@ -626,7 +627,7 @@
   top: 1.65em;
   width: 1px;
   height: 0.38em;
-  background: rgba(246, 234, 208, 0.55);
+  background: rgba(246, 234, 208, 0.7);
 }
 .dw-compass-tick.is-mid {
   height: 0.55em;
@@ -690,6 +691,11 @@
 .dw-mark.is-home .dw-icon {
   color: #cfe7ff;
 }
+.dw-mark.is-start .dw-icon {
+  color: var(--gold);
+  width: 0.9em;
+  height: 0.9em;
+}
 .dw-mark.is-waypoint .dw-icon {
   width: 1.05em;
   height: 1.05em;
@@ -697,38 +703,38 @@
   color: var(--gold-hi);
   filter: drop-shadow(0 0 0.35em rgba(255, 200, 100, 0.9));
 }
-.dw-mark-label {
-  position: absolute;
-  top: 2.05em;
-  white-space: nowrap;
-  font-size: 0.7em;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--parch-2);
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-.dw-mark.is-near .dw-mark-label,
-.dw-mark.is-waypoint .dw-mark-label {
-  opacity: 1;
-}
-.dw-mark.is-waypoint .dw-mark-label {
-  color: var(--gold-hi);
-}
-.dw-compass-wrap {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 5em;
-}
-/* Labels hang below the masked ribbon, so they live in their own unmasked layer. */
 .dw-compass-labels {
   position: absolute;
   top: 1.5em;
   left: 50%;
   width: 0;
-  height: 3em;
+  height: 0;
+}
+.dw-mark-label {
+  position: absolute;
+  left: 0;
+  top: 2.15em;
+  white-space: nowrap;
+  padding: 0.05em 0.65em 0.1em;
+  border-radius: 1em;
+  background: rgba(30, 21, 16, 0.64);
+  font-size: 0.74em;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--parch);
+  opacity: 0;
+  transition: opacity 0.3s;
+  will-change: transform;
+}
+.dw-mark-label.is-on {
+  opacity: 1;
+}
+.dw-mark-label.is-waypoint {
+  color: var(--gold-hi);
+  border: 1px solid rgba(232, 187, 95, 0.5);
+}
+.dw-hud .dw-compass.is-idle ~ .dw-compass-labels .dw-mark-label:not(.is-waypoint) {
+  opacity: 0;
 }
 
 /* Stamina gauge + readouts, bottom right. */
@@ -942,7 +948,7 @@
 .dw-stall {
   position: absolute;
   left: 50%;
-  top: 23vh;
+  top: 31vh;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -1081,12 +1087,22 @@
 .dw-banner.is-on {
   opacity: 1;
 }
-.dw-banner::before {
+.dw-banner::before,
+.dw-banner::after {
   content: '';
   position: absolute;
-  inset: -2.5em -6em;
-  background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(25, 15, 8, 0.4), transparent 72%);
+  inset: -1.1em -9em -1.3em;
   z-index: -1;
+  pointer-events: none;
+}
+/* A cinematic band: warm shade fading out at both ends, with gilt hairlines above and below. */
+.dw-banner::before {
+  background: linear-gradient(90deg, transparent, rgba(32, 22, 16, 0.52) 24%, rgba(32, 22, 16, 0.52) 76%, transparent);
+}
+.dw-banner::after {
+  background:
+    linear-gradient(90deg, transparent, rgba(255, 220, 150, 0.65) 30%, rgba(255, 220, 150, 0.65) 70%, transparent) top / 100% 1px no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 220, 150, 0.65) 30%, rgba(255, 220, 150, 0.65) 70%, transparent) bottom / 100% 1px no-repeat;
 }
 .dw-banner-kicker {
   font-family: var(--display);
@@ -1214,13 +1230,14 @@
 .dw-race-row {
   display: flex;
   align-items: center;
-  gap: 1.1em;
-  padding: 0.35em 1.3em;
-  border-radius: 0.5em;
-  background: linear-gradient(180deg, rgba(36, 26, 20, 0.58), rgba(24, 17, 13, 0.5));
+  gap: 1.2em;
+  padding: 0.35em 1.4em 0.4em;
+  border-radius: 0.55em;
+  background: var(--plate);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(232, 187, 95, 0.24);
+  border: 1px solid rgba(232, 187, 95, 0.38);
+  box-shadow: 0 0.5em 1.4em rgba(10, 6, 3, 0.25);
 }
 .dw-race-rings {
   display: flex;
@@ -1250,9 +1267,23 @@
   text-align: center;
 }
 .dw-race-best {
-  font-size: 0.85em;
-  color: var(--parch-3);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.1;
+  font-size: 0.95em;
+  font-weight: 700;
+  color: var(--parch);
   font-variant-numeric: tabular-nums;
+  padding-left: 1.1em;
+  border-left: 1px solid rgba(232, 187, 95, 0.3);
+}
+.dw-race-best small {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 0.66em;
+  letter-spacing: 0.22em;
+  color: var(--gold);
 }
 .dw-race-delta {
   margin-top: 0.35em;
@@ -1338,16 +1369,26 @@
 .dw-missed {
   position: absolute;
   left: 50%;
-  top: 38vh;
+  top: 23vh;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.4em 1.2em;
+  border-radius: 0.4em;
+  background: linear-gradient(180deg, rgba(120, 40, 20, 0.78), rgba(90, 28, 14, 0.74));
+  border: 1px solid rgba(255, 160, 120, 0.6);
   font-family: var(--display);
   font-weight: 700;
-  letter-spacing: 0.2em;
-  font-size: 1.15em;
-  color: #ffd2c0;
+  letter-spacing: 0.16em;
+  font-size: 1.05em;
+  color: #fff0e6;
   opacity: 0;
   transition: opacity 0.3s;
   white-space: nowrap;
+}
+.dw-missed .dw-icon {
+  color: #ffb08a;
 }
 .dw-missed.is-on {
   opacity: 1;
@@ -2599,6 +2640,10 @@
 }
 .dw-opt-req .dw-bar {
   margin-top: 0.28em;
+}
+.dw-opt-sub {
+  color: var(--parch-3);
+  font-size: 0.95em;
 }
 .dw-opt.is-denied {
   animation: dw-deny 0.4s ease-out;
