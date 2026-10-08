@@ -46,7 +46,8 @@ export function topWeights(shape: IslandShape, x: number, z: number, s: number, 
   let remaining = 1;
   let rock = smoothstep(0.78, 0.66, ny); // 50% at normalY = 0.72
   remaining -= rock;
-  let dirt = remaining * smoothstep(0.935, 0.965, s); // 50% at s = 0.95
+  const edge = shape.rimDirtEdge(x, z);
+  let dirt = remaining * smoothstep(edge - 0.015, edge + 0.015, s); // 50% on the rim dirt edge
   remaining -= dirt;
   let stone = 0;
   if (kind === 'roost' || kind === 'ruin') {
@@ -72,7 +73,7 @@ export function topWeights(shape: IslandShape, x: number, z: number, s: number, 
   out.grass = remaining;
   out.track = track;
   out.nearRock = Math.max(smoothstep(0.95, 0.66, ny), kind === 'rocky' || kind === 'islet' ? 0.5 : 0);
-  out.nearDirt = smoothstep(0.75, 0.965, s);
+  out.nearDirt = smoothstep(0.75, edge + 0.015, s);
   out.nearStone = kind === 'roost' || kind === 'ruin' ? smoothstep(shape.def.flatCenter * 0.55 + 0.12, shape.def.flatCenter * 0.55, s) : 0;
   out.nearTrack = shape.track ? smoothstep(ROOST_TRACK_HALF_WIDTH + 6, ROOST_TRACK_HALF_WIDTH, shape.trackDistance(x, z)) : 0;
   return out;

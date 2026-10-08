@@ -144,11 +144,13 @@ export class IslandShape {
     // Ridged noise sampled around a circle (seamless in theta), drifting slowly with the radius
     // so the creases run downhill instead of across.
     const f = this.ridgeFreq;
-    const ridge = softRidged(this.underN, Math.cos(theta) * f + s * 1.7, Math.sin(theta) * f - s * 1.3);
+    // The angular sampling is singular at the center, so ridges fade out right around the tip.
+    const ridge = 0.5 + (softRidged(this.underN, Math.cos(theta) * f + s * 1.7, Math.sin(theta) * f - s * 1.3) - 0.5) * smoothstep(0.03, 0.3, s);
     const lump = 0.5 + 0.5 * fbm2(this.underN, dx * this.lumpFreq + 31.7, dz * this.lumpFreq - 12.3, 2);
-    const teeth = this.toothAt(dx, dz) * smoothstep(0.05, 0.35, profile);
-    // Taper the dome-shaped profile toward a cone so the island hangs like an inverted peak.
-    const cone = 0.72 + 0.46 * Math.pow(1 - s, 1.5);
+    const teeth = this.toothAt(dx, dz) * smoothstep(0.05, 0.35, profile) * smoothstep(0.06, 0.2, s);
+    // Taper the dome-shaped profile toward a (smooth-tipped) cone so the island hangs like an
+    // inverted peak.
+    const cone = 0.72 + 0.46 * Math.pow(1 - smoothstep(0, 1, s), 1.5);
     // Teeth may hang as far as the envelope allows: long on the flanks, short near the tip.
     const toothLen = Math.min(0.26, 1.3 - cone);
     const stal = cone * (0.74 + 0.26 * (0.6 * ridge + 0.4 * lump)) + toothLen * teeth;
@@ -199,10 +201,18 @@ export class IslandShape {
     return out.set(hx, -2 * e, hz).normalize();
   }
 
+  /**
+   * Normalized radius beyond which the wind-scoured rim is bare dirt: around 0.95, wandering
+   * between 0.925 and 0.975 so the dirt band is patchy rather than a uniform ring.
+   */
+  rimDirtEdge(x: number, z: number): number {
+    return 0.95 + 0.025 * this.hillN(x * 0.035 + 71.3, z * 0.035 - 18.9);
+  }
+
   surfaceAt(x: number, z: number, normalY: number): SurfaceKind {
     const s = this.normRadius(x, z);
     if (normalY < 0.72) return 'rock';
-    if (s > 0.95) return 'dirt';
+    if (s > this.rimDirtEdge(x, z)) return 'dirt';
     const kind = this.def.kind;
     if ((kind === 'roost' || kind === 'ruin') && s < this.def.flatCenter * 0.55) return 'stone';
     if (this.track && this.trackDistance(x, z) < ROOST_TRACK_HALF_WIDTH) return 'dirt';
