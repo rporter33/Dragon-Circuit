@@ -81,7 +81,7 @@ export class Game implements GameActions {
 
     this.input = new Input(this.renderer.canvas, () => this.settings);
     this.world = new World(this.scene, quality);
-    this.dressing = new Dressing({ scene: this.scene, terrain: this.world.terrain, quality, events: this.events });
+    this.dressing = new Dressing({ scene: this.scene, terrain: this.world.terrain, quality, events: this.events, asyncStreaming: !this.debug.manual });
     this.weather = new Weather(this.scene, this.world.layout, this.events, quality);
     this.sky = new Sky(this.scene, this.renderer, quality);
     this.player = new Player({

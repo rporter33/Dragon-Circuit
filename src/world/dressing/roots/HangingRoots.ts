@@ -58,7 +58,7 @@ function strandGeometry(s: Strand, b: GeoBuilder): void {
 function addStrandTube(s: Strand, b: GeoBuilder, pts: Vector3[], len: number, radius: (t: number, i: number) => number, top: Vector3): void {
   const n = pts.length;
   const radii = pts.map((_, i) => radius(i / (n - 1), i));
-  const radial = s.kind === 'root' ? (s.r0 > 1 ? 7 : 6) : 4;
+  const radial = s.kind === 'root' ? (s.r0 > 1.2 ? 6 : 5) : 3;
   const geo = tube(pts, radii, radial, true);
   // Map each vertex to its fraction down the strand by height (strands hang roughly downward).
   const span = Math.max(1, top.y - pts[n - 1].y);
@@ -170,31 +170,40 @@ export class HangingRoots {
   readonly group = new Group();
   readonly stats: RootStats = { strands: 0, curtains: 0, meshes: 0, triangles: 0 };
 
-  constructor(terrain: Terrain, plan: RootPlan) {
+  /** Builds one island per deferred task (Rootfall alone is a few hundred thousand triangles). */
+  constructor(terrain: Terrain, plan: RootPlan, defer: (task: () => void) => void = (t) => t()) {
     this.group.name = 'dressing:roots';
-    const islands = new Set<number>([...plan.strands.map((s) => s.islandId), ...plan.curtains.map((c) => c.islandId)]);
-    for (const id of islands) {
-      const shape = terrain.islands.find((s) => s.def.id === id)!;
-      const solid = new GeoBuilder();
-      const cards = new GeoBuilder();
-      const glow = new GeoBuilder();
-      let k = 0;
-      for (const s of plan.strands) {
-        if (s.islandId !== id) continue;
-        strandGeometry(s, s.kind === 'glow' ? glow : solid);
-        if (s.kind === 'vine') vineLeaves(s, cards, id * 1000 + k);
-        k++;
-        this.stats.strands++;
-      }
-      for (const c of plan.curtains) {
-        if (c.islandId !== id) continue;
-        curtainGeometry(c, shape, cards);
-        this.stats.curtains++;
-      }
-      this.addMesh(solid, dressMaterial({ sway: 'root' }), `roots-${id}`);
-      this.addMesh(cards, dressMaterial({ sway: 'root', doubleSide: true, keepNormals: true }), `moss-${id}`);
-      this.addMesh(glow, dressMaterial({ sway: 'root', glow: true, glowDay: 0.2, glowNight: 3.2 }), `glowroots-${id}`);
+    const islands = [...new Set<number>([...plan.strands.map((s) => s.islandId), ...plan.curtains.map((c) => c.islandId)])];
+    // Nearest the Roost first.
+    const dist = (id: number) => {
+      const d = terrain.islands.find((s) => s.def.id === id)!.def;
+      return Math.hypot(d.x, d.z);
+    };
+    islands.sort((a, b) => dist(a) - dist(b));
+    for (const id of islands) defer(() => this.buildIsland(terrain, plan, id));
+  }
+
+  private buildIsland(terrain: Terrain, plan: RootPlan, id: number): void {
+    const shape = terrain.islands.find((s) => s.def.id === id)!;
+    const solid = new GeoBuilder();
+    const cards = new GeoBuilder();
+    const glow = new GeoBuilder();
+    let k = 0;
+    for (const s of plan.strands) {
+      if (s.islandId !== id) continue;
+      strandGeometry(s, s.kind === 'glow' ? glow : solid);
+      if (s.kind === 'vine') vineLeaves(s, cards, id * 1000 + k);
+      k++;
+      this.stats.strands++;
     }
+    for (const c of plan.curtains) {
+      if (c.islandId !== id) continue;
+      curtainGeometry(c, shape, cards);
+      this.stats.curtains++;
+    }
+    this.addMesh(solid, dressMaterial({ sway: 'root' }), `roots-${id}`);
+    this.addMesh(cards, dressMaterial({ sway: 'root', doubleSide: true, keepNormals: true }), `moss-${id}`);
+    this.addMesh(glow, dressMaterial({ sway: 'root', glow: true, glowDay: 0.2, glowNight: 3.2 }), `glowroots-${id}`);
   }
 
   private addMesh(b: GeoBuilder, mat: ReturnType<typeof dressMaterial>, name: string): void {

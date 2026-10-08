@@ -9,7 +9,7 @@ import { buildRoost, type SiteOutputs } from './Roost';
 import { roostPlan } from './roostPlan';
 import { siteBuilders, type SiteBuilders } from './kit';
 import { lightPoolMesh } from './lightPools';
-import { beaconSprite, buildObservatory, buildPavilion } from './Landmarks';
+import { beaconSprite, buildObservatory, buildPavilion, observatoryKeepOut } from './Landmarks';
 import { buildRuins, planRuins, type RuinSite } from './Ruins';
 
 export interface StructureStats {
@@ -23,7 +23,11 @@ export class Structures {
   readonly stats: StructureStats = { sites: 0, meshes: 0, triangles: 0 };
   readonly ruins: RuinSite[];
 
-  constructor(terrain: Terrain, out: SiteOutputs) {
+  /**
+   * The Roost is built immediately (it's where the game starts). Distant sites register their
+   * keep-outs now but build their geometry through `defer`, a little per frame.
+   */
+  constructor(terrain: Terrain, out: SiteOutputs, defer: (task: () => void) => void = (t) => t()) {
     this.group.name = 'dressing:structures';
     const plan = roostPlan(terrain.layout, terrain);
     if (plan) {
@@ -33,23 +37,30 @@ export class Structures {
     }
     const obs = terrain.islands.find((sh) => sh.def.landmark === 'observatory');
     if (obs) {
-      const s = siteBuilders();
-      buildObservatory(s, obs, terrain, out);
-      this.addSite('observatory', s);
+      observatoryKeepOut(obs, out);
+      defer(() => {
+        const s = siteBuilders();
+        buildObservatory(s, obs, terrain, out);
+        this.addSite('observatory', s);
+      });
     }
     const spire = terrain.layout.spires.find((sp) => sp.lantern);
     if (spire) {
-      const s = siteBuilders();
-      const beacon = buildPavilion(s, spire, out);
-      this.addSite('pavilion', s);
-      this.group.add(beaconSprite(beacon));
-      this.stats.meshes++;
+      defer(() => {
+        const s = siteBuilders();
+        const beacon = buildPavilion(s, spire, out);
+        this.addSite('pavilion', s);
+        this.group.add(beaconSprite(beacon));
+        this.stats.meshes++;
+      });
     }
     // Ruins last, so they keep clear of everything above.
     this.ruins = planRuins(terrain, out);
-    const rs = siteBuilders();
-    buildRuins(rs, this.ruins, out);
-    this.addSite('ruins', rs);
+    defer(() => {
+      const rs = siteBuilders();
+      buildRuins(rs, this.ruins, out);
+      this.addSite('ruins', rs);
+    });
   }
 
   private addSite(name: string, s: SiteBuilders): void {

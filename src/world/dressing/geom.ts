@@ -258,13 +258,16 @@ export function mixColor(a: Color | string, b: Color | string, t: number): Color
  */
 export function tube(path: Vector3[], radii: number[], radial = 6, capEnd = true): BufferGeometry {
   const n = path.length;
-  const pos: number[] = [];
+  const vcount = n * radial + (capEnd ? 1 : 0);
+  const pos = new Float32Array(vcount * 3);
+  const nrm = new Float32Array(vcount * 3);
   const idx: number[] = [];
   const tangent = new Vector3();
   const normal = new Vector3();
   const binormal = new Vector3();
   const prevT = new Vector3();
   const tmp = new Vector3();
+  let w = 0;
   for (let i = 0; i < n; i++) {
     if (i === 0) tangent.subVectors(path[1], path[0]);
     else if (i === n - 1) tangent.subVectors(path[n - 1], path[n - 2]);
@@ -292,11 +295,17 @@ export function tube(path: Vector3[], radii: number[], radial = 6, capEnd = true
       const a = (k / radial) * Math.PI * 2;
       const c = Math.cos(a);
       const s = Math.sin(a);
-      pos.push(
-        path[i].x + (normal.x * c + binormal.x * s) * r,
-        path[i].y + (normal.y * c + binormal.y * s) * r,
-        path[i].z + (normal.z * c + binormal.z * s) * r,
-      );
+      // Analytic normals: the ring direction (taper slope is negligible for shading).
+      const nx = normal.x * c + binormal.x * s;
+      const ny = normal.y * c + binormal.y * s;
+      const nz = normal.z * c + binormal.z * s;
+      pos[w] = path[i].x + nx * r;
+      pos[w + 1] = path[i].y + ny * r;
+      pos[w + 2] = path[i].z + nz * r;
+      nrm[w] = nx;
+      nrm[w + 1] = ny;
+      nrm[w + 2] = nz;
+      w += 3;
     }
   }
   for (let i = 0; i < n - 1; i++) {
@@ -309,17 +318,22 @@ export function tube(path: Vector3[], radii: number[], radial = 6, capEnd = true
     }
   }
   if (capEnd) {
-    const tip = pos.length / 3;
+    const tip = n * radial;
     const end = path[n - 1];
-    const dir = new Vector3().subVectors(path[n - 1], path[n - 2]).normalize();
-    pos.push(end.x + dir.x * radii[n - 1], end.y + dir.y * radii[n - 1], end.z + dir.z * radii[n - 1]);
+    const dir = tmp.subVectors(path[n - 1], path[n - 2]).normalize();
+    pos[w] = end.x + dir.x * radii[n - 1];
+    pos[w + 1] = end.y + dir.y * radii[n - 1];
+    pos[w + 2] = end.z + dir.z * radii[n - 1];
+    nrm[w] = dir.x;
+    nrm[w + 1] = dir.y;
+    nrm[w + 2] = dir.z;
     const last = (n - 1) * radial;
     for (let k = 0; k < radial; k++) idx.push(last + k, last + ((k + 1) % radial), tip);
   }
   const g = new BufferGeometry();
-  g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute('position', new BufferAttribute(pos, 3));
+  g.setAttribute('normal', new BufferAttribute(nrm, 3));
   g.setIndex(idx);
-  g.computeVertexNormals();
   return g;
 }
 

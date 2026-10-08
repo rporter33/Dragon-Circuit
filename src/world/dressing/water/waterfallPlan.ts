@@ -66,6 +66,13 @@ export function fallDuration(speed: number, drop: number): number {
   return t;
 }
 
+/** Deepest the stream's surface sits above the ground (where it pools behind a bump). */
+export function maxPoolDepth(shape: IslandShape, plan: WaterfallPlan): number {
+  let mx = 0;
+  for (const q of plan.stream) mx = Math.max(mx, q.y - shape.topHeight(q.x, q.z));
+  return mx;
+}
+
 function slopeGrad(shape: IslandShape, x: number, z: number): [number, number] {
   const e = 2;
   return [(shape.topHeight(x + e, z) - shape.topHeight(x - e, z)) / (2 * e), (shape.topHeight(x, z + e) - shape.topHeight(x, z - e)) / (2 * e)];
@@ -93,13 +100,17 @@ export function planWaterfalls(terrain: Terrain, avoid: ExclusionSet | null): Wa
     const chosen: number[] = [];
     const minSep = (Math.PI * 2) / (n * 1.7);
     const big = def.kind === 'cascade';
-    for (const cand of scored) {
-      if (chosen.length >= n) break;
-      if (chosen.some((a) => Math.abs(Math.atan2(Math.sin(a - cand.a), Math.cos(a - cand.a))) < minSep)) continue;
-      const plan = traceStream(shape, cand.a, big, meander, rnd, avoid);
-      if (!plan) continue;
-      chosen.push(cand.a);
-      out.push(plan);
+    // First pass prefers streams that never pool more than ~1.5 m deep; the second takes any.
+    for (const strict of [true, false]) {
+      for (const cand of scored) {
+        if (chosen.length >= n) break;
+        if (chosen.some((a) => Math.abs(Math.atan2(Math.sin(a - cand.a), Math.cos(a - cand.a))) < minSep)) continue;
+        const plan = traceStream(shape, cand.a, big, meander, mulberry32(def.seed + Math.round(cand.a * 1000)), avoid);
+        if (!plan) continue;
+        if (strict && maxPoolDepth(shape, plan) > 1.5) continue;
+        chosen.push(cand.a);
+        out.push(plan);
+      }
     }
   }
   return out;
@@ -142,8 +153,17 @@ function traceStream(
     dx += px * m;
     dz += pz * m;
     const dl2 = Math.hypot(dx, dz) || 1;
-    x += (dx / dl2) * step;
-    z += (dz / dl2) * step;
+    let nx = x + (dx / dl2) * step;
+    let nz = z + (dz / dl2) * step;
+    // Traced uphill, so read downstream the water always descends: if the meander would step
+    // downhill, follow the slope instead.
+    const here = shape.topHeight(x, z);
+    if (shape.topHeight(nx, nz) < here - 0.02 && gl > 1e-3) {
+      nx = x + (gx / gl) * step;
+      nz = z + (gz / gl) * step;
+    }
+    x = nx;
+    z = nz;
     len += step;
     if (shape.normRadius(x, z) < 0.3) break;
     pts.push({ x, z });
@@ -154,15 +174,14 @@ function traceStream(
     for (const p of pts) if (avoid.blocked(p.x, p.z, 4)) return null;
   }
   const baseW = big ? 4.5 + rnd() * 2.2 : 2.1 + rnd() * 0.9;
-  // Water surface: hugs the ground, never climbs much (flat pools where the ground dips).
+  // Water surface: hugs the ground going down, and never runs uphill: walking up from the lip,
+  // the level only rises, so where the ground dips behind a bump the water pools instead.
+  const ys = pts.map((p) => shape.topHeight(p.x, p.z) + 0.22);
+  for (let i = ys.length - 2; i >= 0; i--) ys[i] = Math.max(ys[i], ys[i + 1]);
   const stream: StreamPoint[] = [];
-  let prevY = Infinity;
   pts.forEach((p, i) => {
     const t = i / (pts.length - 1);
-    const ground = shape.topHeight(p.x, p.z);
-    let y = Math.min(prevY, ground + 0.3);
-    y = Math.max(y, ground + 0.12);
-    prevY = y;
+    const y = ys[i];
     // Narrow at the spring, widest mid-run, pinched a little where it pours over the lip.
     const w = baseW * (0.55 + 0.45 * Math.min(1, t * 3)) * (t > 0.92 ? 0.9 : 1);
     stream.push({ x: p.x, y, z: p.z, w });

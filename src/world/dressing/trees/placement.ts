@@ -2,6 +2,7 @@
 // terrain (grass for plants, steepness, the rim) and the keep-out zones of structures and streams.
 // Pure: no three.js scene objects, runs in unit tests.
 
+import { Vector3 } from 'three';
 import { mulberry32 } from '../../../core/rng';
 import { noise2 } from '../../../core/noise';
 import { smoothstep } from '../../../core/math';
@@ -46,6 +47,7 @@ interface Recipe {
 }
 
 const TREE_SPACING = 1 / 60;
+const tmpN = new Vector3();
 
 export function recipeFor(def: IslandDef): Recipe {
   const base: Recipe = {
@@ -70,8 +72,8 @@ export function recipeFor(def: IslandDef): Recipe {
         : { ...base, trees: [['broadleaf', 0.75], ['blossom', 0.25]], bushes: 0.004 };
     case 'forest':
       return def.landmark === 'rootfall'
-        ? { ...base, treeDensity: 1 / 55, trees: [['giant', 0.3], ['broadleaf', 0.4], ['conifer', 0.3]], treeScale: [0.85, 1.3], bushes: 0.006, logs: 0.0009, shrooms: 0.0012, ferns: 0.02 }
-        : { ...base, treeDensity: 1 / 45, trees: [['broadleaf', 0.55], ['conifer', 0.45]], bushes: 0.006, logs: 0.0007, shrooms: 0.0006, ferns: 0.016 };
+        ? { ...base, treeDensity: 1 / 55, trees: [['giant', 0.3], ['broadleaf', 0.4], ['conifer', 0.3]], treeScale: [0.85, 1.3], bushes: 0.005, logs: 0.0009, shrooms: 0.0012, ferns: 0.014 }
+        : { ...base, treeDensity: 1 / 45, trees: [['broadleaf', 0.55], ['conifer', 0.45]], bushes: 0.005, logs: 0.0007, shrooms: 0.0006, ferns: 0.012 };
     case 'rocky':
       return { ...base, treeDensity: 1 / 90, trees: [['windbent', 0.7], ['conifer', 0.3]], treeScale: [0.7, 1.15], bushes: 0.003, boulders: 0.005, boulderScale: [0.7, 3] };
     case 'plateau':
@@ -151,12 +153,11 @@ export function scatterIsland(shape: IslandShape, exclusions: ExclusionSet | nul
     const s = shape.normRadius(x, z);
     if (s > 0.995) return null;
     const y = shape.topHeight(x, z);
+    // Forward differences: three height samples instead of five (placement only needs slope).
     const e = 1;
-    const hx = shape.topHeight(x + e, z) - shape.topHeight(x - e, z);
-    const hz = shape.topHeight(x, z + e) - shape.topHeight(x, z - e);
-    n[0] = -hx;
-    n[1] = 2 * e;
-    n[2] = -hz;
+    n[0] = -(shape.topHeight(x + e, z) - y);
+    n[1] = e;
+    n[2] = -(shape.topHeight(x, z + e) - y);
     const ny = n[1] / Math.hypot(n[0], n[1], n[2]);
     return { y, ny, s };
   };
@@ -183,8 +184,11 @@ export function scatterIsland(shape: IslandShape, exclusions: ExclusionSet | nul
     const f = 0.5 + 0.5 * (forestN(x * 0.012, z * 0.012) * 0.7 + forestN(x * 0.04, z * 0.04) * 0.3);
     if (rnd() > smoothstep(0.2, 0.75, f) * 1.15) continue;
     const g = sampleGround(x, z);
-    if (!g || g.ny < 0.8) continue;
-    if (shape.surfaceAt(x, z, g.ny) !== 'grass') continue;
+    if (!g || g.ny < 0.78) continue;
+    // Classify with the exact normal the game uses (groundAt → topNormal), so a tree never
+    // stands on what the player's feet would call rock.
+    const ny = shape.topNormal(x, z, tmpN).y;
+    if (ny < 0.8 || shape.surfaceAt(x, z, ny) !== 'grass') continue;
     const species = pickWeighted(recipe.trees, rnd());
     const spec = SPECIES[species];
     const scale = recipe.treeScale[0] + rnd() * (recipe.treeScale[1] - recipe.treeScale[0]);
@@ -231,12 +235,13 @@ export function scatterIsland(shape: IslandShape, exclusions: ExclusionSet | nul
       const R = shape.outlineRadius(a) * rr;
       const x = def.x + Math.cos(a) * R;
       const z = def.z + Math.sin(a) * R;
-      const g = sampleGround(x, z);
-      if (!g || !ok(g, x, z)) continue;
+      // Cheap rejections first, terrain queries after.
       // Undergrowth (ferns, shrooms, logs, bushes) gathers where the trees are.
       const f = 0.5 + 0.5 * forestN(x * 0.012, z * 0.012);
       if ((species === 'fern' || species === 'shrooms' || species === 'log') && rnd() > smoothstep(0.3, 0.7, f)) continue;
-      if (species === 'boulder' && rnd() > 0.35 + 0.65 * smoothstep(0.6, 0.95, g.s) + (def.kind === 'rocky' || def.kind === 'plateau' ? 0.5 : 0)) continue;
+      if (species === 'boulder' && rnd() > 0.35 + 0.65 * smoothstep(0.6, 0.95, rr) + (def.kind === 'rocky' || def.kind === 'plateau' ? 0.5 : 0)) continue;
+      const g = sampleGround(x, z);
+      if (!g || !ok(g, x, z)) continue;
       const scale = scales[0] + Math.pow(rnd(), 1.6) * (scales[1] - scales[0]);
       if (exclusions && exclusions.blocked(x, z, spacing * scale * 0.6 + 1)) continue;
       const grid = species === 'boulder' && scale > 2 ? big : small;

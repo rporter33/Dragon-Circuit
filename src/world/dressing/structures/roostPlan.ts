@@ -59,10 +59,13 @@ export function roostPlan(layout: WorldLayout, terrain: Terrain): RoostPlan | nu
     return { x: p.x, z: p.z, y: roost.topHeight(p.x, p.z), radius: r, height: h, doorYaw: Math.atan2(d.x - p.x, d.z - p.z) };
   });
 
+  // If the terrain paints a worn track out to a launch point, follow it; otherwise use our own.
+  const track = (roost as unknown as { track?: [number, number][] | null }).track ?? null;
+  const deckAngle = track && track.length >= 2 ? Math.atan2(track[track.length - 1][1] - d.z, track[track.length - 1][0] - d.x) : DECK_ANGLE;
   // Launch deck root sits on the flat, a little inside the rim.
-  const dirX = Math.cos(DECK_ANGLE);
-  const dirZ = Math.sin(DECK_ANGLE);
-  const rim = roost.outlineRadius(DECK_ANGLE);
+  const dirX = Math.cos(deckAngle);
+  const dirZ = Math.sin(deckAngle);
+  const rim = roost.outlineRadius(deckAngle);
   const rootR = rim - 12;
   const rootX = d.x + dirX * rootR;
   const rootZ = d.z + dirZ * rootR;
@@ -84,29 +87,44 @@ export function roostPlan(layout: WorldLayout, terrain: Terrain): RoostPlan | nu
     { ...local(-15, -1), yaw: st.yaw, color: 'blue' },
     { ...local(15, -1), yaw: st.yaw, color: 'blue' },
   ];
-  const path: { x: number; z: number }[] = [];
   const pathStart = 52;
   const pathEnd = rootR - 1;
-  for (let r = pathStart; r <= pathEnd; r += 2.4) {
+  // Centerline of the walk from the plaza to the deck: (x, z) at radius r from the center.
+  const centerAt = (r: number): { x: number; z: number; tx: number; tz: number } => {
+    if (track && track.length >= 2) {
+      // Walk the terrain's track polyline to the point at radius r.
+      for (let k = 0; k < track.length - 1; k++) {
+        const ra = Math.hypot(track[k][0] - d.x, track[k][1] - d.z);
+        const rb = Math.hypot(track[k + 1][0] - d.x, track[k + 1][1] - d.z);
+        if (r <= rb || k === track.length - 2) {
+          const u = Math.max(0, Math.min(1, (r - ra) / Math.max(1e-3, rb - ra)));
+          const x = track[k][0] + (track[k + 1][0] - track[k][0]) * u;
+          const z = track[k][1] + (track[k + 1][1] - track[k][1]) * u;
+          const tl = Math.hypot(track[k + 1][0] - track[k][0], track[k + 1][1] - track[k][1]) || 1;
+          return { x, z, tx: (track[k + 1][0] - track[k][0]) / tl, tz: (track[k + 1][1] - track[k][1]) / tl };
+        }
+      }
+    }
     const wob = Math.sin(r * 0.11) * 2.5;
-    path.push({ x: d.x + dirX * r - dirZ * wob, z: d.z + dirZ * r + dirX * wob });
+    return { x: d.x + dirX * r - dirZ * wob, z: d.z + dirZ * r + dirX * wob, tx: dirX, tz: dirZ };
+  };
+  const path: { x: number; z: number }[] = [];
+  for (let r = pathStart; r <= pathEnd; r += 2.4) {
+    const c = centerAt(r);
+    path.push({ x: c.x, z: c.z });
   }
   const lanterns: RoostPlan['lanterns'] = [];
   for (let i = 0, r = pathStart + 4; r < pathEnd - 2; r += 13, i++) {
     const side = i % 2 === 0 ? 1 : -1;
-    const wob = Math.sin(r * 0.11) * 2.5;
-    lanterns.push({ x: d.x + dirX * r - dirZ * (wob + side * 3.2), z: d.z + dirZ * r + dirX * (wob + side * 3.2), yaw: Math.atan2(-dirZ * -side, dirX * -side) });
+    const c = centerAt(r);
+    // Posts stand beside the walk with their arms reaching over it.
+    lanterns.push({ x: c.x - c.tz * side * 3.2, z: c.z + c.tx * side * 3.2, yaw: Math.atan2(c.tz * side, -c.tx * side) });
   }
   // Banner pairs at the start and end of the path.
   for (const r of [pathStart + 1, pathEnd - 1]) {
-    const wob = Math.sin(r * 0.11) * 2.5;
+    const c = centerAt(r);
     for (const side of [-1, 1]) {
-      banners.push({
-        x: d.x + dirX * r - dirZ * (wob + side * 4.5),
-        z: d.z + dirZ * r + dirX * (wob + side * 4.5),
-        yaw: Math.atan2(dirX, dirZ),
-        color: 'red',
-      });
+      banners.push({ x: c.x - c.tz * side * 4.5, z: c.z + c.tx * side * 4.5, yaw: Math.atan2(c.tx, c.tz), color: 'red' });
     }
   }
   // Lanterns at the stable front corners and around the plaza.

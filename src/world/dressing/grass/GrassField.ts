@@ -17,6 +17,7 @@ import {
 } from 'three';
 import type { QualityProfile } from '../../../render/quality';
 import type { Terrain } from '../../terrain';
+import { LAYOUT } from '../../layout';
 import type { ExclusionSet } from '../exclusions';
 import {
   CHUNK_SIZE,
@@ -31,6 +32,12 @@ import {
 } from './fieldChunk';
 import { flowerGeometry, tuftGeometry } from './fieldGeometry';
 import { flowerMaterial, grassMaterial, type FieldUniforms } from './fieldMaterial';
+import type { FieldWorkerRequest } from './fieldWorker';
+
+/** Chunks nearer than this are always generated immediately on the main thread. */
+const NEAR_SYNC = 48;
+/** Max chunk requests in flight to the worker. */
+const MAX_PENDING = 8;
 
 interface LayerSlot {
   mesh: Mesh;
@@ -91,8 +98,15 @@ export class GrassField {
   /** Island top bands per chunk (to skip chunks far above/below the camera before generating). */
   private bands = new Map<number, { minY: number; maxY: number } | null>();
   readonly stats: GrassStats = { chunks: 0, visibleChunks: 0, tufts: 0, flowers: 0, drawCalls: 0, cached: 0 };
+  /** Background generator (null: generate on the main thread, e.g. tests or manual stepping). */
+  private worker: Worker | null = null;
+  private workerReady = false;
+  private pending = new Set<number>();
+  private gen = 0;
+  private wantAsync: boolean;
 
-  constructor(terrain: Terrain, exclusions: ExclusionSet, quality: QualityProfile) {
+  constructor(terrain: Terrain, exclusions: ExclusionSet, quality: QualityProfile, opts: { async?: boolean } = {}) {
+    this.wantAsync = opts.async ?? true;
     this.terrain = terrain;
     this.exclusions = exclusions;
     this.quality = quality;
@@ -116,11 +130,50 @@ export class GrassField {
     };
   }
 
+  private params() {
+    return { density: this.quality.grassDensity, flowerDensity: this.quality.propDensity };
+  }
+
+  /** Start (or re-arm) the worker. Called lazily so every keep-out zone is registered first. */
+  private initWorker(): void {
+    this.workerReady = true;
+    if (!this.wantAsync || typeof Worker === 'undefined' || this.terrain.layout !== LAYOUT) return;
+    try {
+      this.worker ??= new Worker(new URL('./fieldWorker.ts', import.meta.url), { type: 'module' });
+      this.worker.onmessage = (e) => this.receive(e.data);
+      this.worker.onerror = () => {
+        // Fall back to main-thread generation if the worker can't run.
+        this.worker = null;
+        this.pending.clear();
+      };
+      const msg: FieldWorkerRequest = { type: 'init', exclusions: this.exclusions.items, params: this.params(), gen: this.gen };
+      this.worker.postMessage(msg);
+    } catch {
+      this.worker = null;
+    }
+  }
+
+  private receive(m: { key: number; gen: number; cx: number; cz: number; tufts: InstanceArrays; flowers: InstanceArrays; minY: number; maxY: number }): void {
+    if (m.gen !== this.gen) return;
+    this.pending.delete(m.key);
+    if (m.tufts.count === 0 && m.flowers.count === 0) {
+      this.empty.add(m.key);
+      return;
+    }
+    this.store(m.key, { cx: m.cx, cz: m.cz, tufts: m.tufts, flowers: m.flowers, minY: m.minY, maxY: m.maxY });
+  }
+
   setQuality(q: QualityProfile): void {
     const changed = q.grassDensity !== this.quality.grassDensity || q.propDensity !== this.quality.propDensity;
     this.quality = q;
     this.uniforms.uDwRadius.value = q.grassRadius;
     if (!changed) return;
+    this.gen++;
+    this.pending.clear();
+    if (this.worker) {
+      const msg: FieldWorkerRequest = { type: 'init', exclusions: this.exclusions.items, params: this.params(), gen: this.gen };
+      this.worker.postMessage(msg);
+    }
     // Densities changed: drop everything; slots are rebuilt with new capacities on demand.
     for (const s of [...this.slots.values(), ...this.free]) this.disposeSlot(s);
     this.slots.clear();
@@ -219,38 +272,38 @@ export class GrassField {
     return b;
   }
 
-  private chunkData(k: number, cx: number, cz: number): FieldChunkData | null {
-    const hit = this.cache.get(k);
-    if (hit) {
-      // LRU touch.
-      this.cache.delete(k);
-      this.cache.set(k, hit);
-      return hit;
+  private store(k: number, data: FieldChunkData): void {
+    this.cache.set(k, data);
+    if (this.cache.size > this.cacheLimit) {
+      // Evict least-recently-used entries that aren't on screen.
+      let excess = this.cache.size - this.cacheLimit;
+      for (const key of this.cache.keys()) {
+        if (excess <= 0) break;
+        if (this.slots.has(key)) continue;
+        this.cache.delete(key);
+        excess--;
+      }
     }
-    const d = generateFieldChunk(
-      this.terrain,
-      this.exclusions,
-      cx,
-      cz,
-      { density: this.quality.grassDensity, flowerDensity: this.quality.propDensity },
-      this.scratch,
-    );
+  }
+
+  /** Cached chunk data (LRU touch), or null. */
+  private cached(k: number): FieldChunkData | null {
+    const hit = this.cache.get(k);
+    if (!hit) return null;
+    this.cache.delete(k);
+    this.cache.set(k, hit);
+    return hit;
+  }
+
+  /** Generate a chunk right now on this thread. */
+  private generateNow(k: number, cx: number, cz: number): FieldChunkData | null {
+    const d = generateFieldChunk(this.terrain, this.exclusions, cx, cz, this.params(), this.scratch);
     if (d.tufts.count === 0 && d.flowers.count === 0) {
       this.empty.add(k);
       return null;
     }
     const stored: FieldChunkData = { cx, cz, tufts: compact(d.tufts), flowers: compact(d.flowers), minY: d.minY, maxY: d.maxY };
-    this.cache.set(k, stored);
-    if (this.cache.size > this.cacheLimit) {
-      // Evict least-recently-used entries that aren't on screen.
-      let excess = this.cache.size - this.cacheLimit;
-      for (const k of this.cache.keys()) {
-        if (excess <= 0) break;
-        if (this.slots.has(k)) continue;
-        this.cache.delete(k);
-        excess--;
-      }
-    }
+    this.store(k, stored);
     return stored;
   }
 
@@ -304,16 +357,28 @@ export class GrassField {
     }
 
     // Fill missing chunks nearest first: anything close is generated now (no bald patch at the
-    // player's feet), the rest within a per-frame time budget.
+    // player's feet); the rest go to the worker, or (without one) a per-frame time budget.
+    if (!this.workerReady) this.initWorker();
     wanted.sort((a, b) => a.d - b.d);
     const t0 = performance.now();
     let generated = 0;
     for (const w of wanted) {
       if (this.slots.has(w.k)) continue;
-      const cached = this.cache.has(w.k);
-      if (!cached && w.d > 48 && generated > 0 && performance.now() - t0 > 3) continue;
-      const data = this.chunkData(w.k, w.cx, w.cz);
-      if (!cached) generated++;
+      let data = this.cached(w.k);
+      if (!data) {
+        if (this.empty.has(w.k)) continue;
+        if (this.worker && w.d > NEAR_SYNC) {
+          if (!this.pending.has(w.k) && this.pending.size < MAX_PENDING) {
+            this.pending.add(w.k);
+            const msg: FieldWorkerRequest = { type: 'gen', key: w.k, cx: w.cx, cz: w.cz, gen: this.gen };
+            this.worker.postMessage(msg);
+          }
+          continue;
+        }
+        if (w.d > NEAR_SYNC && generated > 0 && performance.now() - t0 > 3) continue;
+        data = this.generateNow(w.k, w.cx, w.cz);
+        generated++;
+      }
       if (!data) continue;
       const slot = this.acquire();
       slot.key = w.k;

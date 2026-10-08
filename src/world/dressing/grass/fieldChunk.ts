@@ -75,24 +75,50 @@ const A1 = 1 / G2;
 const A2 = 1 / (G2 * G2);
 
 const heights = new Float64Array(LB * LB);
+const radii = new Float64Array(LB * LB);
+/** Surface classification on a 1 m lattice: 1 = grass. */
+const SN = CHUNK_SIZE + 1;
+const grassy = new Uint8Array(SN * SN);
 
-/** Fill the lattice for one island over the chunk; returns false if it misses entirely. */
+/**
+ * Fill the lattices for one island over the chunk: heights and normalized radius every 2 m
+ * (bilinear later), surface kind every 1 m (nearest later). Evaluating the terrain on lattices
+ * instead of per tuft makes a chunk several times cheaper to generate.
+ */
 function fillLattice(shape: IslandShape, x0: number, z0: number): void {
   for (let j = 0; j < LB; j++) {
     for (let i = 0; i < LB; i++) {
       const x = x0 + (i - 1) * LATTICE;
       const z = z0 + (j - 1) * LATTICE;
       heights[j * LB + i] = shape.topHeight(x, z);
+      radii[j * LB + i] = shape.normRadius(x, z);
     }
   }
+  for (let j = 0; j < SN; j++) {
+    for (let i = 0; i < SN; i++) {
+      const x = x0 + i;
+      const z = z0 + j;
+      const s = sampleLattice(x0, z0, x, z);
+      const ny = Math.sqrt(Math.max(0, 1 - s.nx * s.nx - s.nz * s.nz));
+      grassy[j * SN + i] = s.s <= 1 && shape.surfaceAt(x, z, ny) === 'grass' ? 1 : 0;
+    }
+  }
+}
+
+function grassAt(x0: number, z0: number, x: number, z: number): boolean {
+  const i = Math.max(0, Math.min(SN - 1, Math.round(x - x0)));
+  const j = Math.max(0, Math.min(SN - 1, Math.round(z - z0)));
+  return grassy[j * SN + i] === 1;
 }
 
 interface Sample {
   y: number;
   nx: number;
   nz: number;
+  /** Normalized island radius (bilinear). */
+  s: number;
 }
-const sample: Sample = { y: 0, nx: 0, nz: 0 };
+const sample: Sample = { y: 0, nx: 0, nz: 0, s: 0 };
 
 /** Bilinear height + lattice-gradient normal at a point inside the chunk. */
 function sampleLattice(x0: number, z0: number, x: number, z: number): Sample {
@@ -109,6 +135,11 @@ function sampleLattice(x0: number, z0: number, x: number, z: number): Sample {
   const h01 = heights[(j + 1) * LB + i];
   const h11 = heights[(j + 1) * LB + i + 1];
   sample.y = (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+  const r00 = radii[j * LB + i];
+  const r10 = radii[j * LB + i + 1];
+  const r01 = radii[(j + 1) * LB + i];
+  const r11 = radii[(j + 1) * LB + i + 1];
+  sample.s = (r00 * (1 - tx) + r10 * tx) * (1 - tz) + (r01 * (1 - tx) + r11 * tx) * tz;
   // Central differences around the nearest lattice node.
   const ni = Math.round(fx);
   const nj = Math.round(fz);
@@ -162,6 +193,8 @@ export function generateFieldChunk(
     islands.push(sh);
   }
   if (islands.length === 0) return data;
+  // Only consult keep-outs when one actually touches this chunk.
+  const ex0 = !!exclusions && exclusions.inBox(x0 - 1, z0 - 1, x0 + S + 1, z0 + S + 1).length > 0;
 
   for (const shape of islands) {
     const def = shape.def;
@@ -187,12 +220,11 @@ export function generateFieldChunk(
       const jz = (rnd() - 0.5) * 0.7;
       const x = x0 + ((o1 + i * A1) % 1) * S + jx;
       const z = z0 + ((o2 + i * A2) % 1) * S + jz;
-      const s = shape.normRadius(x, z);
-      if (s > 0.985) continue;
       const smp = sampleLattice(x0, z0, x, z);
+      const s = smp.s;
+      if (s > 0.985 || !grassAt(x0, z0, x, z)) continue;
       const ny = Math.sqrt(Math.max(0, 1 - smp.nx * smp.nx - smp.nz * smp.nz));
-      if (shape.surfaceAt(x, z, ny) !== 'grass') continue;
-      const ex = exclusions ? exclusions.distance(x, z, true) : Infinity;
+      const ex = exclusions && ex0 ? exclusions.distance(x, z, true) : Infinity;
       if (ex < 0.2) continue;
 
       const patch = 0.5 + 0.5 * patchN(x * 0.045, z * 0.045);
@@ -254,12 +286,11 @@ export function generateFieldChunk(
       // Drifts: flowers cluster where a low-frequency noise is high.
       const drift = flowerN(x * 0.025, z * 0.025) * 0.75 + flowerN(x * 0.09 + 13, z * 0.09) * 0.25;
       if (drift < 0.1 + rnd() * 0.35) continue;
-      const s = shape.normRadius(x, z);
-      if (s > 0.95) continue;
       const smp = sampleLattice(x0, z0, x, z);
+      if (smp.s > 0.95 || !grassAt(x0, z0, x, z)) continue;
       const ny = Math.sqrt(Math.max(0, 1 - smp.nx * smp.nx - smp.nz * smp.nz));
-      if (ny < 0.8 || shape.surfaceAt(x, z, ny) !== 'grass') continue;
-      if (exclusions && exclusions.distance(x, z, true) < 1) continue;
+      if (ny < 0.8) continue;
+      if (exclusions && ex0 && exclusions.distance(x, z, true) < 1) continue;
       const k = flowers.count;
       const p4 = k * 4;
       flowers.pos[p4] = x;

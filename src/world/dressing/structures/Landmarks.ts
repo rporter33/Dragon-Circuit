@@ -69,6 +69,11 @@ function stoneRing(
   }
 }
 
+/** The Observatory's footprint: registered up front so trees and rocks keep clear of it. */
+export function observatoryKeepOut(shape: IslandShape, out: SiteOutputs): void {
+  out.exclusions.circle(shape.def.x, shape.def.z, 24);
+}
+
 export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: Terrain, out: SiteOutputs): void {
   resetJitter(0x0b5);
   const d = shape.def;
@@ -259,7 +264,6 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
     const w = v(Math.sin(a) * 14, 0, Math.cos(a) * 14).applyMatrix4(F);
     out.colliders.push({ x: w.x, z: w.z, radius: 1.3, y0: gy - 1, y1: gy + 6.4 });
   }
-  out.exclusions.circle(d.x, d.z, 24);
 }
 
 // ---------------------------------------------------------------------------------------------

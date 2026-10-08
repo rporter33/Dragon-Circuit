@@ -17,6 +17,8 @@ export interface Strand {
   /** Radius at the attachment and at the tip (m). */
   r0: number;
   r1: number;
+  /** True for a fork that branches off partway down another root (starts in mid-air). */
+  fork?: boolean;
 }
 
 export interface MossCurtain {
@@ -90,7 +92,7 @@ function hang(
   const outZ = oz / ol;
   const leanA = rnd() * Math.PI * 2;
   const lean = 0.03 + rnd() * 0.08;
-  const n = Math.max(6, Math.round(len / 3.5));
+  const n = Math.max(6, Math.round(len / 4.5));
   const pts: { x: number; y: number; z: number }[] = [];
   let x = ax;
   let y = top;
@@ -161,7 +163,7 @@ export function planRoots(terrain: Terrain, density = 1): RootPlan {
         }
         const tAt = at / (pts.length - 1);
         const rAt = r0 + (Math.max(0.08, r0 * 0.06) - r0) * Math.pow(tAt, 0.8);
-        strands.push({ islandId: d.id, kind: 'root', points: fpts, r0: rAt * 0.6, r1: 0.06 });
+        strands.push({ islandId: d.id, kind: 'root', points: fpts, r0: rAt * 0.6, r1: 0.06, fork: true });
       }
     }
     const nVines = Math.round(rec.vines * density);

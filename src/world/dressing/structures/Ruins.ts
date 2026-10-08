@@ -7,7 +7,7 @@ import { mulberry32 } from '../../../core/rng';
 import type { IslandShape } from '../../islandShape';
 import type { Terrain } from '../../terrain';
 import { displace, under, xf } from '../geom';
-import { PALETTE, box, column, jitter, lantern, rand, resetJitter, stoneBlock, v, type SiteBuilders } from './kit';
+import { PALETTE, box, column, jitter, lantern, pick, rand, resetJitter, stoneBlock, v, variants, type SiteBuilders } from './kit';
 import type { SiteOutputs } from './Roost';
 
 export type RuinKind = 'arch' | 'wall' | 'shrine' | 'cairns' | 'sundial' | 'stones';
@@ -84,7 +84,7 @@ function cairn(s: SiteBuilders, x: number, y: number, z: number, h: number, seed
   let yy = y;
   let r = 0.75;
   for (let i = 0; i < h; i++) {
-    const g = displace(new IcosahedronGeometry(1, 1), 0.18, 2.2, seed + i);
+    const g = pick(variants('cairn', 6, (k) => displace(new IcosahedronGeometry(1, 1), 0.18, 2.2, 800 + k)), seed + i);
     const sy = r * (0.5 + rnd() * 0.2);
     s.solid.add(g, xf(x + (rnd() - 0.5) * 0.15, yy + sy * 0.85, z + (rnd() - 0.5) * 0.15, 0, rnd() * 3, 0, r, sy, r * (0.85 + rnd() * 0.3)), {
       color: (p, n, out) => out.copy(jitter(i % 2 ? PALETTE.stone : PALETTE.stoneDark, 0.06)).lerp(jitter(PALETTE.moss), Math.max(0, n.y - 0.6) * (i === 0 ? 1.2 : 0.4)),
@@ -180,7 +180,7 @@ function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: numbe
         const z = Math.cos(a) * r;
         const fallen = k === 3 || k === 8;
         const h = 3.2 + ((k * 37) % 7) * 0.45;
-        const g = displace(new IcosahedronGeometry(1, 2), 0.12, 1.8, idx * 100 + k);
+        const g = pick(variants('menhir', 4, (q) => displace(new IcosahedronGeometry(1, 2), 0.12, 1.8, 850 + q)), idx * 100 + k);
         const m = fallen
           ? under(F, xf(x * 1.08, 0.5, z * 1.08, Math.PI / 2 - 0.1, a + 0.4, 0, 0.7, h * 0.5, 0.45))
           : under(F, xf(x, h * 0.45 - 0.3, z, (rand() - 0.5) * 0.12, a, (rand() - 0.5) * 0.12, 0.8, h * 0.5, 0.45));

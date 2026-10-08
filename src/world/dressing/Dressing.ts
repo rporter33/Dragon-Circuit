@@ -26,6 +26,11 @@ export interface DressingDeps {
   terrain: Terrain;
   quality: QualityProfile;
   events?: GameEventBus;
+  /**
+   * Generate far grass chunks in a Web Worker (default true). Pass false when frames are stepped
+   * by automation (?manual=1) so every capture is complete and deterministic.
+   */
+  asyncStreaming?: boolean;
 }
 
 /** Something with an oriented rectangle top you can walk on (decks, bridges). */
@@ -63,12 +68,19 @@ export class Dressing implements DressingSystem {
   private terrain: Terrain;
   private quality: QualityProfile;
 
+  /** Milliseconds spent building at construction (for the perf report). */
+  readonly buildMs: number;
+  /** Distant geometry still to build, a little per frame (see update()). */
+  private tasks: (() => void)[] = [];
+
   constructor(deps: DressingDeps) {
+    const t0 = performance.now();
     this.terrain = deps.terrain;
     this.quality = deps.quality;
     this.group.name = 'dressing';
 
-    this.structures = new Structures(this.terrain, { exclusions: this.exclusions, colliders: this.colliders, decks: this.decks });
+    const defer = (task: () => void) => this.tasks.push(task);
+    this.structures = new Structures(this.terrain, { exclusions: this.exclusions, colliders: this.colliders, decks: this.decks }, defer);
     this.group.add(this.structures.group);
     // Streams avoid built-up ground; their banks then keep trees and grass out of the water.
     const plans = planWaterfalls(this.terrain, this.exclusions);
@@ -76,12 +88,25 @@ export class Dressing implements DressingSystem {
     this.water = new Waterfalls(this.terrain, plans, this.quality);
     this.group.add(this.water.group);
     this.rootPlan = planRoots(this.terrain);
-    this.roots = new HangingRoots(this.terrain, this.rootPlan);
+    this.roots = new HangingRoots(this.terrain, this.rootPlan, defer);
     this.group.add(this.roots.group);
     this.buildForest();
-    this.grass = new GrassField(this.terrain, this.exclusions, this.quality);
+    this.grass = new GrassField(this.terrain, this.exclusions, this.quality, { async: deps.asyncStreaming ?? true });
     this.group.add(this.grass.group);
     deps.scene.add(this.group);
+    // Automation wants complete, deterministic frames: build everything now.
+    if (deps.asyncStreaming === false) this.flushTasks();
+    this.buildMs = performance.now() - t0;
+  }
+
+  /** Run every deferred build task now. */
+  flushTasks(): void {
+    while (this.tasks.length) this.tasks.shift()!();
+  }
+
+  /** True once every deferred site has been built. */
+  get ready(): boolean {
+    return this.tasks.length === 0;
   }
 
   /** Scatter trees and props over every island (deterministic) and build the instanced forest. */
@@ -113,6 +138,9 @@ export class Dressing implements DressingSystem {
   }
 
   update(_dt: number, camera: PerspectiveCamera, focus: Vector3): void {
+    // Finish distant sites a few milliseconds at a time.
+    const t0 = performance.now();
+    while (this.tasks.length && performance.now() - t0 < 4) this.tasks.shift()!();
     this.grass.update(camera, focus);
     this.forest.update(camera);
   }

@@ -4,6 +4,7 @@
 
 import {
   BoxGeometry,
+  BufferGeometry,
   Color,
   CylinderGeometry,
   IcosahedronGeometry,
@@ -325,7 +326,7 @@ export function hayBale(b: GeoBuilder, frame: Matrix4, x: number, y: number, z: 
 
 /** A loose pile of hay (lumpy flattened blob). */
 export function hayPile(b: GeoBuilder, frame: Matrix4, x: number, y: number, z: number, r: number, seed: number): void {
-  const g = displace(new IcosahedronGeometry(1, 2), 0.25, 2.2, seed);
+  const g = pick(variants('hay', 3, (i) => displace(new IcosahedronGeometry(1, 2), 0.25, 2.2, 700 + i)), seed);
   b.add(g, under(frame, xf(x, y, z, 0, seed, 0, r, r * 0.45, r * 0.9)), {
     color: (p, n, out) => out.set(PALETTE.straw).lerp(new Color(PALETTE.strawDark), Math.max(0, -n.y) + 0.25 * Math.sin(p.x * 9 + p.z * 7)),
   });
@@ -362,15 +363,28 @@ export function saddleRack(b: GeoBuilder, frame: Matrix4, x: number, y: number, 
   }
 }
 
+// Displacing (welding + noise) is the expensive part of rough stones, so each shape comes in a
+// handful of pre-made variants that callers pick from by seed and then transform.
+const variantCache = new Map<string, BufferGeometry[]>();
+function variants(key: string, count: number, make: (i: number) => BufferGeometry): BufferGeometry[] {
+  let list = variantCache.get(key);
+  if (!list) {
+    list = Array.from({ length: count }, (_, i) => make(i));
+    variantCache.set(key, list);
+  }
+  return list;
+}
+const pick = <T>(list: T[], seed: number): T => list[Math.abs(Math.floor(seed * 7919 + seed)) % list.length];
+
 /** An irregular flat stepping stone. */
 export function flagstone(b: GeoBuilder, frame: Matrix4, x: number, y: number, z: number, r: number, seed: number): void {
-  const g = displace(new CylinderGeometry(1, 1.05, 1, 9), 0.12, 1.6, seed, 1);
+  const g = pick(variants('flag', 5, (i) => displace(new CylinderGeometry(1, 1.05, 1, 9), 0.12, 1.6, 900 + i, 1)), seed);
   b.add(g, under(frame, xf(x, y, z, 0, seed * 0.37, 0, r, 0.22, r * (0.7 + 0.3 * Math.sin(seed)))), { color: jitter(PALETTE.stone, 0.08) });
 }
 
 /** A rough stone block (ruins, cairns). */
 export function stoneBlock(b: GeoBuilder, frame: Matrix4, x: number, y: number, z: number, w: number, h: number, d: number, seed: number, color: string = PALETTE.stone, mossy = 0.4): void {
-  const g = displace(new BoxGeometry(1, 1, 1, 2, 2, 2), 0.06, 2.5, seed, 1);
+  const g = pick(variants('block', 8, (i) => displace(new BoxGeometry(1, 1, 1, 2, 2, 2), 0.06, 2.5, 500 + i, 1)), seed);
   const moss = new Color(PALETTE.moss);
   const base = jitter(color, 0.07);
   b.add(g, under(frame, xf(x, y, z, (rand() - 0.5) * 0.06, (rand() - 0.5) * 0.15, (rand() - 0.5) * 0.06, w, h, d)), {
@@ -392,8 +406,8 @@ export function column(b: GeoBuilder, frame: Matrix4, x: number, y: number, z: n
     box(b, frame, x, y + h - 0.1, z, r * 2.2, 0.25, r * 2.2, color);
   } else {
     // A jagged break.
-    const g = displace(new CylinderGeometry(r * 0.95, r, 0.6, 12), 0.15, 3, Math.floor(x * 13 + z * 7), 1);
-    b.add(g, under(frame, xf(x, y + top, z, 0.1, 0, -0.08)), { color: jitter(color) });
+    const g = pick(variants('break', 3, (i) => displace(new CylinderGeometry(0.95, 1, 0.6, 12), 0.15, 3, 600 + i, 1)), x * 13 + z * 7);
+    b.add(g, under(frame, xf(x, y + top, z, 0.1, 0, -0.08, r, 1, r)), { color: jitter(color) });
   }
 }
 
@@ -406,4 +420,4 @@ export function sphere(b: GeoBuilder, m: Matrix4, color: string, opts: Omit<AddO
   b.add(new SphereGeometry(1, 16, 10), m, { ...opts, color: jitter(color, 0.03) });
 }
 
-export { tube, xf, under };
+export { tube, xf, under, variants, pick };
