@@ -139,14 +139,14 @@ export class Gait {
   update(dt: number, center: Vector3, vel: Vector3, yaw: number, ground: GroundFn): void {
     const sp = Math.hypot(vel.x, vel.z);
     // A touch of smoothing so stride length doesn't jitter with input noise.
-    this.speed += (sp - this.speed) * (1 - Math.exp(-12 * dt));
+    this.speed += (sp - this.speed) * (1 - Math.exp(-20 * dt));
     const s = this.speed;
     const moving = s > 0.35;
     const f = cadence(s);
     const duty = dutyFactor(s);
     const rb = runBlend(s);
     const A = strideHalf(s) * Math.min(1, s / 0.8);
-    const lift = (0.075 + 0.17 * rb) * Math.min(1, s / 1.2 + 0.4) * this.p.scale;
+    const lift = (0.075 + 0.24 * rb) * Math.min(1, s / 1.2 + 0.4) * this.p.scale;
     if (moving) this.phase = (this.phase + (dt * f) / 2) % 1;
     _fwd.set(Math.sin(yaw), 0, Math.cos(yaw));
     // Travel direction (falls back to facing).
@@ -172,12 +172,12 @@ export class Gait {
           }
         } else if (ft.planted) {
           // Lift off: swing toward a landing point ahead of where the body will be.
-          ft.planted = false;
-          ft.swing = 0;
-          ft.from.copy(ft.pos);
-          ft.yawFrom = ft.yaw;
-          ft.swingTime = ((1 - duty) * 2) / f;
-          ft.stance = 0;
+          this.liftOff(ft, ((1 - duty) * 2) / f);
+        }
+        // Stride limiter: a planted foot left too far behind (speeding up, turning hard) steps
+        // now rather than stretching the leg.
+        if (ft.planted && Math.hypot(ft.pos.x - center.x, ft.pos.z - center.z) > 0.5 + 0.12 * rb) {
+          this.liftOff(ft, Math.max(0.12, ((1 - duty) * 2) / f));
         }
       } else {
         ft.stance = 0;
@@ -195,7 +195,8 @@ export class Gait {
         ft.pos.lerpVectors(ft.from, ft.to, e);
         ft.yaw = ft.yawFrom + angleDiff(ft.yawFrom, yaw) * e;
         const h = moving ? lift : 0.06 * this.p.scale;
-        ft.lift = h * Math.sin(Math.PI * Math.pow(q, moving ? 0.8 : 1));
+        // Running feet peak early (the heel kicks up behind) and reach forward late.
+        ft.lift = h * Math.sin(Math.PI * Math.pow(q, moving ? 0.8 - 0.15 * rb : 1));
         // Toes trail down after lift-off and level out before contact.
         ft.pitch = moving ? 0.55 * (1 - q) * (1 - q) * (0.5 + 0.5 * rb) - 0.15 * Math.max(0, q - 0.7) / 0.3 : 0.1 * Math.sin(Math.PI * q);
         if (ft.swing >= 1 && !moving) this.land(ft, ground);
@@ -207,6 +208,15 @@ export class Gait {
     }
 
     if (!moving) this.idleSteps(dt, center, yaw, ground);
+  }
+
+  private liftOff(ft: FootState, swingTime: number): void {
+    ft.planted = false;
+    ft.swing = 0;
+    ft.from.copy(ft.pos);
+    ft.yawFrom = ft.yaw;
+    ft.swingTime = swingTime;
+    ft.stance = 0;
   }
 
   private land(ft: FootState, ground: GroundFn): void {

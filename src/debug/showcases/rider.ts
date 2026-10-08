@@ -5,6 +5,7 @@ import type { RiderAction, RiderLook, RiderPose } from '../../core/types';
 import { Rider } from '../../creatures/rider/Rider';
 import { cosmeticsFor, DEFAULT_RIDER } from '../../cosmetics/catalog';
 import { toonMaterial } from '../../render/painterly';
+import { globalUniforms } from '../../render/uniforms';
 import { createRiderPose } from '../../player/poses';
 import { PLAYER_TUNING as P } from '../../player/tuning';
 
@@ -18,6 +19,7 @@ import { PLAYER_TUNING as P } from '../../player/tuning';
  *             speed= (m/s on foot; airflow when mounted). mount/dismount use a stand-in wyvern
  *             and replay the player state's own arcs.
  *   mounted:  mounted=1 on a stand-in saddle; lean= crouch= brace= pitch=deg (dive angle)
+ *   air:      wind=x,z (m/s, world) on foot; defaults to the shared wind uniform
  *   camera:   angle=deg (0 = in front) dist= height= camUp= turntable=1 focus=head
  *
  * Steps files can tweak parameters live: __riderShow.params.set('angle', '90').
@@ -217,7 +219,7 @@ const rider: Showcase = {
       pose.position.copy(a.home);
       const dur =
         action === 'mount' ? P.mountTime + 1.2 : action === 'dismount' ? P.dismountTime + 1.2 : action === 'wave' ? P.waveTime + 0.6 : action === 'jump' ? 0.62 : action === 'fall' ? 3 : action === 'land' ? 0.8 : 1e9;
-      const tt = a.fixedT !== null ? a.fixedT : time % dur;
+      const tt = params.get('t') !== null ? num('t', 0) : a.fixedT !== null ? a.fixedT : time % dur;
       pose.action = action;
       pose.actionTime = tt;
       if (action === 'walk' || action === 'run') {
@@ -275,9 +277,13 @@ const rider: Showcase = {
           }
         }
       }
-      pose.airflow.copy(pose.velocity).multiplyScalar(-1);
+      // Air: the world's wind (or wind=x,z) minus the rider's own motion.
+      const w = params.get('wind');
+      const wv = w ? w.split(',').map(Number) : [globalUniforms.uWind.value.x, globalUniforms.uWind.value.z];
+      pose.airflow.set(wv[0] || 0, 0, wv[1] || 0).sub(pose.velocity);
       a.rider.update(dt, pose, pose.mounted ? a.saddle : null);
-      center.add(a.home);
+      // Track walkers and runners; everything else holds the frame.
+      center.add(action === 'walk' || action === 'run' ? _a.copy(a.home).setZ(pose.position.z) : a.home);
     }
     center.multiplyScalar(1 / Math.max(1, actors.length));
     // Camera.

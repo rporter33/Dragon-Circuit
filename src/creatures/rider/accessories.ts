@@ -255,29 +255,32 @@ export function capeSpecs(ctx: BodyCtx, look: RiderLook): ClothSpec[] {
   const trim = look.cape === 'feathered' ? mixSrgb(cape, new Color('#fff4dc'), 0.35) : mixSrgb(pal.secondary, cape, 0.25);
   const half = look.cape === 'half';
   const cols = half ? 5 : 8;
-  // Anchor arc over the shoulders and behind the neck (θ from left around the back to the right).
-  const y = 1.415 * d.h;
+  // Anchor arc from shoulder to shoulder around the back of the neck (half cape: from behind the
+  // neck over the left shoulder to the chest).
+  const y = 1.418 * d.h;
+  const W = (ctx.bp.upperArmL.x - 0.012) * 1.0;
+  const D = 0.085 * d.g;
+  const z0 = -0.012;
   const top: Vector3[] = [];
-  const th0 = half ? 0.95 : 0.55;
-  const th1 = half ? -2.1 : -Math.PI - 0.55;
+  const phi0 = half ? -0.55 : -0.12;
+  const phi1 = half ? Math.PI / 2 + 0.35 : Math.PI + 0.12;
   for (let c = 0; c < cols; c++) {
-    const th = th0 + ((th1 - th0) * c) / (cols - 1);
-    const p = torsoPoint(ctx, y - 0.025 * Math.abs(Math.cos(th)) * d.h, th, 0.03, new Vector3());
-    // Pull the anchors in over the trapezius toward the neck.
-    p.x *= 0.82;
-    p.y += 0.012;
-    top.push(p);
+    const phi = phi0 + ((phi1 - phi0) * c) / (cols - 1);
+    const sx = Math.cos(phi);
+    const sz = Math.sin(phi);
+    // Behind (sz > 0 here means toward the back); in front for the half cape's chest end.
+    top.push(new Vector3(sx * W * (sz > -0.2 ? 1 : 0.85), y + 0.012 * (1 - Math.abs(sx)) - 0.01 * Math.max(0, -sz), z0 - sz * D));
   }
   const length = { half: 0.72, full: 1.22, tattered: 1.1, feathered: 0.95 }[look.cape] ?? 1.1;
   const rows = half ? 7 : look.cape === 'feathered' ? 9 : 10;
   const seg = (length * d.h) / (rows - 1);
-  const flare = half ? 0.06 : 0.1;
+  const flare = half ? 0.25 : 0.45;
+  const back = -0.11 * d.g;
   const hang = (c: number, r: number, tp: Vector3) => {
     const f = r / (rows - 1);
-    const across = (c / (cols - 1) - 0.5) * 2;
-    // Hang straight down the back, a little away from it, widening toward the hem.
-    const p = new Vector3(tp.x * (1 + flare * f * 3) + across * flare * f * 0.4, tp.y - r * seg, Math.min(tp.z, -0.13 * d.g) - 0.04 - 0.05 * f);
-    return p;
+    // Down over the shoulder blades, a little away from the back, widening toward the hem.
+    const out = Math.min(1, r / 2);
+    return new Vector3(tp.x * (1 + flare * f), tp.y - r * seg, Math.min(tp.z, back) * out + tp.z * (1 - out) - 0.035 * out - 0.05 * f);
   };
   const config: ClothSpec['config'] =
     look.cape === 'feathered'
@@ -295,9 +298,8 @@ export function capeSpecs(ctx: BodyCtx, look: RiderLook): ClothSpec[] {
       hang,
       rows,
       (c) => {
-        const th = th0 + ((th1 - th0) * c) / (cols - 1);
-        const x = Math.cos(th);
-        return x > 0.55 ? B.clavL : x < -0.55 ? B.clavR : B.chest;
+        const x = top[c].x / W;
+        return x > 0.6 ? B.clavL : x < -0.6 ? B.clavR : B.chest;
       },
       config,
       ['chest', 'belly', 'shoulders', 'armL', 'armR', 'thighL', 'thighR', 'shinL', 'shinR', 'head', 'neck', 'mount'],
