@@ -207,13 +207,58 @@ export interface GroundHit {
  * A vertical solid cylinder in the world that the analytic terrain doesn't know about (building
  * walls, tower bases, big trunks). Walking code can push the rider/wyvern out of these.
  */
-export interface CylinderCollider {
+/** Shared by every collider shape. */
+interface ColliderTraits {
+  /** Foliage and the like: cushions and slows instead of stopping dead; never walkable. */
+  soft?: boolean;
+  /** What its walkable top is made of (footsteps); defaults to 'wood'. */
+  surface?: SurfaceKind;
+}
+
+/** A vertical solid cylinder (posts, towers, trunks, wall segments). `kind` may be omitted. */
+export interface CylinderCollider extends ColliderTraits {
+  kind?: 'cylinder';
   x: number;
   z: number;
   radius: number;
   /** Bottom and top heights (world y). */
   y0: number;
   y1: number;
+}
+
+/** A solid sphere (tree canopies, boulders, hanging rocks). */
+export interface SphereCollider extends ColliderTraits {
+  kind: 'sphere';
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+}
+
+/**
+ * A box turned about Y (buildings, roofs, decks, gate lintels). Centered at (x, y, z) with half
+ * extents hx (local right), hy (up), hz (local forward); local forward is (sin yaw, 0, cos yaw).
+ */
+export interface BoxCollider extends ColliderTraits {
+  kind: 'box';
+  x: number;
+  y: number;
+  z: number;
+  hx: number;
+  hy: number;
+  hz: number;
+  yaw: number;
+}
+
+/** Anything solid the analytic terrain doesn't describe. Indexed by world/colliders.ts. */
+export type Collider = CylinderCollider | SphereCollider | BoxCollider;
+
+/** Extra detail about a collideSphere contact. */
+export interface ContactInfo {
+  /** True when every contact this call was soft (foliage). */
+  soft: boolean;
+  /** Surface of the last solid (non-soft) structure touched, if any. */
+  solidSurface?: SurfaceKind;
 }
 
 export interface RayHit {
@@ -232,7 +277,7 @@ export interface TerrainQuery {
    * Push a sphere out of any solid it overlaps. Returns true on contact and writes the
    * correction vector (add it to the center) and the contact normal.
    */
-  collideSphere(center: Vector3, radius: number, outPush: Vector3, outNormal: Vector3): boolean;
+  collideSphere(center: Vector3, radius: number, outPush: Vector3, outNormal: Vector3, outInfo?: ContactInfo): boolean;
   /** Conservative distance to the nearest solid surface (never overestimates by much). */
   distance(p: Vector3): number;
   /** Sphere-traced ray against all solids. */

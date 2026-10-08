@@ -2,11 +2,16 @@
 // enough to call several times per physics step; deterministic, so it runs in unit tests.
 
 import { Vector3 } from 'three';
-import type { GroundHit, RayHit, SurfaceKind, TerrainQuery } from '../core/types';
+import type { ContactInfo, GroundHit, RayHit, SurfaceKind, TerrainQuery } from '../core/types';
 import { LAYOUT, type WorldLayout } from './layout';
 import { ArchShape, IslandShape, SpireShape } from './islandShape';
+import { ColliderIndex } from './colliders';
 
 const CELL = 400;
+/** How far above the feet a structure top still counts as ground to step onto (m). */
+const STRUCTURE_STEP = 1.0;
+/** Ground hits on structures report this island id (they aren't part of any island). */
+export const STRUCTURE_GROUND_ID = -1000;
 
 type Solid =
   | { type: 'island'; shape: IslandShape; stamp: number }
@@ -22,6 +27,8 @@ export class Terrain implements TerrainQuery {
   readonly islands: IslandShape[];
   readonly spires: SpireShape[];
   readonly arches: ArchShape[];
+  /** Buildings, trees, decks, gates…: everything solid that isn't analytic rock. */
+  readonly colliders = new ColliderIndex();
   private grid = new Map<number, Solid[]>();
   private solids: Solid[] = [];
   private stamp = 0;
@@ -116,14 +123,38 @@ export class Terrain implements TerrainQuery {
         best = { y: d.topY, normal: new Vector3(0, 1, 0), islandId: -1 - d.id, surface: 'stone' as SurfaceKind };
       }
     }
+    // Roofs, decks and other structure tops you can stand on (only a small step up, so walls and
+    // chest-high props block instead of teleporting you onto them).
+    const top = this.colliders.groundAt(x, z, fromY, STRUCTURE_STEP);
+    if (top && (!best || top.y > best.y)) {
+      best = { y: top.y, normal: new Vector3(0, 1, 0), islandId: STRUCTURE_GROUND_ID, surface: top.surface };
+    }
     return best;
   }
 
-  collideSphere(center: Vector3, radius: number, outPush: Vector3, outNormal: Vector3): boolean {
+  collideSphere(center: Vector3, radius: number, outPush: Vector3, outNormal: Vector3, outInfo?: ContactInfo): boolean {
     outPush.set(0, 0, 0);
     outNormal.set(0, 0, 0);
-    let hit = false;
+    if (outInfo) {
+      outInfo.soft = false;
+      outInfo.solidSurface = undefined;
+    }
     const p = tmpP.copy(center);
+    // Structures and trees first (rock wins any tie by resolving last).
+    let hit = this.colliders.resolveSphere(p, radius, outNormal, outInfo);
+    const rockHit = this.collideRock(p, radius, outNormal);
+    if (rockHit && outInfo) outInfo.soft = false;
+    hit = hit || rockHit;
+    if (!hit) return false;
+    outPush.subVectors(p, center);
+    if (outNormal.lengthSq() < 1e-8) outNormal.set(0, 1, 0);
+    outNormal.normalize();
+    return true;
+  }
+
+  private collideRock(p: Vector3, radius: number, outNormal: Vector3): boolean {
+    let hit = false;
+    const center = p;
     for (const s of this.candidates(center.x, center.z, radius + 1)) {
       // Resolve against each solid in turn, accumulating the correction.
       let pushed = false;
@@ -135,11 +166,7 @@ export class Terrain implements TerrainQuery {
         outNormal.add(tmpN);
       }
     }
-    if (!hit) return false;
-    outPush.subVectors(p, center);
-    if (outNormal.lengthSq() < 1e-8) outNormal.set(0, 1, 0);
-    outNormal.normalize();
-    return true;
+    return hit;
   }
 
   /** Pushes p out of the island in place. On contact, tmpN holds the contact normal. */
@@ -248,7 +275,10 @@ export class Terrain implements TerrainQuery {
       if (d < best) best = d;
     }
     // Outside the searched cells nothing is closer than the cell margin.
-    return Math.min(best, 400);
+    best = Math.min(best, 400);
+    // Structures only matter when they're nearer than the rock already found.
+    const near = this.colliders.distance(p, Math.min(best, 60));
+    return near < best ? near : best;
   }
 
   raycast(origin: Vector3, dir: Vector3, maxDist: number): RayHit | null {

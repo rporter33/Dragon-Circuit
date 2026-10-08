@@ -4,7 +4,7 @@
 
 import { PerspectiveCamera, Scene, Vector3 } from 'three';
 import { EventBus } from '../core/events';
-import type { GameEvents, RiderLook, Settings, WyvernLook } from '../core/types';
+import type { BoxCollider, GameEvents, RiderLook, Settings, WyvernLook } from '../core/types';
 import { Renderer } from '../render/renderer';
 import { QUALITY } from '../render/quality';
 import { AdaptiveResolution } from '../render/adaptiveResolution';
@@ -13,6 +13,7 @@ import { Input, emptyFrame } from '../input/Input';
 import { Haptics } from '../input/haptics';
 import { World } from '../world/World';
 import { Dressing } from '../world/dressing/Dressing';
+import { deckCollider } from '../world/colliders';
 import { Weather } from '../sky/Weather';
 import { Sky } from '../sky/Sky';
 import { Player } from '../player/Player';
@@ -71,6 +72,8 @@ export class Game implements GameActions {
   private idleInput = emptyFrame();
   /** Lowers the render resolution when frames run long (real GPUs vary wildly). */
   private adaptive = new AdaptiveResolution();
+  /** The dressing's decks as solid slabs (filled as decks are built). */
+  private deckColliders: BoxCollider[] = [];
 
   constructor(container: HTMLElement, uiRoot: HTMLElement) {
     this.debug = readDebugParams();
@@ -92,6 +95,13 @@ export class Game implements GameActions {
     this.haptics = new Haptics(this.events, this.input, () => this.settings);
     this.world = new World(this.scene, quality);
     this.dressing = new Dressing({ scene: this.scene, terrain: this.world.terrain, quality, asyncStreaming: !this.debug.manual });
+    // Everything solid that isn't rock (buildings, trees, decks) collides through the terrain's
+    // collider index; sources are synced every frame as distant sites finish building.
+    const colliders = this.world.terrain.colliders;
+    colliders.addSource('structures', () => this.dressing.colliders);
+    colliders.addSource('forest', () => this.dressing.forest.colliders);
+    colliders.addSource('decks', () => this.deckColliders);
+    this.syncColliders();
     this.weather = new Weather(this.scene, this.world.layout, this.events, quality);
     this.sky = new Sky(this.scene, this.renderer, quality, this.weather);
     this.player = new Player({
@@ -179,6 +189,7 @@ export class Game implements GameActions {
 
   /** Advance the game by dt seconds (sim + presentation) and, unless told not to, render. */
   frame(dt: number, render = true): void {
+    this.syncColliders();
     const input = this.input.poll(dt);
     this.haptics.update(dt);
     const simulate = (this.screen === 'play' || this.screen === 'title') && !this.debug.freeze;
@@ -340,6 +351,12 @@ export class Game implements GameActions {
     if (p.restart && this.races.activeId) this.restartRace();
     // The prompt decides what interact does here (mounting wins over the stable door).
     if (p.interact && this.prompt?.action === 'stable') this.openStable();
+  }
+
+  private syncColliders(): void {
+    const decks = this.dressing.decks;
+    while (this.deckColliders.length < decks.length) this.deckColliders.push(deckCollider(decks[this.deckColliders.length]));
+    this.world.terrain.colliders.sync();
   }
 
   private updateTimeOfDay(dt: number): void {
