@@ -96,6 +96,8 @@ interface KindPalette {
   accent2: Color;
   accentAmount: number;
   rock: Color;
+  /** 0..1 how far moss creeps down the cliffs (lush, damp islands). */
+  mossiness: number;
 }
 
 const c = (hex: string) => new Color(hex);
@@ -110,6 +112,7 @@ const BASE: KindPalette = {
   accent2: c('#9aa65a'),
   accentAmount: 0.18,
   rock: c('#958c7c'),
+  mossiness: 0,
 };
 
 const PALETTES: Record<IslandKind, KindPalette> = {
@@ -117,19 +120,19 @@ const PALETTES: Record<IslandKind, KindPalette> = {
   meadow: { ...BASE, grass: c('#70a03f'), grassAlt: c('#8eac47'), accent: c('#a9a84a'), accent2: c('#8f9a62'), accentAmount: 0.3 },
   cascade: {
     ...BASE, grass: c('#579a3c'), grassAlt: c('#468e4d'), light: c('#97bd55'), dark: c('#2d6c38'), accent: c('#6ea54a'),
-    accent2: c('#7f9f58'), accentAmount: 0.2,
+    accent2: c('#7f9f58'), accentAmount: 0.2, mossiness: 0.5,
   },
   forest: {
     ...BASE, grass: c('#55853a'), grassAlt: c('#6a843a'), light: c('#93a554'), dark: c('#2f5a2e'), accent: c('#80704a'),
-    accent2: c('#5f7d36'), accentAmount: 0.3, rock: c('#958c7a'),
+    accent2: c('#5f7d36'), accentAmount: 0.3, rock: c('#958c7a'), mossiness: 0.6,
   },
   grove: {
-    ...BASE, grass: c('#3f7d55'), grassAlt: c('#3c7a62'), light: c('#6f9c6c'), dark: c('#215345'), dry: c('#5f8459'),
-    accent: c('#4f8f86'), accent2: c('#7fae74'), accentAmount: 0.3, rock: c('#858a84'),
+    ...BASE, grass: c('#3f7d55'), grassAlt: c('#3a7663'), light: c('#548a5e'), dark: c('#1f4f43'), dry: c('#5b7f55'),
+    accent: c('#3f8378'), accent2: c('#5e9568'), accentAmount: 0.35, rock: c('#858a84'), mossiness: 1,
   },
   plateau: {
-    ...BASE, grass: c('#848f4c'), grassAlt: c('#958e55'), light: c('#b6aa6c'), dark: c('#5e6c40'), dry: c('#a39662'),
-    accent: c('#6e3f73'), accent2: c('#8a5582'), accentAmount: 0.5, rock: c('#8f897d'),
+    ...BASE, grass: c('#6f7d43'), grassAlt: c('#7c7a4b'), light: c('#9a9160'), dark: c('#4f5c38'), dry: c('#8f8558'),
+    accent: c('#5e3170'), accent2: c('#7a4a86'), accentAmount: 0.75, rock: c('#8f897d'),
   },
   rocky: { ...BASE, grass: c('#7d9849'), grassAlt: c('#8e9a50'), light: c('#b2ad69'), dark: c('#55763c'), accentAmount: 0.1, rock: c('#8f8a80') },
   ruin: { ...BASE, grass: c('#6f9a44'), grassAlt: c('#83a04b'), accentAmount: 0.15 },
@@ -199,7 +202,7 @@ export class IslandPainter {
       }
       case Region.Cliff: {
         // aux = depth below the rim (m).
-        const moss = (1 - smoothstep(0.5, 6, aux)) * 0.85;
+        const moss = Math.max((1 - smoothstep(0.5, 6, aux)) * 0.85, (1 - smoothstep(2, 22, aux)) * this.pal.mossiness);
         const n = this.detailN(x * 0.03, z * 0.03) * 0.5 + 0.5;
         tmp.copy(CLIFF).lerp(UNDER_NEAR, 0.15 + 0.25 * n + 0.3 * smoothstep(4, 16, aux));
         b.setColor(i, tmp.r, tmp.g, tmp.b);
@@ -214,7 +217,7 @@ export class IslandPainter {
         tmp.copy(UNDER_NEAR).lerp(UNDER_MID, smoothstep(0, 0.5, deepT));
         tmp.lerp(UNDER_DEEP, smoothstep(0.4, 1, deepT) * (0.75 + 0.25 * n));
         // Cool, faintly lit by the cloud sea below.
-        const moss = (1 - smoothstep(4, 14, total)) * 0.7;
+        const moss = Math.max((1 - smoothstep(4, 14, total)) * 0.7, (1 - smoothstep(10, 40, total)) * 0.8 * this.pal.mossiness);
         b.setColor(i, tmp.r, tmp.g, tmp.b);
         b.setSurf(i, 1 - 0.7 * deepT, 0, 0, moss);
         return;

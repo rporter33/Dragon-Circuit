@@ -169,17 +169,23 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
     prev = r;
   };
 
-  /** Jagged fracture profile for a broken end: how far each point of the face juts out (m). */
+  /**
+   * Fracture face of a broken end: rings shrink linearly toward the middle of the face while
+   * each point juts out (or bites back) along the tangent by a rough amount, so the end reads
+   * as freshly snapped rock rather than a rounded cap. tubeRing clamps it inside the collision
+   * hemisphere.
+   */
   const jagFor = (aEnd: number, u: number) => (phi: number) => {
     frame(aEnd);
     dir.copy(Rv).multiplyScalar(Math.cos(phi)).addScaledVector(shape.normal, Math.sin(phi));
     P.copy(C).addScaledVector(dir, tube * (1 - u));
-    const j = 0.5 + 0.5 * n2(P.x * 0.16, P.y * 0.16, P.z * 0.16);
-    const j2 = 0.5 + 0.5 * n1(P.x * 0.5, P.y * 0.5, P.z * 0.5);
-    return tube * (0.12 + 0.55 * u) * (0.35 + 0.65 * j) + tube * 0.12 * j2 * u;
+    const j = n2(P.x * 0.13, P.y * 0.13, P.z * 0.13);
+    const j2 = n1(P.x * 0.45, P.y * 0.45, P.z * 0.45);
+    // A shallow bulge toward the middle plus rough steps.
+    return tube * (0.08 + 0.22 * u + 0.28 * j + 0.1 * j2);
   };
   const capRings = spec.capRings;
-  const capScale = (u: number) => Math.sqrt(1 - u * u) * 0.98 + 0.02;
+  const capScale = (u: number) => Math.max(0.04, 1 - u);
   /** Rings of a buried foot, from the arc end down to `depth` (ascending order). */
   const footSinks = (depth: number) => {
     const n = Math.max(2, Math.ceil(depth / spec.along));

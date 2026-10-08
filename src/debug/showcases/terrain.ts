@@ -79,6 +79,13 @@ const spots: Record<string, (game: Game) => { cam: Vector3; look: Vector3 }> = {
     a.pointAt(Math.PI * 0.95, look);
     return { cam, look };
   },
+  brokenclose(game) {
+    const a = game.world.terrain.arches.find((x) => !x.full && x.def.arcEnd > Math.PI * 1.2)!;
+    const p = new Vector3();
+    a.pointAt(a.def.arcEnd, p);
+    const cam = p.clone().addScaledVector(a.normal, -30).addScaledVector(a.right, 18).add(new Vector3(0, 8, 0));
+    return { cam, look: p };
+  },
   broken(game) {
     const a = game.world.terrain.arches.find((x) => !x.full && x.def.arcEnd > Math.PI * 1.2)!;
     const cam = a.center.clone().addScaledVector(a.normal, -120).addScaledVector(a.right, 40).add(new Vector3(0, 20, 0));
@@ -116,6 +123,10 @@ const spots: Record<string, (game: Game) => { cam: Vector3; look: Vector3 }> = {
   moor(game) {
     const d = game.world.terrain.islands.find((s) => s.def.landmark === 'highmoor')!.def;
     return { cam: new Vector3(d.x + 150, d.y + 70, d.z + 200), look: new Vector3(d.x - 20, d.y, d.z) };
+  },
+  cascade(game) {
+    const d = game.world.terrain.islands.find((s) => s.def.landmark === 'cascade')!.def;
+    return { cam: new Vector3(d.x - 330, d.y + 90, d.z + 260), look: new Vector3(d.x, d.y - 30, d.z) };
   },
   grove(game) {
     const d = game.world.terrain.islands.find((s) => s.def.landmark === 'glowcap')!.def;
@@ -156,7 +167,7 @@ function emulateLight(game: Game, kind: string): void {
 
 const terrain: Showcase = {
   name: 'terrain',
-  description: 'Island, spire and arch views: &spot=cliff|rim|under|spire|spiretop|needles|needle|eye|eyeclose|broken|archway|archclose|roost|launch|crumbs|far|ground|moor|grove|islet',
+  description: 'Island, spire and arch views: &spot=cliff|rim|under|spire|spiretop|needles|needle|eye|eyeclose|broken|brokenclose|archway|archclose|roost|launch|crumbs|far|ground|moor|cascade|grove|islet',
   setup(game, params) {
     const spot = params.get('spot') ?? 'cliff';
     const fn = spots[spot] ?? spots.cliff;
