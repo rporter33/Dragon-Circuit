@@ -6,15 +6,20 @@
 // smoothed, aligned mostly to the velocity — so a hard bank swings the camera out wide and you
 // see the wyvern's flank and the curve of the turn, then it settles behind. Weight comes from
 // what is layered on top: the boom stretches when you accelerate and sags when you climb, the
-// lens widens with speed, the horizon rolls a little with the bank, and a flare lifts the camera
-// to show the ground.
+// lens widens with speed, the horizon sways slowly into the bank (slower for heavier breeds), and
+// a flare lifts the camera to show the ground. Bigger, heavier breeds are shot from further back
+// on a slightly longer lens, so they read as big. (CameraRig adds the wingbeat heave, the dive
+// rush and the pull-out press on top of this shot.)
+//
+// While racing, the next ring is kept in view above the wyvern: the camera rises just enough
+// that the ring can't hide behind the wyvern's head, and the aim reaches further ahead.
 
 import { Vector3 } from 'three';
 import { angleDelta, clamp, clamp01, damp, smoothstep, wrapAngle } from '../core/math';
 import type { InputFrame } from '../core/types';
 import type { PlayerSystem } from '../game/contracts';
 import { autoFollowYaw, boomStep, lookReturn, speedFovKick } from './cameraMath';
-import { liftClear, sphereCast } from './collision';
+import { castBoom, liftClear, softContact, solidContact, type BoomHit } from './collision';
 import { applyLook, type CameraPose, type CameraShot, type Rig, type RigContext } from './rigTypes';
 
 const UP = new Vector3(0, 1, 0);
@@ -37,6 +42,23 @@ const right = new Vector3();
 const pivot = new Vector3();
 const pivotS = new Vector3();
 const want = new Vector3();
+const toRing = new Vector3();
+const toCompanion = new Vector3();
+const boomHit: BoomHit = { t: Infinity, soft: false };
+
+/**
+ * How big the breed reads on screen, ~1 for the harrier: half wingspan, half body weight (the
+ * cube root of mass, i.e. a length). Galewing (huge span) ≈ 1.17, ironback (heavy) ≈ 1.08,
+ * skimmer ≈ 0.87.
+ */
+export function breedScale(breed: { wingspan: number; mass: number }): number {
+  return 0.5 * (breed.wingspan / 13) + 0.5 * Math.cbrt(breed.mass / 650);
+}
+
+/** Body weight relative to the harrier, as a length ratio (cube root of mass): 0.89 … 1.12. */
+export function breedWeight(breed: { mass: number }): number {
+  return Math.cbrt(breed.mass / 650);
+}
 
 /** Tuning for the flight chase camera (all distances scale with the breed's wingspan). */
 export const FLIGHT_CAM = {
@@ -44,8 +66,13 @@ export const FLIGHT_CAM = {
   distSpan: 1.1,
   distBase: 5.5,
   distSpeed: 0.06,
-  heightSpan: 0.24,
-  heightBase: 1.6,
+  /** Extra boom per unit of body weight above the harrier's (heavier = shot from further back). */
+  distWeight: 0.35,
+  /** Camera height above the path: span·heightSpan + heightBase (the wyvern sits low in frame). */
+  heightSpan: 0.27,
+  heightBase: 2.4,
+  /** Lens: degrees narrower per unit of breed scale above 1 (a big beast on a longer lens). */
+  fovScale: 10,
   /** How much the boom aligns to velocity vs. the nose (0..1). */
   velocityWeight: 0.72,
   /** Fraction of the flight path's climb/dive angle the camera follows. */
@@ -53,10 +80,18 @@ export const FLIGHT_CAM = {
   yawRate: 3.4,
   pitchRate: 2.6,
   /** Look-ahead along the velocity, seconds of travel (capped). */
-  lookAheadTime: 0.22,
-  lookAheadMax: 16,
-  /** Share of the bank angle the camera rolls with. */
-  rollShare: 0.3,
+  lookAheadTime: 0.3,
+  lookAheadMax: 20,
+  /** Share of the bank angle the camera rolls with… */
+  rollShare: 0.32,
+  /** …and how fast it sways into it (1/s, for the harrier; heavier breeds lean in slower). */
+  rollRate: 2.6,
+  /** Racing: a higher, further-reaching framing so the next ring shows above the wyvern. */
+  race: { heightSpan: 0.3, heightBase: 3.4, lookAheadTime: 0.45, lookAheadMax: 28 },
+  /** Racing: the next ring's rim stays at least this far (rad) above the wyvern on screen. */
+  ringClearance: 0.17,
+  /** Foliage may pull the boom in to no less than this share of its length. */
+  softMin: 0.45,
   /** Seconds of stick-free time before a look offset springs back (mouse gets longer). */
   returnDelayStick: 1.2,
   returnDelayMouse: 2.0,
@@ -78,8 +113,12 @@ export class FlightRig implements Rig {
   private roll = 0;
   private fovKick = 0;
   private flare = 0;
+  /** 0..1 blend toward the race framing. */
+  private race = 0;
+  /** Extra height (m) that keeps the next ring clear of the wyvern's head. */
+  private ringLift = 0;
 
-  enter(player: PlayerSystem, _from: CameraPose, _ctx: RigContext): void {
+  enter(player: PlayerSystem, _from: CameraPose, ctx: RigContext): void {
     const pose = player.wyvernPose;
     this.chaseDirection(player, chase);
     this.chaseYaw = Math.atan2(chase.x, chase.z);
@@ -93,6 +132,8 @@ export class FlightRig implements Rig {
     this.flare = pose.flare;
     this.roll = 0;
     this.fovKick = 0;
+    this.race = ctx.waypoint ? 1 : 0;
+    this.ringLift = 0;
   }
 
   /** Mostly-velocity, part-nose direction of travel (unit). */
@@ -161,12 +202,37 @@ export class FlightRig implements Rig {
 
     // --- Boom size --------------------------------------------------------------------------
     this.flare = damp(this.flare, pose.flare, 4, dt);
+    this.race = damp(this.race, ctx.waypoint ? 1 : 0, 1.5, dt);
+    const R = C.race;
+    const race = this.race;
+    const weight = breedWeight(player.breed);
     const speedK = smoothstep(20, 85, speed);
-    let dist = (span * C.distSpan + C.distBase) * (1 + C.distSpeed * speedK);
-    let height = span * C.heightSpan + C.heightBase;
+    let dist = (span * C.distSpan + C.distBase) * (1 + C.distSpeed * speedK) * (1 + C.distWeight * (weight - 1));
+    let height = span * (C.heightSpan + (R.heightSpan - C.heightSpan) * race) + C.heightBase + (R.heightBase - C.heightBase) * race;
     // Flaring lifts the camera and tips it down so you can see where you're about to land.
     height += this.flare * (span * 0.35 + 1);
     dist *= (1 - 0.1 * this.flare) * ctx.zoom;
+    // Racing: if the next ring lies further below the path than the camera sits above it, the
+    // ring would hide behind the wyvern's head — rise just enough to see it over the shoulders.
+    let liftGoal = 0;
+    if (ctx.waypoint && race > 0.01) {
+      toRing.subVectors(ctx.waypoint, pose.position);
+      const ringDist = toRing.length();
+      const ahead = toRing.dot(arm);
+      if (ringDist > 1 && ahead > 0.2 * ringDist) {
+        // Seen from the camera (dist behind, h above), the wyvern sits atan(h/dist) below the
+        // boom axis and the ring atan((h + down)/(dist + ahead)): solve for the h that keeps
+        // the ring `ringClearance` above the wyvern (a contraction: three steps converge).
+        const down = -toRing.dot(upPerp);
+        // The whole ring, not just its centre: add its angular radius (rings are ~6–10 m).
+        const clearance = C.ringClearance + Math.atan2(6, ringDist);
+        let h = height;
+        for (let i = 0; i < 3; i++) h = dist * Math.tan(clamp(clearance + Math.atan2(h + down, dist + ahead), 0, 38 * D));
+        liftGoal = Math.max(0, h - height) * race * smoothstep(12, 30, ringDist);
+      }
+    }
+    this.ringLift = damp(this.ringLift, liftGoal, 2.8, dt);
+    height += this.ringLift;
 
     // --- Weight: the rig lags a little behind accelerations (not velocity, so no drift) -----
     this.lagVel.lerp(pose.velocity, 1 - Math.exp(-3.2 * dt));
@@ -183,23 +249,31 @@ export class FlightRig implements Rig {
     if (diff.lengthSq() > 2.2 * 2.2) diff.setLength(2.2);
     focus.copy(pose.position).add(diff);
 
-    // --- Place the camera, then keep it out of rock -------------------------------------------
+    // --- Place the camera, then keep it out of rock, buildings and trunks ---------------------
     want.copy(focus).addScaledVector(arm, -dist).addScaledVector(upPerp, height);
     origin.copy(focus).addScaledVector(upPerp, span * 0.08 + 0.8);
     toCam.subVectors(want, origin);
     const boomLen = toCam.length();
     toCam.multiplyScalar(1 / Math.max(1e-6, boomLen));
-    const hit = sphereCast(ctx.terrain, origin, toCam, boomLen + 0.5, C.radius);
+    const hit = castBoom(ctx.terrain, origin, toCam, boomLen + 0.5, C.radius, boomHit);
     let hard = Infinity;
     let soft = Infinity;
-    if (hit < boomLen + 0.5) {
-      const camInRock = ctx.terrain.distance(want) < C.radius + 0.3;
-      if (camInRock || hit < 3) {
-        hard = hit;
+    if (hit.t < boomLen + 0.5) {
+      const camInSolid = solidContact(ctx.terrain, want, C.radius + 0.3);
+      if (hit.soft && !camInSolid) {
+        // Foliage: never snap. A canopy that keeps hiding the wyvern eases the boom in front of
+        // it, but not all the way (the wyvern itself may be brushing the leaves). If the camera
+        // itself would sit in the leaves, there is no grace period.
+        this.occluded += dt;
+        if (this.occluded >= C.occlusionGrace || softContact(ctx.terrain, want, C.radius)) {
+          soft = Math.max(hit.t, boomLen * C.softMin);
+        }
+      } else if (camInSolid || hit.t < 3) {
+        hard = hit.t;
         this.occluded = C.occlusionGrace;
       } else {
         this.occluded += dt;
-        if (this.occluded >= C.occlusionGrace) soft = hit;
+        if (this.occluded >= C.occlusionGrace) soft = hit.t;
       }
     } else {
       this.occluded = 0;
@@ -207,23 +281,27 @@ export class FlightRig implements Rig {
     this.boom = boomStep(this.boom, boomLen, hard, soft, dt);
     out.position.copy(origin).addScaledVector(toCam, this.boom);
 
-    // --- Aim: a little ahead along the path, wyvern in the lower-middle of the frame ----------
+    // --- Aim: a little ahead along the path, wyvern in the lower part of the frame -------------
     const behind = Math.max(0, Math.cos(this.look.yaw));
-    const lookAhead = Math.min(speed * C.lookAheadTime, C.lookAheadMax) * behind;
-    out.target.copy(focus).addScaledVector(vdir, lookAhead).addScaledVector(upPerp, height * 0.32);
+    const aheadTime = C.lookAheadTime + (R.lookAheadTime - C.lookAheadTime) * race;
+    const aheadMax = C.lookAheadMax + (R.lookAheadMax - C.lookAheadMax) * race;
+    const lookAhead = Math.min(speed * aheadTime, aheadMax) * behind;
+    out.target.copy(focus).addScaledVector(vdir, lookAhead).addScaledVector(upPerp, (height - this.ringLift) * 0.32);
     out.target.y -= this.flare * 2.5;
 
-    // --- Roll with the bank (a share of it), widen the lens with speed ------------------------
+    // --- Sway into the bank (a share of it, slowly: a big body leaning), widen with speed -----
     bodyLeft.set(1, 0, 0).applyQuaternion(pose.orientation);
     bodyUp.set(0, 1, 0).applyQuaternion(pose.orientation);
     const bank = clamp(Math.atan2(bodyLeft.y, bodyUp.y), -100 * D, 100 * D);
     const targetRoll = reduced ? 0 : bank * C.rollShare * behind;
-    this.roll = damp(this.roll, targetRoll, 5, dt);
+    this.roll = damp(this.roll, targetRoll, C.rollRate / Math.sqrt(weight), dt);
     out.roll = this.roll;
 
     const tuck = clamp01((1 - pose.wingSpread) / 0.72);
     this.fovKick = damp(this.fovKick, reduced ? 0 : speedFovKick(pose.airspeed || speed, tuck), 2.5, dt);
-    out.fov = ctx.settings.fov + this.fovKick;
+    // A bigger beast on a slightly longer lens (and a small one on a wider one).
+    const lens = clamp(-C.fovScale * (breedScale(player.breed) - 1), -3, 3);
+    out.fov = ctx.settings.fov + lens + this.fovKick;
     out.shift = 0;
     return out;
   }
@@ -249,10 +327,14 @@ export const ORBIT_CAM: Record<OrbitKind, {
   mounted: { dist: 6.5, orbitMin: -0.1, distSpan: 0.6, runExtra: 1.5, pitch: 0.26, pitchMin: -0.45, pitchMax: 1.2, shoulder: 0, radius: 0.7, follow: 0.85 },
 };
 
+/** How fast (rad/s) the idle on-foot camera swings off a wyvern that fills the frame. */
+const COMPANION_SWING = 0.6;
+
 /**
  * Third-person orbit: the stick/mouse turns the view freely, it gently swings round behind the
- * direction you travel when you leave it alone, and it collides with terrain (pulling in fast,
- * easing back out slowly).
+ * direction you travel when you leave it alone, and it collides with terrain, buildings and
+ * trunks (pulling in fast, easing back out slowly) and softly with foliage. On foot it also
+ * drifts off the waiting wyvern when that would fill a third of the frame.
  */
 export class OrbitRig implements Rig {
   private view = { yaw: 0, pitch: 0 };
@@ -309,6 +391,9 @@ export class OrbitRig implements Rig {
       this.view.yaw = autoFollowYaw(this.view.yaw, Math.atan2(vel.x, vel.z), strength, dt);
       if (this.lookIdle > 2) this.view.pitch = damp(this.view.pitch, P.pitch, 0.8, dt);
     }
+    if (this.kind === 'foot' && this.lookIdle > 0.7 && this.recenterT <= 0) {
+      this.view.yaw += this.companionSwing(player, hspeed, ctx) * dt;
+    }
     this.view.yaw = wrapAngle(this.view.yaw);
     this.view.pitch = clamp(this.view.pitch, P.pitchMin, P.pitchMax);
 
@@ -330,13 +415,18 @@ export class OrbitRig implements Rig {
     // Shoulder offset first (so a wall beside you shortens it), then the boom.
     let shoulder = P.shoulder;
     if (shoulder > 0) {
-      const sh = sphereCast(ctx.terrain, pivot, right, shoulder + P.radius, P.radius);
-      shoulder = Math.min(shoulder, Math.max(0, sh - 0.05));
+      const sh = castBoom(ctx.terrain, pivot, right, shoulder + P.radius, P.radius, boomHit);
+      if (!sh.soft) shoulder = Math.min(shoulder, Math.max(0, sh.t - 0.05));
     }
     pivotS.copy(pivot).addScaledVector(right, shoulder);
     toCam.copy(arm).multiplyScalar(-1);
-    const hit = sphereCast(ctx.terrain, pivotS, toCam, this.distSmooth + P.radius, P.radius);
-    this.boom = boomStep(this.boom, this.distSmooth, hit, Infinity, dt, 30, 3);
+    const hit = castBoom(ctx.terrain, pivotS, toCam, this.distSmooth + P.radius, P.radius, boomHit);
+    if (hit.soft && !solidContact(ctx.terrain, want.copy(pivotS).addScaledVector(toCam, this.distSmooth), P.radius)) {
+      // Leaves: ease in front of them (never snap, never closer than 40% of the boom).
+      this.boom = boomStep(this.boom, this.distSmooth, Infinity, Math.max(hit.t, this.distSmooth * 0.4), dt, 5, 3);
+    } else {
+      this.boom = boomStep(this.boom, this.distSmooth, hit.t, Infinity, dt, 30, 3);
+    }
     out.position.copy(pivotS).addScaledVector(toCam, this.boom);
     out.target.copy(pivotS).addScaledVector(UP, this.kind === 'mounted' ? 0.5 : 0.3);
     if (tiltUp > 0) {
@@ -347,6 +437,34 @@ export class OrbitRig implements Rig {
     out.fov = ctx.settings.fov;
     out.shift = 0;
     return out;
+  }
+
+  /**
+   * On foot with the wyvern waiting close by, the orbit can end up with its flank right beside
+   * the camera, filling a third of the frame next to the rider. Returns a yaw rate (rad/s) that
+   * swings the camera round, away from it, until it stands further back in the scene (it then
+   * reads as the rider's companion behind them, not a wall). 0 when clear, far, or walking.
+   */
+  private companionSwing(player: PlayerSystem, hspeed: number, ctx: RigContext): number {
+    if (player.riderPose.mounted || hspeed > 1.5) return 0;
+    const w = player.wyvernPose.position;
+    const r = player.riderPose.position;
+    const camDist = this.boom > 0 ? this.boom : ORBIT_CAM.foot.dist * ctx.zoom;
+    if (Math.hypot(w.x - r.x, w.z - r.z) > camDist + player.breed.wingspan) return 0;
+    // The wyvern relative to where the camera stands, in the camera's frame.
+    const fx = Math.sin(this.view.yaw);
+    const fz = Math.cos(this.view.yaw);
+    toCompanion.set(w.x - (r.x - fx * camDist), 0, w.z - (r.z - fz * camDist));
+    const along = toCompanion.x * fx + toCompanion.z * fz;
+    const side = -toCompanion.x * fz + toCompanion.z * fx; // + = to the camera's right
+    const range = toCompanion.length();
+    // In view (within ~50° of the line of sight) and near the camera (closer than ~1.5× the rider).
+    const inView = 1 - smoothstep(0.8, 1.05, Math.atan2(Math.abs(side), Math.max(along, 1e-3)));
+    const near = 1 - smoothstep(1.4 * camDist, 1.85 * camDist, range);
+    // Fades out as it comes to stand right behind the rider (no flip-flopping across the axis).
+    const offAxis = smoothstep(0.4, 1.6, Math.abs(side));
+    const slow = 1 - smoothstep(0.5, 1.5, hspeed);
+    return -Math.sign(side) * COMPANION_SWING * inView * near * offAxis * slow;
   }
 }
 
@@ -386,8 +504,9 @@ export class FallRig implements Rig {
     toCam.subVectors(want, pivot);
     const len = toCam.length();
     toCam.multiplyScalar(1 / Math.max(1e-6, len));
-    const hit = sphereCast(ctx.terrain, pivot, toCam, len + 0.6, 0.6);
-    this.boom = boomStep(this.boom, len, hit, Infinity, dt, 30, 3);
+    const hit = castBoom(ctx.terrain, pivot, toCam, len + 0.6, 0.6, boomHit);
+    if (hit.soft) this.boom = boomStep(this.boom, len, Infinity, Math.max(hit.t, len * 0.4), dt, 6, 3);
+    else this.boom = boomStep(this.boom, len, hit.t, Infinity, dt, 30, 3);
     out.position.copy(pivot).addScaledVector(toCam, this.boom);
     liftClear(ctx.terrain, out.position, 0.8);
     // Look a little below the rider: the drop is the story.

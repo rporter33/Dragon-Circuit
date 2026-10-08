@@ -124,6 +124,7 @@ export class Game implements GameActions {
       settings: () => this.settings,
       camera: this.cameraRig,
     });
+    this.cameraRig.setWaypointSource((out) => (this.races.state === 'running' || this.races.state === 'countdown' ? this.races.waypoint(out) : null));
     this.collectibles = new Collectibles({
       scene: this.scene,
       events: this.events,
@@ -231,7 +232,7 @@ export class Game implements GameActions {
     this.fx.update(dt, this.camera, this.player, this.wyvern);
     this.audio.update(dt, this.camera, this.player, this.weather, this.sky);
     this.renderer.grade.uCloudVeil.value = this.sky.cloudVeilAt(this.camera.position);
-    this.renderer.grade.uFade.value = Math.max(this.player.fade, this.uiFade);
+    this.renderer.grade.uFade.value = Math.max(this.player.fade, this.uiFade, this.cameraRig.fade);
 
     this.prompt = this.screen === 'play' ? computePrompt(this.player, this.world.layout) : null;
     this.view.screen = this.screen;

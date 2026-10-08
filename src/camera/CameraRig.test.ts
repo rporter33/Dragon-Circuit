@@ -365,6 +365,7 @@ describe('ground, title and stable framing', () => {
     const p = fakePlayer();
     onFoot(p);
     r.mode = 'stable';
+    r.setStableFocus('wyvern');
     for (let i = 0; i < 120; i++) r.update(DT, idle, p);
     const c = p.wyvernPose.position.clone().addScaledVector(UP, 0.6);
     const s = ndc(camera, c)!;
