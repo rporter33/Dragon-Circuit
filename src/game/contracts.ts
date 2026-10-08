@@ -17,6 +17,7 @@ import type {
   PlayerMode,
   RaceKind,
   RaceRecord,
+  ResearchBranch,
   RiderLook,
   RiderPose,
   Settings,
@@ -293,6 +294,10 @@ export interface SaveData {
   playTime: number;
   /** Whether the first-flight tutorial prompts have been dismissed. */
   tutorialDone: boolean;
+  /** Research journal: recorded entry ids and points per branch (absent in older saves). */
+  research?: { entries: string[]; points: Record<ResearchBranch, number> };
+  /** The guided opening with Quintus: finished or skipped (absent = not yet). */
+  prologueDone?: boolean;
 }
 
 export interface GhostRecording {

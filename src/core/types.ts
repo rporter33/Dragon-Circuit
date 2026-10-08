@@ -473,6 +473,22 @@ export interface Settings {
 
 export type WeatherKind = 'clear' | 'breezy' | 'overcast' | 'mist' | 'rain';
 
+/** The three branches research is earned in. */
+export type ResearchBranch = 'nature' | 'antiquity' | 'winds';
+
+export type DialogueSpeaker = 'quintus' | 'vellum' | 'narrator';
+
+export interface DialogueLine {
+  speaker: DialogueSpeaker;
+  text: string;
+  /** Portrait expression / voice colour. */
+  mood?: 'warm' | 'curious' | 'excited' | 'wry' | 'urgent' | 'proud';
+  /** How long to keep it up (ms); the panel picks a reading-time default when absent. */
+  durationMs?: number;
+  /** Stable id (for skipping and for 'seen' tracking). */
+  id?: string;
+}
+
 export interface GameEvents {
   /** Fired at the bottom of each downstroke. strength 0..1. */
   flap: { strength: number; position: Vector3 };
@@ -518,6 +534,22 @@ export interface GameEvents {
    */
   thermalEnter: { id: number; lift: number; position: Vector3 };
   thermalExit: { id: number };
+
+  // --- Living Drift, the Ventari and research (vertical slice) ---------------------------------
+  /** The player got close to (or watched) a creature or plant. Research decides whether it's new. */
+  catalogue: { speciesId: string; kind: 'creature' | 'plant'; name: string; position: Vector3 };
+  /** The player walked a Ventari site or read one of its inscriptions. */
+  survey: { siteId: string; part: 'site' | 'inscription'; name: string; text?: string; position: Vector3 };
+  /** A new research entry was recorded (the journal gained a page). */
+  researchEntry: { entryId: string; branch: ResearchBranch; title: string; points: number; branchTotal: number; total: number };
+  /** The Codex (the airship in the Roost's dock) reached a new build stage. */
+  codexStage: { stage: number; name: string; description: string };
+  /** A line of dialogue for the subtitle panel (Quintus, or a narrator line). */
+  dialogue: DialogueLine;
+  /** Clear any dialogue on screen (skip, scene change). */
+  dialogueClear: {};
+  /** The guided opening advanced (step id), or finished / was skipped. */
+  prologue: { step: string; state: 'start' | 'done' | 'skipped' };
   /**
    * Distant lightning in a storm (presentation only: thunder, a rumble). Strikes land kilometres
    * away; `distance` is from the camera in m (thunder should lag it at ~340 m/s).
