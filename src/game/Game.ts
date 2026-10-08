@@ -132,8 +132,10 @@ export class Game implements GameActions {
       terrain: this.world.terrain,
       dressing: this.dressing,
       quality,
+      viewportHeight: () => this.renderer.canvas.height,
     });
     colliders.addSource('race-gates', () => this.races.colliders);
+    colliders.addSource('relics', () => this.collectibles.colliders);
     this.fx = new Fx({
       scene: this.scene,
       renderer: this.renderer,
@@ -341,6 +343,7 @@ export class Game implements GameActions {
     this.screen = screen;
     this.ui.setScreen(screen);
     this.cameraRig.mode = screen === 'title' ? 'title' : screen === 'stable' ? 'stable' : 'follow';
+    this.collectibles.setActive(screen === 'play');
     this.input.setPointerLock(screen === 'play');
   }
 
