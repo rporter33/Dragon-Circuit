@@ -123,6 +123,7 @@ export class Game implements GameActions {
       quality,
       settings: () => this.settings,
       camera: this.cameraRig,
+      terrain: this.world.terrain,
     });
     this.collectibles = new Collectibles({
       scene: this.scene,
@@ -132,6 +133,7 @@ export class Game implements GameActions {
       dressing: this.dressing,
       quality,
     });
+    colliders.addSource('race-gates', () => this.races.colliders);
     this.fx = new Fx({
       scene: this.scene,
       renderer: this.renderer,
@@ -348,7 +350,7 @@ export class Game implements GameActions {
       this.pause();
       this.input.consume(); // the press that opened the menu must not also close it this frame
     }
-    if (p.restart && this.races.activeId) this.restartRace();
+    if (p.restart && (this.races.activeId || this.races.retryId)) this.restartRace();
     // The prompt decides what interact does here (mounting wins over the stable door).
     if (p.interact && this.prompt?.action === 'stable') this.openStable();
   }
