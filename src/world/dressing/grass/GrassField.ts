@@ -58,6 +58,7 @@ interface Slot {
 }
 
 const key = (cx: number, cz: number) => (cx + 4096) * 8192 + (cz + 4096);
+const byDistance = (a: { d: number }, b: { d: number }) => a.d - b.d;
 
 const tmpBox = { x: 0, z: 0 };
 
@@ -94,6 +95,7 @@ export class GrassField {
   private scratch: FieldChunkData;
   private cacheLimit = 200;
   private wanted: { k: number; cx: number; cz: number; d: number }[] = [];
+  private wantedPool: { k: number; cx: number; cz: number; d: number }[] = [];
   private wantedKeys = new Set<number>();
   /** Island top bands per chunk (to skip chunks far above/below the camera before generating). */
   private bands = new Map<number, { minY: number; maxY: number } | null>();
@@ -340,7 +342,14 @@ export class GrassField {
         const dy = c.y > b.maxY ? c.y - b.maxY : c.y < b.minY ? b.minY - c.y : 0;
         const d = Math.hypot(dxz, dy);
         if (d > R) continue;
-        wanted.push({ k, cx, cz, d });
+        // Reuse entry objects frame to frame (no per-frame garbage).
+        let w = this.wantedPool[wanted.length];
+        if (!w) this.wantedPool.push((w = { k: 0, cx: 0, cz: 0, d: 0 }));
+        w.k = k;
+        w.cx = cx;
+        w.cz = cz;
+        w.d = d;
+        wanted.push(w);
         this.wantedKeys.add(k);
       }
     }
@@ -359,7 +368,7 @@ export class GrassField {
     // Fill missing chunks nearest first: anything close is generated now (no bald patch at the
     // player's feet); the rest go to the worker, or (without one) a per-frame time budget.
     if (!this.workerReady) this.initWorker();
-    wanted.sort((a, b) => a.d - b.d);
+    wanted.sort(byDistance);
     const t0 = performance.now();
     let generated = 0;
     for (const w of wanted) {

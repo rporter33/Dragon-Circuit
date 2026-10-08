@@ -71,6 +71,8 @@ export class Forest {
   private groups: IslandGroup[] = [];
   private shadows: boolean;
   private framesSince = 1e9;
+  /** Buckets indexed like SPECIES_IDS (speciesOf values). */
+  private bucketList: (SpeciesBucket | undefined)[] = [];
 
   constructor(instances: PropInstance[], quality: QualityProfile) {
     this.group.name = 'dressing:forest';
@@ -145,6 +147,7 @@ export class Forest {
       const d = spec.lodDist;
       this.buckets.set(id, { id, lods, dist2: [d[0] * d[0], d[1] * d[1], d[2] * d[2]] });
     }
+    this.bucketList = SPECIES_IDS.map((sid) => this.buckets.get(sid));
   }
 
   private materialFor(kind: 'foliage' | 'glow' | 'rock' | 'card'): Material {
@@ -190,7 +193,7 @@ export class Forest {
     const cz = camera.position.z;
     const byLod = this.stats.byLod;
     byLod[0] = byLod[1] = byLod[2] = 0;
-    const bucketList: (SpeciesBucket | undefined)[] = SPECIES_IDS.map((id) => this.buckets.get(id));
+    const bucketList = this.bucketList;
 
     for (const g of this.groups) {
       const dc = g.sphere.center.distanceTo(camera.position) - g.sphere.radius;
@@ -207,7 +210,9 @@ export class Forest {
         if (lod === 3) continue;
         const L = b.lods[lod];
         const k = L.count++;
-        L.matrices.set(this.mats.subarray(i * 16, i * 16 + 16), k * 16);
+        const src = i * 16;
+        const dst = k * 16;
+        for (let e = 0; e < 16; e++) L.matrices[dst + e] = this.mats[src + e];
         L.colors[k * 3] = this.cols[i * 3];
         L.colors[k * 3 + 1] = this.cols[i * 3 + 1];
         L.colors[k * 3 + 2] = this.cols[i * 3 + 2];

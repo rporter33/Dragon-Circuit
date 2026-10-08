@@ -7,7 +7,6 @@
 
 import { Group, Vector3, type PerspectiveCamera, type Scene } from 'three';
 import type { CylinderCollider } from '../../core/types';
-import type { GameEventBus } from '../../core/events';
 import type { DressingSystem } from '../../game/contracts';
 import type { QualityProfile } from '../../render/quality';
 import type { Terrain } from '../terrain';
@@ -25,7 +24,6 @@ export interface DressingDeps {
   scene: Scene;
   terrain: Terrain;
   quality: QualityProfile;
-  events?: GameEventBus;
   /**
    * Generate far grass chunks in a Web Worker (default true). Pass false when frames are stepped
    * by automation (?manual=1) so every capture is complete and deterministic.

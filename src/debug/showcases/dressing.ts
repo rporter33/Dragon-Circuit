@@ -7,9 +7,10 @@ import { islandByLandmark } from '../../world/layout';
 
 /**
  * ?view=dressing&spot=<name> — fixed camera spots for reviewing world dressing.
- * Spots: roost, stable, deck, meadow, forest, cascade, cascadeBelow, rootfall, glowcap,
- * observatory, lantern, highmoor, overview. Add &tod= to override the spot's time of day.
- * The player is parked out of frame and the simulation frozen.
+ * Spots: roost, stable, deck, meadow, forest, forestFloor, cascade, cascadeBelow, rootfall,
+ * glowcap, observatory, lantern, highmoor, overview. Add &tod= to override the spot's time of
+ * day, &cam=x,y,z&look=x,y,z to move the camera, &sky=native to skip the night stand-in.
+ * The player is parked out of frame and the simulation frozen (&freeze=0 to run it).
  */
 
 interface Spot {
@@ -110,7 +111,7 @@ function applyNight(game: Game): void {
 
 const dressing: Showcase = {
   name: 'dressing',
-  description: 'World dressing review spots (&spot=roost|stable|meadow|forest|cascade|cascadeBelow|rootfall|glowcap|observatory|lantern|highmoor)',
+  description: 'World dressing review spots (&spot=roost|stable|deck|meadow|forest|forestFloor|cascade|cascadeBelow|rootfall|glowcap|observatory|lantern|highmoor|overview)',
   setup(game, params) {
     const all = spots(game);
     const name = params.get('spot') ?? 'roost';

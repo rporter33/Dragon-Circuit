@@ -512,12 +512,12 @@ export interface SpeciesSpec {
 }
 
 export const SPECIES: Record<SpeciesId, SpeciesSpec> = {
-  broadleaf: { id: 'broadleaf', build: (l) => broadleafLod(l, { giant: false, blossom: false }), height: 11, trunkRadius: 0.45, lodDist: [75, 380, 9000], material: 'foliage', castShadow: true },
-  giant: { id: 'giant', build: (l) => broadleafLod(l, { giant: true, blossom: false }), height: 20, trunkRadius: 1.15, lodDist: [100, 560, 9000], material: 'foliage', castShadow: true },
-  blossom: { id: 'blossom', build: (l) => broadleafLod(l, { giant: false, blossom: true }), height: 8, trunkRadius: 0.34, lodDist: [75, 350, 9000], material: 'foliage', castShadow: true },
-  conifer: { id: 'conifer', build: coniferLod, height: 15, trunkRadius: 0.36, lodDist: [80, 400, 9000], material: 'foliage', castShadow: true },
-  windbent: { id: 'windbent', build: windbentLod, height: 7, trunkRadius: 0.38, lodDist: [70, 350, 9000], material: 'foliage', castShadow: true },
-  glowcap: { id: 'glowcap', build: glowcapLod, height: 14, trunkRadius: 1.1, lodDist: [110, 520, 9000], material: 'glow', castShadow: true },
+  broadleaf: { id: 'broadleaf', build: (l) => broadleafLod(l, { giant: false, blossom: false }), height: 11, trunkRadius: 0.45, lodDist: [75, 270, 9000], material: 'foliage', castShadow: true },
+  giant: { id: 'giant', build: (l) => broadleafLod(l, { giant: true, blossom: false }), height: 20, trunkRadius: 1.15, lodDist: [100, 380, 9000], material: 'foliage', castShadow: true },
+  blossom: { id: 'blossom', build: (l) => broadleafLod(l, { giant: false, blossom: true }), height: 8, trunkRadius: 0.34, lodDist: [75, 250, 9000], material: 'foliage', castShadow: true },
+  conifer: { id: 'conifer', build: coniferLod, height: 15, trunkRadius: 0.36, lodDist: [80, 300, 9000], material: 'foliage', castShadow: true },
+  windbent: { id: 'windbent', build: windbentLod, height: 7, trunkRadius: 0.38, lodDist: [70, 260, 9000], material: 'foliage', castShadow: true },
+  glowcap: { id: 'glowcap', build: glowcapLod, height: 14, trunkRadius: 1.1, lodDist: [110, 380, 9000], material: 'glow', castShadow: true },
   bush: { id: 'bush', build: bushLod, height: 2, trunkRadius: 0, lodDist: [55, 260, 700], material: 'foliage', castShadow: true },
   boulder: { id: 'boulder', build: boulderLod, height: 1.5, trunkRadius: 0, lodDist: [60, 300, 1600], material: 'rock', castShadow: true },
   log: { id: 'log', build: logLod, height: 1, trunkRadius: 0, lodDist: [55, 240, 500], material: 'rock', castShadow: true },
