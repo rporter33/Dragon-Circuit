@@ -69,7 +69,12 @@ async function start(): Promise<void> {
       bootStatus('Lighting the lanterns…');
       // Let the splash repaint with the new line before the main thread is busy again.
       await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
-      warmup = await game.renderer.prepare(game.scene, game.camera);
+      try {
+        warmup = await game.renderer.prepare(game.scene, game.camera);
+      } catch (err) {
+        // Not fatal: anything left uncompiled links on first use instead.
+        console.warn('Driftwing: shader warmup failed', err);
+      }
       if (handle) handle.ready = true;
     }
     const warmupEnd = performance.now();

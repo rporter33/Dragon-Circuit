@@ -112,6 +112,10 @@ export class Renderer {
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.watchPixelRatio();
+    // A restored context has lost every program: compile them all again before drawing.
+    this.canvas.addEventListener('webglcontextrestored', () => {
+      this.needsRecompile = true;
+    });
   }
 
   setQuality(level: QualityLevel, resolutionScale = this.resolutionScale): void {
@@ -132,6 +136,11 @@ export class Renderer {
     // frame, once they have.
     if (changed) this.needsRecompile = true;
     this.resize();
+  }
+
+  /** True while a quality change holds drawing back until its programs have linked. */
+  get recompilingQuality(): boolean {
+    return this.recompiling !== null || this.needsRecompile;
   }
 
   /** Current automatic resolution factor. */
@@ -227,6 +236,8 @@ export class Renderer {
         return;
       }
       this.recompiling = null;
+      // Shadow-depth variants and uploads for the new settings, off screen.
+      this.warmup.drawAll(scene, camera, this.target);
     }
     const info = this.gl.info;
     info.reset();
@@ -247,9 +258,12 @@ export class Renderer {
     g.tDiffuse.value = this.target.texture;
     const autoClear = gl.autoClear;
     gl.autoClear = false; // the grade covers every pixel
-    gl.setRenderTarget(null);
-    this.gradeQuad.render(gl);
-    gl.autoClear = autoClear;
+    try {
+      gl.setRenderTarget(null);
+      this.gradeQuad.render(gl);
+    } finally {
+      gl.autoClear = autoClear;
+    }
     this.compiledThisFrame = (info.programs?.length ?? 0) !== programs;
   }
 

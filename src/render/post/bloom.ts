@@ -184,6 +184,15 @@ export class BloomChain {
   render(gl: WebGLRenderer, source: Texture): Texture {
     const autoClear = gl.autoClear;
     gl.autoClear = false;
+    try {
+      this.draw(gl, source);
+    } finally {
+      gl.autoClear = autoClear;
+    }
+    return this.levels[0].texture;
+  }
+
+  private draw(gl: WebGLRenderer, source: Texture): void {
 
     const pre = this.prefilter.material.uniforms;
     pre.tSource.value = source;
@@ -211,9 +220,6 @@ export class BloomChain {
       gl.setRenderTarget(this.levels[i]);
       this.up.render(gl);
     }
-
-    gl.autoClear = autoClear;
-    return this.levels[0].texture;
   }
 
   dispose(): void {
