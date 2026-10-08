@@ -316,8 +316,12 @@ function glowcapLod(lod: number): BufferGeometry {
     [1.5, 0], [1.05, 0.7], [0.82, 2.2], [0.7, 5], [0.72, 8], [0.85, H - 0.5], [0.95, H + 0.4],
   ].map(([r, y]) => new Vector2(r, y));
   const stem = new LatheGeometry(stemPts, seg);
-  const stemLo = new Color('#d9cfbb');
-  const stemHi = new Color('#b9b0dc');
+  // Warm ivory, darker toward the root: stays under the bloom threshold at noon. Only the cap's
+  // spots, rim and gills glow (after dusk).
+  const stemLo = new Color('#8f8678');
+  const stemMid = new Color('#c4bba8');
+  const stemHi = new Color('#b4abc4');
+  const stemN = noise3(223);
   const leanM = (g: BufferGeometry) => {
     const pos = g.getAttribute('position');
     for (let i = 0; i < pos.count; i++) pos.setX(i, pos.getX(i) + lean(pos.getY(i)));
@@ -325,15 +329,28 @@ function glowcapLod(lod: number): BufferGeometry {
     return g;
   };
   b.add(leanM(welded(stem)), null, {
-    color: (p, _n, out) => out.copy(stemLo).lerp(stemHi, Math.min(1, p.y / H)),
+    color: (p, _n, out) => {
+      const t = Math.min(1, Math.max(0, p.y / H));
+      out.copy(stemLo).lerp(stemMid, Math.min(1, t * 3.5));
+      if (t > 0.6) out.lerp(stemHi, (t - 0.6) * 1.6);
+      // Fibrous vertical streaks, and the cap's shadow on the top of the stem.
+      out.multiplyScalar(0.8 + 0.3 * stemN(p.x * 2.6, p.y * 0.2, p.z * 2.6));
+      out.multiplyScalar(1 - 0.4 * Math.min(1, Math.max(0, (p.y - (H - 2.5)) / 2.5)));
+    },
     sway: (p) => Math.pow(Math.max(0, p.y) / H, 2) * 0.1,
-    glow: (p) => (p.y > H - 1.2 ? 0.12 : 0),
+    // Only the gills' light spilling onto the top of the stem (after dusk).
+    glow: (p) => 0.2 * Math.min(1, Math.max(0, (p.y - (H - 1.8)) / 1.8)),
   });
   // Skirt ring on the stem.
   if (lod < 2) {
     // Lathe profiles run bottom → top so faces point outward.
     const ring = new LatheGeometry([new Vector2(1.6, -0.75), new Vector2(1.5, -0.5), new Vector2(0.75, 0.3)], seg);
-    b.add(welded(ring), xf(lean(H * 0.7), H * 0.7, 0), { color: '#d6ccec', sway: 0.06, glow: 0.08 });
+    const skirt = new Color('#b9b1c6');
+    b.add(welded(ring), xf(lean(H * 0.7), H * 0.7, 0), {
+      // The skirt's underside sits in its own shade.
+      color: (_p, n, out) => out.copy(skirt).multiplyScalar(n.y < 0 ? 0.5 : 0.92),
+      sway: 0.06,
+    });
   }
   // Cap: a dome with a rolled lip, and a glowing gill underside.
   const capR = 5.8;
