@@ -97,7 +97,7 @@ export class Game implements GameActions {
     });
     this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings, this.events);
     this.wyvern = new Wyvern(this.save.data.wyvern, { terrain: this.world.terrain });
-    this.rider = new Rider(this.save.data.rider);
+    this.rider = new Rider(this.save.data.rider, { terrain: this.world.terrain, saddle: this.wyvern.saddle, events: this.events, quality });
     this.scene.add(this.wyvern.group, this.rider.group);
     this.races = new Races();
     this.collectibles = new Collectibles();
@@ -274,6 +274,7 @@ export class Game implements GameActions {
       this.dressing.setQuality(q);
       this.sky.setQuality(q);
       this.fx.setQuality(q);
+      this.rider.setQuality(q);
     }
     this.audio.applySettings(s);
     this.races.setShowGhost(s.showGhost);
