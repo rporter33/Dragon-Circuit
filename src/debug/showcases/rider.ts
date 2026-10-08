@@ -19,10 +19,12 @@ import { PLAYER_TUNING as P } from '../../player/tuning';
  *             speed= (m/s on foot; airflow when mounted). mount/dismount use a stand-in wyvern
  *             and replay the player state's own arcs.
  *   mounted:  mounted=1 on a stand-in saddle; lean= crouch= brace= pitch=deg (dive angle)
+ *   real:     real=1 puts the game's own rider on the real wyvern, held in the air (ground=1 to
+ *             stand it on the Roost) with the same speed/lean/crouch/brace/pitch controls
  *   air:      wind=x,z (m/s, world) on foot; defaults to the shared wind uniform
- *   light:    tod= as usual; the baseline sky only moves the sun, so this showcase tints dusk and
- *             night itself (like the dressing showcase) unless sky=native
- *   camera:   angle=deg (0 = in front) dist= height= camUp= turntable=1 focus=head
+ *   light:    tod= as usual (the sky module lights it); sky=standin tints dusk/night by hand for
+ *             a baseline sky that only moves the sun
+ *   camera:   angle=deg (0 = in front) dist= height= camUp= turntable=1 focus=head; hud=1 keeps the HUD
  *
  * Steps files can tweak parameters live: __riderShow.params.set('angle', '90').
  */
@@ -178,6 +180,57 @@ const smooth = (t: number) => {
   return u * u * (3 - 2 * u);
 };
 
+let realHome: Vector3 | null = null;
+
+/**
+ * real=1: hold the game's wyvern in the air above the Roost in a chosen attitude (pitch=, lean=
+ * banks it, crouch= tucks the wings) with air streaming past at speed=, and let the game's rider
+ * sit its real saddle.
+ */
+function poseReal(game: Game, home: Vector3): void {
+  const w = game.player.wyvernPose;
+  const r = game.player.riderPose;
+  const speed = num('speed', 30);
+  const pitch = (num('pitch', 0) * Math.PI) / 180;
+  const lean = num('lean', 0);
+  const crouch = num('crouch', 0);
+  const brace = num('brace', 0);
+  const airborne = params.get('ground') !== '1';
+  const sh = game.player.breed.standHeight;
+  w.position.copy(home).add(_v.set(0, airborne ? 5 : sh, 0));
+  w.orientation.setFromEuler(new Euler(pitch, 0, lean * 0.7, 'YXZ'));
+  _a.set(0, 0, 1).applyQuaternion(w.orientation);
+  w.velocity.copy(_a).multiplyScalar(airborne ? speed : 0);
+  w.airborne = airborne;
+  w.airspeed = airborne ? speed : 0;
+  w.angularVelocity.set(0, 0, lean * 0.8);
+  w.wingSpread = airborne ? 1 - 0.75 * crouch : 0.25;
+  w.flapPhase = (time * 1.6) % 1;
+  w.flapStrength = airborne && crouch < 0.5 && speed < 25 ? 0.6 : 0;
+  w.flare = brace;
+  w.stall = 0;
+  w.gait = 'idle';
+  w.groundSpeed = 0;
+  w.groundY = airborne ? null : home.y;
+  w.lookTarget.copy(w.position).addScaledVector(_a, 20);
+  r.mounted = true;
+  r.action = 'mounted';
+  r.actionTime = time;
+  r.lean = lean;
+  r.crouch = crouch;
+  r.brace = brace;
+  r.velocity.set(0, 0, 0);
+  r.airflow.copy(_a).multiplyScalar(airborne ? -speed : 0);
+  r.position.copy(w.position);
+  (game.player.riderPosition as Vector3).copy(w.position);
+  const angle = ((num('angle', 120) + (params.get('turntable') === '1' ? time * 40 : 0)) * Math.PI) / 180;
+  const dist = num('dist', 7);
+  // Frame the saddle (where the rider is), not the wyvern's center.
+  game.wyvern.saddle.getWorldPosition(_t).add(_v.set(0, num('height', 0.5), 0));
+  const pos = _t.clone().add(_v.set(Math.sin(angle) * dist, num('camUp', 0.12) * dist, Math.cos(angle) * dist));
+  game.cameraRig.setOverride({ position: pos, target: _t });
+}
+
 const rider: Showcase = {
   name: 'rider',
   description: 'The rider: looks, lineups, actions, mounted posture with cloth (see file header)',
@@ -185,7 +238,22 @@ const rider: Showcase = {
     params = p;
     time = 0;
     actors.length = 0;
+    realHome = null;
     if (typeof window !== 'undefined') (window as unknown as { __riderShow: unknown }).__riderShow = { params, actors, game };
+    // A clean frame: no HUD unless asked for (hud=1).
+    if (params.get('hud') !== '1' && typeof document !== 'undefined') {
+      const ui = document.getElementById('ui');
+      if (ui) ui.style.display = 'none';
+    }
+    if (params.get('real') === '1') {
+      // The game's own rider on the real wyvern, posed by hand each frame.
+      const look = lookFromParams();
+      game.setRiderLook(look);
+      const L = game.world.layout;
+      realHome = game.world.terrain.standingPoint(L.spawn.position[0] - 6, L.spawn.position[2] + 4, new Vector3());
+      game.player.teleport(realHome.clone().add(new Vector3(0, 0, 0)), 0, 'landed');
+      return;
+    }
     game.rider.group.visible = false;
     game.wyvern.group.visible = false;
     const mounted = params.get('mounted') === '1';
@@ -236,7 +304,11 @@ const rider: Showcase = {
   },
   update(game, dt) {
     time += dt;
-    if (params.get('sky') !== 'native') applySkyStandIn(game);
+    if (params.get('sky') === 'standin') applySkyStandIn(game);
+    if (realHome) {
+      poseReal(game, realHome);
+      return;
+    }
     const mounted = params.get('mounted') === '1';
     const center = new Vector3();
     for (const a of actors) {
