@@ -40,9 +40,9 @@ export interface ClothConfig {
   /** Gravity scale (hair a little lighter than cloth feels better). */
   gravity?: number;
   /**
-   * Drag multiplier at walking/running air speeds (below ~8 m/s, back to 1 by ~16 m/s). Light
-   * ribbons need less: at full drag a running pace already holds a scarf out like a rod, where a
-   * real one droops and swings. Default 1.
+   * Drag multiplier at walking/running air speeds (a run into a breeze: below ~10 m/s, back to 1
+   * by ~22 m/s, under any flying speed). Light ribbons need less: at full drag a running pace
+   * already holds a scarf out like a rod, where a real one droops and swings. Default 1.
    */
   dragLow?: number;
   /**
@@ -311,7 +311,7 @@ export class Cloth {
     const damp = Math.exp(-cfg.damping * h);
     // Less drag at on-foot speeds for light pieces (see dragLow).
     const low = cfg.dragLow ?? 1;
-    const lt = Math.min(1, Math.max(0, (airSpeed - 8) / 8));
+    const lt = Math.min(1, Math.max(0, (airSpeed - 10) / 12));
     const dragScale = low + (1 - low) * lt * lt * (3 - 2 * lt);
     // Flutter: a travelling wave across the surface, stronger toward the free end and with speed.
     const speedK = Math.min(1, airSpeed / 22);

@@ -778,7 +778,7 @@ export class WyvernAnimator {
     for (let f = 0; f < 3; f++) {
       // Inner segment: up beside the forearm, bundled (outside and a little behind it).
       _fd.copy(back)
-        .addScaledVector(LEFT, (0.1 + 0.03 * f) * sx)
+        .addScaledVector(LEFT, (0.07 + 0.02 * f) * sx)
         .addScaledVector(fwdG, -0.1 - 0.06 * f)
         .normalize();
       aimRotation(rest[3 + f], UP, _fd, ref, _q);
@@ -788,7 +788,7 @@ export class WyvernAnimator {
       _fd.copy(fwdG)
         .multiplyScalar(-0.92)
         .addScaledVector(up, 0.3 - 0.13 * f)
-        .addScaledVector(LEFT, (0.16 - 0.03 * f) * sx)
+        .addScaledVector(LEFT, (0.07 - 0.02 * f) * sx)
         .normalize();
       aimRotation(rest[3 + f], UP, _fd, _refN.copy(LEFT).multiplyScalar(sx), _q);
       this.setModel(w.fingers[f][1], _q, weight);

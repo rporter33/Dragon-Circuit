@@ -483,6 +483,40 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
     w.dispose();
   });
 
+  it('works the outer wing harder in a banked turn', () => {
+    const w = new Wyvern(look('harrier'));
+    const pose = gliding();
+    pose.flapStrength = 1;
+    // Banked 35° right and turning right: the left wing (+X) is the outer one.
+    pose.orientation.setFromAxisAngle(new Vector3(0, 0, 1), 0.6);
+    pose.angularVelocity.set(0, -0.5, 0.1);
+    let hiL = -Infinity;
+    let loL = Infinity;
+    let hiR = -Infinity;
+    let loR = Infinity;
+    let loadL = 0;
+    let loadR = 0;
+    for (let i = 0; i < 300; i++) {
+      pose.flapPhase = ((i / 60) * 1.6) % 1;
+      w.update(1 / 60, pose);
+      if (i < 120) continue;
+      w.getWingtips(_p, _q);
+      // Tip heights in the body frame.
+      const inv = pose.orientation.clone().invert();
+      const l = _p.clone().sub(pose.position).applyQuaternion(inv).y;
+      const r = _q.clone().sub(pose.position).applyQuaternion(inv).y;
+      hiL = Math.max(hiL, l);
+      loL = Math.min(loL, l);
+      hiR = Math.max(hiR, r);
+      loR = Math.min(loR, r);
+      loadL = Math.max(loadL, w.uniforms.uWingLoad.value.x);
+      loadR = Math.max(loadR, w.uniforms.uWingLoad.value.y);
+    }
+    expect(hiL - loL).toBeGreaterThan((hiR - loR) * 1.1);
+    expect(loadL).toBeGreaterThan(loadR * 1.15);
+    w.dispose();
+  });
+
   it('folds the wings back along the flank on the ground: tips up off the ground, behind the shoulder (VIS-17)', () => {
     for (const breed of BREED_ORDER) {
       const w = new Wyvern(look(breed));
