@@ -191,6 +191,7 @@ export class Game implements GameActions {
   /** Advance the game by dt seconds (sim + presentation) and, unless told not to, render. */
   frame(dt: number, render = true): void {
     this.syncColliders();
+    this.input.flying = this.player.mode === 'flying';
     const input = this.input.poll(dt);
     this.haptics.update(dt);
     const simulate = (this.screen === 'play' || this.screen === 'title') && !this.debug.freeze;

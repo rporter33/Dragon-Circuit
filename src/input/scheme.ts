@@ -9,9 +9,18 @@
 //    (look + flap + flare) while the left hand steers.
 //  - Rudder bumpers (LB/RB) are digital, so they ramp in like keyboard keys (~0.12 s) instead of
 //    snapping the tail over.
-//  - Tuck is A (hold) on the thumb and flap is RT on the index finger, so you can dive and beat
-//    the wings in the same breath — a tucked dive with a strong beat at the bottom is how you
-//    convert speed back into height quickly.
+//  - Tuck (dive) is BOTH bumpers held together (LB + RB), not a face button: a dive is exactly
+//    when you want the right thumb on the camera stick and the left on the flight stick, and the
+//    index fingers are free (you neither flap nor flare while tucked). Either bumper alone is
+//    rudder; a lone bumper waits ~90 ms before it steers (the second finger is usually a frame
+//    or two behind), and after a dive the bumper still held stays quiet until let go — so a dive
+//    never kicks the tail. Pulling RT out of a dive (a strong beat at the bottom) still works.
+//  - Keyboard pitch is shaped for a heavy body: a tap or a short hold eases in to 60%, a held key
+//    grows to full after ~0.55 s. Taps trim the path; holding commits.
+//  - Inverts are per device (Settings.invertPitchPad / invertPitchKeys, falling back to
+//    invertPitch) and the camera has its own (invertLookY).
+//  - Optional mouse steering (Settings.mouseFlight): with the mouse captured in flight it is a
+//    virtual stick that eases back to centre; hold the middle button to look around instead.
 //  - Pitch/roll use a square-mapped stick: a full diagonal gives full pitch AND full roll.
 //  - L3 (click the move stick) latches a run on foot until the stick returns to centre, so you
 //    can run and steer the camera with the right thumb at the same time. B still runs while held.
@@ -29,7 +38,7 @@ import type { PadStyle } from './shaping';
 export type { PadStyle } from './shaping';
 
 export type ControlAction =
-  | 'pitch' | 'roll' | 'yaw' | 'flap' | 'tuck' | 'flare' | 'look' | 'recenter'
+  | 'pitch' | 'roll' | 'yaw' | 'flap' | 'tuck' | 'flare' | 'look' | 'freeLook' | 'recenter'
   | 'move' | 'jump' | 'sprint' | 'interact' | 'mount' | 'dismount' | 'stable'
   | 'pause' | 'restart' | 'toggleHud' | 'confirm' | 'back' | 'tabPrev' | 'tabNext'
   | 'navigate' | 'rotateView' | 'zoom';
@@ -72,6 +81,8 @@ export const KEYS = {
   sprint: ['ShiftLeft', 'ShiftRight'],
   interact: ['KeyF'],
   recenter: ['KeyV', 'Mouse1'],
+  /** Mouse steering only: hold to look around with the mouse instead (a click still recenters). */
+  freeLook: ['Mouse1'],
   pause: ['Escape'],
   restart: ['KeyR'],
   toggleHud: ['KeyH'],
@@ -92,7 +103,8 @@ export const KEYS = {
 export const PAD = {
   flap: ['RT'],
   flare: ['LT'],
-  tuck: ['A'],
+  /** Held TOGETHER (a chord): see the design notes. Either one alone is rudder. */
+  tuck: ['LB', 'RB'],
   yawLeft: ['LB'],
   yawRight: ['RB'],
   jump: ['A'],
@@ -129,6 +141,11 @@ export interface Binding {
   keys: readonly string[];
   /** True for controls you hold rather than press. */
   hold?: boolean;
+  /**
+   * True when the pad controls are pressed TOGETHER (LB + RB), not alternatives: prompts must
+   * show all of them, joined with "+".
+   */
+  chord?: boolean;
 }
 
 const PAD_NAMES: Record<PadStyle, Record<PadControl, string>> = {
@@ -178,6 +195,8 @@ interface BindOptions {
   /** Replaces the derived keyboard text, e.g. 'WASD' rather than listing eight keys. */
   kb?: string;
   hold?: boolean;
+  /** The pad controls are a chord (held together): displayed joined with " + ". */
+  chord?: boolean;
 }
 
 function bind(
@@ -188,7 +207,7 @@ function bind(
   keys: readonly string[],
   opts: BindOptions = {},
 ): Binding {
-  const padText = (style: PadStyle) => uniq(pad.map((c) => padLabel(c, style))).join(' / ') + (opts.padNote ?? '');
+  const padText = (style: PadStyle) => uniq(pad.map((c) => padLabel(c, style))).join(opts.chord ? ' + ' : ' / ') + (opts.padNote ?? '');
   return {
     action,
     label,
@@ -199,6 +218,7 @@ function bind(
     pad,
     keys,
     hold: opts.hold,
+    chord: opts.chord,
   };
 }
 
@@ -208,8 +228,9 @@ export const SCHEME: Binding[] = [
   bind('yaw', 'Rudder', 'flight', [...PAD.yawLeft, ...PAD.yawRight], [...KEYS.yawLeft, ...KEYS.yawRight]),
   bind('flap', 'Beat wings (costs stamina; pull harder for a stronger beat)', 'flight', PAD.flap, KEYS.flap, { hold: true }),
   bind('flare', 'Flare — brake and land', 'flight', PAD.flare, KEYS.flare, { hold: true }),
-  bind('tuck', 'Tuck wings — dive', 'flight', PAD.tuck, KEYS.tuck, { padNote: ' (hold)', hold: true }),
+  bind('tuck', 'Tuck wings — dive', 'flight', PAD.tuck, KEYS.tuck, { padNote: ' (hold)', hold: true, chord: true }),
   bind('look', 'Look around', 'general', ['RS'], ['MouseMove'], { kb: 'Mouse (click to capture) / right-drag' }),
+  bind('freeLook', 'Look around while mouse-steering', 'flight', ['RS'], [...KEYS.freeLook], { kb: 'Hold middle mouse', hold: true }),
   bind('recenter', 'Recenter camera', 'general', PAD.recenter, KEYS.recenter),
   bind('move', 'Walk', 'ground', ['LS'], [...KEYS.moveForward, ...KEYS.moveBack, ...KEYS.moveLeft, ...KEYS.moveRight], { kb: 'WASD' }),
   bind('jump', 'Jump', 'ground', PAD.jump, KEYS.jump),
