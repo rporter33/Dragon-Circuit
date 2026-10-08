@@ -33,6 +33,7 @@ import { ThermalMotes } from './thermals';
 import { Fireflies } from './fireflies';
 import { Drifters } from './drifters';
 import { LaunchGust, type DeckEnd } from './gust';
+import { boundaryApproach01 } from '../sky/windField';
 import {
   decay,
   flapDustAmount,
@@ -68,6 +69,8 @@ export interface FxDeps {
   terrain?: Terrain;
   /** Built decks; the launch-wind gust plays off the end of the longest wooden one. */
   decks?: readonly FxDeck[];
+  /** Height of the cloud-sea surface under (x, z) right now (the sky's), for the skimming wake. */
+  seaSurfaceAt?: (x: number, z: number) => number;
 }
 
 /** Capacities are sized for 'ultra' (particles 1.4); lower presets draw a share. */
@@ -99,6 +102,10 @@ export class Fx implements FxSystem {
   private breathWyvern = 0.8;
   private breathRider = 1.9;
   private lastMode = '';
+  /** Seconds left in which freshly shaken-off leaves keep living away from the ground. */
+  private leafTime = 0;
+  /** Fractional particles owed to the cloud-sea wake (emitted at a steady rate). */
+  private wakeDebt = 0;
 
   // Scratch (no per-frame allocation).
   private camPos = new Vector3();
@@ -173,7 +180,11 @@ export class Fx implements FxSystem {
     const airspeed = flying ? f.airspeed : 0;
     this.speedLines.setPxScale(pxScale);
     this.wisps.setPxScale(pxScale);
-    this.speedLines.update(step, this.camPos, this.airVel, speedLineAmount(airspeed, flying) * (reduced ? 0.7 : 1.3));
+    // Out at the world's edge the storm's wind streaks past whatever your speed: the headwind
+    // made visible (it fades in over the last stretch before the boundary).
+    const storm = flying ? boundaryApproach01(Math.hypot(f.position.x, f.position.z), this.deps.layout.boundaryRadius) : 0;
+    const lines = Math.max(speedLineAmount(airspeed, flying), storm * 0.85) * (reduced ? 0.7 : 1.3);
+    this.speedLines.update(step, this.camPos, this.airVel, lines);
     this.wisps.update(step, this.camPos, this.airVel, wispAmount(airspeed, f.position.y, 0, flying) * 0.8);
     wyvern.getWingtips(this.tipL, this.tipR);
     this.trails.setPxScale(pxScale);
@@ -194,9 +205,11 @@ export class Fx implements FxSystem {
       // Only spawn new ones near the ground (they'd be invisible specks from the air).
       const pose = player.wyvernPose;
       const near = !flying || (pose.groundY !== null && pose.position.y - pose.groundY < 40);
+      this.leafTime = Math.max(0, this.leafTime - step);
       camera.getWorldDirection(this.fwd);
-      this.drifters.update(step, this.camPos, this.fwd, wind, gust, pose.position, flying ? f.velocity : this.zero, near);
+      this.drifters.update(step, this.camPos, this.fwd, wind, gust, pose.position, flying ? f.velocity : this.zero, near || this.leafTime > 0);
     }
+    if (flying) this.seaWake(step, player);
     this.gust?.setPxScale(pxScale);
     this.gust?.update(step, this.camPos);
 
@@ -226,7 +239,13 @@ export class Fx implements FxSystem {
     ev.on('footstep', (p) => {
       if (p.heavy) this.footDust(p.position, p.surface);
     });
+    ev.on('takeoff', (p) => this.takeoffBurst(p.position));
     ev.on('ringPassed', (p) => this.ringBurst(p.position));
+    // Flight reports brushing through foliage (an additive event; subscribed loosely so this
+    // module doesn't depend on when that contract lands).
+    (ev as unknown as { on(type: string, fn: (p: { position?: Vector3; speed?: number }) => void): void }).on('foliageBrush', (p) => {
+      if (p?.position) this.leafBurst(p.position, p.speed ?? 15);
+    });
     ev.on('collect', (p) => this.collectSparkle(p.position, p.kind));
     ev.on('respawn', () => this.trails.reset());
   }
@@ -306,6 +325,77 @@ export class Fx implements FxSystem {
     }
   }
 
+  /** Leaving the ground: the first great downstroke flattens the grass and throws dust out. */
+  private takeoffBurst(pos: Vector3): void {
+    const player = this.player;
+    if (!player) return;
+    const groundY = player.wyvernPose.groundY;
+    if (groundY === null || pos.y - groundY > player.breed.wingspan * 1.2) return;
+    this.dustRing(pos.x, groundY + 0.25, pos.z, 1, player.breed.wingspan, this.surfaceAt(pos.x, pos.y, pos.z));
+  }
+
+  /** Leaves shaken off a canopy the wyvern brushed through. */
+  private leafBurst(pos: Vector3, speed: number): void {
+    if (!this.drifters) return;
+    const v = this.player?.flight.velocity ?? this.zero;
+    const n = scaledCount(4 + 10 * smoothstep(5, 40, speed), this.particles, 2);
+    this.drifters.burst(pos.x, pos.y, pos.z, v.x, v.y, v.z, n);
+    this.leafTime = 6;
+  }
+
+  /**
+   * Skimming the cloud sea: the wyvern's passage tears up the billow tops into a wake of soft
+   * cloud spray behind it, more the lower and faster it flies.
+   */
+  private seaWake(dt: number, player: PlayerSystem): void {
+    const sea = this.deps.seaSurfaceAt;
+    if (!sea) return;
+    const f = player.flight;
+    const p = f.position;
+    const surface = sea(p.x, p.z);
+    const h = p.y - surface;
+    const speed = f.velocity.length();
+    const amt = (1 - smoothstep(2, 16, h)) * smoothstep(12, 40, speed) * (h > -25 ? 1 : 0);
+    if (amt <= 0.01) {
+      this.wakeDebt = 0;
+      return;
+    }
+    this.wakeDebt += dt * 60 * amt * this.particles;
+    const span = player.breed.wingspan;
+    const hx = f.velocity.x / Math.max(speed, 1e-3);
+    const hz = f.velocity.z / Math.max(speed, 1e-3);
+    while (this.wakeDebt >= 1) {
+      this.wakeDebt -= 1;
+      const side = this.rand() < 0.5 ? -1 : 1;
+      const lat = side * (0.2 + 0.5 * this.rand()) * span * 0.5;
+      const back = this.rand() * 6;
+      const s = this.spec;
+      this.reset(s);
+      s.x = p.x - hx * back - hz * lat;
+      s.z = p.z - hz * back + hx * lat;
+      s.y = Math.min(p.y - 1, surface + 1 + this.rand() * 3);
+      // Thrown up and out to the sides, dragged along a little, then hanging in the air.
+      const out = 3 + 5 * this.rand();
+      s.vx = f.velocity.x * 0.25 - hz * side * out;
+      s.vy = 2 + 4 * this.rand() * amt;
+      s.vz = f.velocity.z * 0.25 + hx * side * out;
+      s.life = 1.6 + this.rand() * 1.2;
+      s.drag = 1.6;
+      s.gravity = 0.05;
+      s.size0 = 1.6 + this.rand() * 1.2;
+      s.size1 = 5 + this.rand() * 4;
+      s.rotation = this.rand() * 6.28;
+      s.spin = (this.rand() - 0.5) * 0.5;
+      s.r = 0.98;
+      s.g = 0.99;
+      s.b = 1.0;
+      s.a = 0.42 * (0.5 + 0.5 * amt);
+      s.fadeIn = 0.1;
+      s.wind = 0.6;
+      this.soft.emit(s);
+    }
+  }
+
   private landingDust(pos: Vector3, impact: number, surface: SurfaceKind): void {
     const span = this.player?.breed.wingspan ?? 12;
     const amt = 0.35 + 0.65 * smoothstep(0.5, 6.5, impact);
@@ -336,6 +426,34 @@ export class Fx implements FxSystem {
       s.a = 0.6 * amt;
       s.wind = 0.5;
       this.soft.emit(s);
+    }
+    // A heavy touchdown sends a low, fast skirt of dust racing out along the ground: weight.
+    const heavy = smoothstep(3, 9, impact);
+    if (heavy > 0.05) {
+      const m = scaledCount(32 * heavy, this.particles, 8);
+      for (let i = 0; i < m; i++) {
+        const a = (i / m) * Math.PI * 2 + this.rand() * 0.2;
+        const s = this.spec;
+        this.reset(s);
+        s.x = pos.x + Math.cos(a) * span * 0.2;
+        s.y = pos.y + 0.15;
+        s.z = pos.z + Math.sin(a) * span * 0.2;
+        const sp = (12 + 8 * this.rand()) * (0.6 + 0.4 * heavy);
+        s.vx = Math.cos(a) * sp;
+        s.vy = 0.3 + this.rand() * 0.6;
+        s.vz = Math.sin(a) * sp;
+        s.life = 0.9 + this.rand() * 0.6;
+        s.drag = 3.2;
+        s.gravity = -0.01;
+        s.size0 = 0.8 * scale;
+        s.size1 = (2.6 + 1.6 * this.rand()) * scale;
+        s.rotation = this.rand() * 6.28;
+        this.dustColor(s, pal.a, pal.b);
+        s.a = 0.45 * heavy;
+        s.fadeIn = 0.03;
+        s.wind = 0.3;
+        this.soft.emit(s);
+      }
     }
     // Clods, grass bits and pebbles kicked up.
     const bits = scaledCount(14 * amt, this.particles, 2);

@@ -226,6 +226,45 @@ export class Drifters {
     L[i * 4 + 3] = this.rand() * Math.PI * 2;
   }
 
+  /**
+   * A burst of leaves shaken loose at (x, y, z) — a wyvern brushing through a canopy. They scatter
+   * from `vel` (the brusher's velocity, partly carried) and then flutter down with the wind.
+   * Returns how many were spawned (capacity permitting).
+   */
+  burst(x: number, y: number, z: number, vx: number, vy: number, vz: number, count: number): number {
+    const isl = this.terrain.islandAt(x, z, y + 5);
+    const gy = isl ? Math.min(y - 0.5, isl.topHeight(x, z)) : y - 40;
+    let n = 0;
+    for (; n < count && this.alive < this.cap; n++) {
+      const i = this.alive++;
+      const a = this.rand() * Math.PI * 2;
+      const up = this.rand();
+      const sp = 2 + this.rand() * 5;
+      this.px[i] = x + (this.rand() - 0.5) * 3;
+      this.py[i] = y + (this.rand() - 0.5) * 2;
+      this.pz[i] = z + (this.rand() - 0.5) * 3;
+      this.vx[i] = vx * 0.3 + Math.cos(a) * sp;
+      this.vy[i] = vy * 0.2 + 1.5 + up * 3;
+      this.vz[i] = vz * 0.3 + Math.sin(a) * sp;
+      this.ground[i] = gy;
+      this.age[i] = 0.6; // skip most of the fade-in: they're torn off, not appearing
+      this.life[i] = 4 + this.rand() * 4;
+      this.phase[i] = this.rand() * Math.PI * 2;
+      this.spin[i] = (4 + this.rand() * 6) * (this.rand() < 0.5 ? -1 : 1);
+      this.kind[i] = LEAF;
+      this.size[i] = 0.22 + this.rand() * 0.16;
+      this.settled[i] = 0;
+      const c = LEAF_COLORS[Math.floor(this.rand() * LEAF_COLORS.length)];
+      const C = this.aColor.array as Float32Array;
+      C[i * 3] = c[0];
+      C[i * 3 + 1] = c[1];
+      C[i * 3 + 2] = c[2];
+      const L = this.aLook.array as Float32Array;
+      L[i * 4 + 3] = this.rand() * Math.PI * 2;
+    }
+    return n;
+  }
+
   private kill(i: number): void {
     // Swap-remove with the last live drifter.
     const j = --this.alive;

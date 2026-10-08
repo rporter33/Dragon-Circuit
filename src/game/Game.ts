@@ -141,6 +141,7 @@ export class Game implements GameActions {
       layout: this.world.layout,
       terrain: this.world.terrain,
       decks: this.dressing.decks,
+      seaSurfaceAt: (x, z) => this.sky.seaSurfaceAt(x, z),
     });
     this.audio = new AudioSystem(this.events, () => this.settings, { waterfalls: () => this.dressing.water.plansList });
     this.audio.applySettings(settings);
