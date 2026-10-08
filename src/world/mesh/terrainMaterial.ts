@@ -14,6 +14,13 @@
 import type { MeshToonMaterial, WebGLProgramParametersWithUniforms } from 'three';
 import { toonMaterial } from '../../render/painterly';
 import { STRATA_BAND, STRATA_PACKET } from './strata';
+import { LAYOUT } from '../layout';
+
+/** The wind-rose mosaic in the Roost courtyard: (x, z, radius), off the walk to the stable. */
+const ROSE: [number, number, number] = (() => {
+  const r = LAYOUT.islands.find((i) => i.kind === 'roost');
+  return r ? [r.x - 4, r.z + 4, 9.5] : [1e6, 1e6, 0];
+})();
 
 /** GLSL twins of strata.ts (hash12, valueNoise2, strataCoord). Keep in sync. */
 export const NOISE_GLSL = /* glsl */ `
@@ -102,6 +109,8 @@ const vec3 DW_MOSS = vec3(0.075, 0.13, 0.04);
 const vec3 DW_MOSS_LIGHT = vec3(0.15, 0.24, 0.07);
 const vec3 DW_ROOT = vec3(0.07, 0.045, 0.03);
 const vec3 DW_MORTAR = vec3(0.14, 0.15, 0.09);
+// The Roost courtyard's wind-rose mosaic: center (x, z) and radius.
+const vec3 DW_ROSE = vec3(${ROSE[0].toFixed(1)}, ${ROSE[1].toFixed(1)}, ${ROSE[2].toFixed(1)});
 
 vec3 dwStrataTint(float packet) {
   float h = dwHash11(packet * 3.71 + 9.2);
@@ -253,9 +262,35 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
     float h = dwHash12(cellId * 1.7 + 3.1);
     vec3 st = col * (0.84 + 0.24 * h) * mix(vec3(1.0), vec3(1.05, 1.0, 0.9), step(0.62, h));
     st *= 0.93 + 0.1 * dwNoise2(wp.xz * 1.3) * fine;
+    // The Roost's wind-rose: a compass star laid in darker and ochre stones, picked per stone.
+    vec2 rc = (cellId + 0.5) * 1.6 - DW_ROSE.xy;
+    float rr = length(rc);
+    if (rr < DW_ROSE.z) {
+      float ra = atan(rc.y, rc.x);
+      float k = ra / 0.7853982;
+      float pt = abs(fract(k + 0.5) - 0.5) * 2.0;
+      float cardinal = 1.0 - step(0.5, abs(fract(floor(k + 0.5) * 0.5) - 0.0));
+      float len = mix(DW_ROSE.z * 0.55, DW_ROSE.z * 0.82, cardinal);
+      float star = step(rr, mix(len, 1.4, pow(pt, 1.6)));
+      float halfShade = step(0.0, fract(k + 0.5) - 0.5);
+      vec3 dark = col * vec3(0.42, 0.45, 0.55);
+      vec3 ochre = col * vec3(1.3, 1.0, 0.58);
+      st = mix(st, mix(dark, ochre, halfShade * (1.0 - cardinal * 0.5)), star);
+      float ring = step(DW_ROSE.z * 0.84, rr) * step(rr, DW_ROSE.z);
+      st = mix(st, mix(dark, ochre, step(0.5, fract(ra * 2.546))), ring);
+      st = mix(st, col * vec3(1.25, 1.05, 0.55), step(rr, 1.1));
+    }
+    // Worn lighter toward the middle of the courtyard, darker and mossier toward its edge.
+    float fromRose = length(wp.xz - DW_ROSE.xy);
+    float rim = smoothstep(18.0, 44.0, fromRose);
+    st *= 1.04 - 0.1 * rim;
+    // Puddles: a few hollows hold rainwater (more of them, darker, when it rains).
+    float pud = dwNoise2(wp.xz * 0.11 + 31.0);
+    float wet = smoothstep(0.78 - 0.1 * uWetness, 0.86 - 0.1 * uWetness, pud) * mid;
+    st = mix(st, st * vec3(0.6, 0.68, 0.78), wet * 0.75);
     float ew = max(0.05, pxXZ / 1.6 * 2.0);
-    float mortar = (1.0 - smoothstep(ew, ew + 0.07, edge)) * mid;
-    st = mix(st, DW_MORTAR + col * 0.25, mortar * 0.8);
+    float mortar = (1.0 - smoothstep(ew, ew + 0.07 + 0.05 * rim, edge)) * mid;
+    st = mix(st, mix(DW_MORTAR + col * 0.25, DW_MOSS_LIGHT * 1.4, rim * 0.6), mortar * 0.8);
     // At the paving's edge whole stones drop out, so it frays stone by stone into the turf.
     float keep = step(dwHash12(cellId * 0.37 + 11.0) * 0.8 + 0.1, paveW);
     col = mix(col, st, keep);

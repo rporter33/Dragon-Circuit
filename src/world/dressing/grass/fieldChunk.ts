@@ -209,7 +209,7 @@ export function generateFieldChunk(
     const dryB = hexBytes(style.tipDry);
     const hBaseB = hexBytes(style.heatherBase);
     const hTipB = hexBytes(style.heatherTip);
-    const plazaS = def.kind === 'roost' || def.kind === 'ruin' ? def.flatCenter * 0.55 : -1;
+    const paved = def.kind === 'roost' || def.kind === 'ruin';
 
     // --- grass tufts ---------------------------------------------------------------------------
     const n = Math.round(style.density * def.grass * params.density * S * S);
@@ -232,7 +232,10 @@ export function generateFieldChunk(
       let h = style.height * (0.55 + 0.75 * patch) * (0.8 + 0.4 * fine);
       h *= 1 - 0.65 * smoothstep(0.86, 0.985, s); // short turf at the cliff edge
       h *= smoothstep(0.65, 0.95, ny); // thin on steep slopes
-      if (plazaS > 0) h *= 0.35 + 0.65 * smoothstep(plazaS, plazaS + 0.06, s); // trodden near paving
+      if (paved) {
+        const plazaS = shape.pavedEdge(x, z);
+        h *= 0.35 + 0.65 * smoothstep(plazaS, plazaS + 0.06, s); // trodden near paving
+      }
       if (ex < 3) h *= 0.35 + 0.65 * smoothstep(0.2, 3, ex);
       if (h < 0.06) continue;
 

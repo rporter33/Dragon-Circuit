@@ -34,6 +34,7 @@ import {
   type SiteBuilders,
 } from './kit';
 import type { RoostPlan, TowerPlan } from './roostPlan';
+import { buildCourtyard } from './courtyard';
 import { colBox, colCone, colCyl, colGable, colSpan, colSphere, toWorld } from '../colliderKit';
 
 const boxGeo = new BoxGeometry(1, 1, 1);
@@ -525,6 +526,7 @@ export function buildRoost(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, o
   // A well on the plaza and a feeding trough by where the wyvern waits.
   buildWell(s, plan.well.x, gy(plan.well.x, plan.well.z), plan.well.z, out.colliders);
   out.exclusions.circle(plan.well.x, plan.well.z, 3);
+  buildCourtyard(s, plan, gy, out);
   {
     const t = plan.trough;
     const T = xf(t.x, gy(t.x, t.z), t.z, 0, t.yaw, 0);

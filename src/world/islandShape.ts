@@ -70,6 +70,7 @@ export class IslandShape {
   /** Bays and headlands on top of the smooth outline, and how toothy the hang is. */
   private rag = 0;
   private ragN: (theta: number) => number;
+  private pavedN: (theta: number) => number;
   private toothScale = 1;
   private toothChance = 0.6;
 
@@ -86,6 +87,7 @@ export class IslandShape {
     this.ridgedMix = def.kind === 'rocky' || def.kind === 'plateau' ? 0.6 : def.kind === 'cascade' ? 0.35 : 0;
     this.lipN = periodicNoise(def.seed + 9, 12);
     this.ragN = raggedNoise(def.seed + 11);
+    this.pavedN = raggedNoise(def.seed + 13);
     if (!def.landmark && def.kind !== 'roost') {
       const h = (k: number) => cellHash(k, 17, def.seed % 4093);
       this.coneExp = 0.4 + 0.5 * h(1);
@@ -146,10 +148,21 @@ export class IslandShape {
     return this.coneExp;
   }
 
+  /**
+   * Normalized radius where the paving of a Roost or ruin courtyard gives way to turf, at the
+   * angle of (x, z): a ragged edge, so the grass creeps in organically; -1 elsewhere.
+   */
+  pavedEdge(x: number, z: number): number {
+    const d = this.def;
+    if (d.kind !== 'roost' && d.kind !== 'ruin') return -1;
+    const th = Math.atan2(z - d.z, x - d.x);
+    return d.flatCenter * (0.47 + 0.035 * this.pavedN(th));
+  }
+
   private buildTrack(): [number, number][] {
     const d = this.def;
     const pts: [number, number][] = [];
-    const s0 = d.flatCenter * 0.55 - 0.02;
+    const s0 = this.pavedEdge(d.x + Math.cos(ROOST_LAUNCH_ANGLE), d.z + Math.sin(ROOST_LAUNCH_ANGLE)) - 0.02;
     const n = 9;
     for (let k = 0; k <= n; k++) {
       const u = k / n;
@@ -311,7 +324,7 @@ export class IslandShape {
     if (normalY < 0.72) return 'rock';
     if (s > this.rimDirtEdge(x, z)) return 'dirt';
     const kind = this.def.kind;
-    if ((kind === 'roost' || kind === 'ruin') && s < this.def.flatCenter * 0.55) return 'stone';
+    if ((kind === 'roost' || kind === 'ruin') && s < this.pavedEdge(x, z)) return 'stone';
     if (this.track && this.trackDistance(x, z) < ROOST_TRACK_HALF_WIDTH) return 'dirt';
     if (kind === 'rocky' || kind === 'islet') {
       const r = this.rockN(x * 0.05, z * 0.05);

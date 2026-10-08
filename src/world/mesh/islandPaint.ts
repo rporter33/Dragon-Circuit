@@ -51,8 +51,8 @@ export function topWeights(shape: IslandShape, x: number, z: number, s: number, 
   let dirt = remaining * smoothstep(edge - 0.015, edge + 0.015, s); // 50% on the rim dirt edge
   remaining -= dirt;
   let stone = 0;
-  if (kind === 'roost' || kind === 'ruin') {
-    const sr = shape.def.flatCenter * 0.55;
+  const sr = shape.pavedEdge(x, z);
+  if (sr > 0) {
     stone = remaining * smoothstep(sr + 0.012, sr - 0.012, s);
     remaining -= stone;
   }
@@ -75,7 +75,7 @@ export function topWeights(shape: IslandShape, x: number, z: number, s: number, 
   out.track = track;
   out.nearRock = Math.max(smoothstep(0.95, 0.66, ny), kind === 'rocky' || kind === 'islet' ? 0.5 : 0);
   out.nearDirt = smoothstep(0.75, edge + 0.015, s);
-  out.nearStone = kind === 'roost' || kind === 'ruin' ? smoothstep(shape.def.flatCenter * 0.55 + 0.12, shape.def.flatCenter * 0.55, s) : 0;
+  out.nearStone = sr > 0 ? smoothstep(sr + 0.12, sr, s) : 0;
   out.nearTrack = shape.track ? smoothstep(ROOST_TRACK_HALF_WIDTH + 6, ROOST_TRACK_HALF_WIDTH, shape.trackDistance(x, z)) : 0;
   return out;
 }
@@ -175,7 +175,7 @@ export class IslandPainter {
     this.pal = PALETTES[shape.def.kind];
     this.patchN = noise2(shape.def.seed + 101);
     this.detailN = noise2(shape.def.seed + 102);
-    this.stoneR = shape.def.kind === 'roost' || shape.def.kind === 'ruin' ? shape.def.flatCenter * 0.55 : -1;
+    this.stoneR = shape.def.kind === 'roost' || shape.def.kind === 'ruin' ? 1 : -1;
   }
 
   paint(b: MeshBuilder, i: number, region: Region, aux: number, nx: number, ny: number, nz: number): void {
@@ -262,7 +262,10 @@ export class IslandPainter {
     // Grass dries out toward the windy rim.
     g.lerp(pal.dry, smoothstep(0.8, 0.95, s) * 0.3);
     // On paving's edge the turf is trampled and darker.
-    if (this.stoneR > 0) g.lerp(pal.dark, smoothstep(this.stoneR + 0.06, this.stoneR, s) * 0.3);
+    if (this.stoneR > 0) {
+      const edge = shape.pavedEdge(x, z);
+      g.lerp(pal.dark, smoothstep(edge + 0.06, edge, s) * 0.3);
+    }
     const gr = g.r;
     const gg = g.g;
     const gb = g.b;
