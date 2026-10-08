@@ -65,6 +65,8 @@ export class AudioSystem implements AudioSystemApi {
   private nearGround = 1;
   private gustClock = 0;
   private lastHit = -1;
+  /** Audio time of the last lightning event; while the sky drives thunder, ours stays quiet. */
+  private lastLightning = -1e9;
   private readonly windIn: WindInput = { airspeed: 0, tuck: 0, flare: 0, gLoad: 1, grounded: true, ambientWind: 3 };
   private readonly windOut = emptyWindMix();
   private readonly ambOut = emptyAmbienceMix();
@@ -187,6 +189,7 @@ export class AudioSystem implements AudioSystemApi {
     } else {
       this.fall.gain = 0;
     }
+    if (t - this.lastLightning < 120) this.ambOut.thunder = 0;
     this.ambience?.apply(this.ambOut, this.fall.gain, fallPan, t, step);
 
     // --- Music --------------------------------------------------------------------------------
@@ -378,6 +381,14 @@ export class AudioSystem implements AudioSystemApi {
     on('discover', (_p, t, e) => {
       V.swell(e, e.strip(e.sfx, 1, 0, 0.7), t, [55, 62, 67, 71, 74], 0.3, 5, 0.6);
       V.chime(e, e.strip(e.sfx, 0.6, 0.25, 0.7), t + 0.6, 86, 0.5, 2);
+    });
+    on('lightning', (p, t, e) => {
+      // Sound travels ~340 m/s: far strikes rumble late, low and long.
+      this.lastLightning = t;
+      spatial(this.listener, this.listenerRight, p.position, 1, 1e9, this.sp);
+      const near = 1 - Math.min(1, p.distance / 9000);
+      const delay = Math.min(12, p.distance / 340);
+      V.thunder(e, e.strip(e.amb, 1, this.sp.pan * 0.8, 0.5), t + delay, 0.25 + 0.45 * near * near);
     });
     on('weatherChange', (p, t, e) => {
       // Rain arriving: one roll of thunder to announce it.
