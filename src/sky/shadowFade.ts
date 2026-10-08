@@ -12,7 +12,7 @@
 //     the taps between OCCLUDER_FADE_FROM and OCCLUDER_FADE_TO). An occluder that is still in the
 //     way from that lifted point is far up the light ray, and its share of the shadow is
 //     dropped. Nearby casters (walls, trees, the wyvern overhead) keep full, crisp shadows; the
-//     shadow of something 100+ m up the ray thins out and is gone by ~170 m, the way skylight
+//     shadow of something 100+ m up the ray thins out and is gone by ~220 m, the way skylight
 //     fills in under a distant overhang (and long golden-hour shadows soften toward their tips).
 //     Partly-shadowed pixels pay for the extra taps; fully lit ones skip them.
 // Depth in the shadow map is linear along the light ray (orthographic), so the lifts are fixed
@@ -21,15 +21,15 @@
 import { ShaderChunk } from 'three';
 
 /** Shadow camera: how far up the light ray (toward the sun) from the focus casters are kept (m). */
-export const SHADOW_UP = 260;
+export const SHADOW_UP = 300;
 /** Shadow camera: how far down the ray below the focus receivers are covered (m). */
 export const SHADOW_DOWN = 640;
 /** Depth range of the shadow camera (m). */
 export const SHADOW_RANGE = SHADOW_UP + SHADOW_DOWN;
 /** Occluders closer than this along the light ray cast a full shadow (m). */
-export const OCCLUDER_FADE_FROM = 70;
+export const OCCLUDER_FADE_FROM = 100;
 /** Occluders farther than this along the light ray cast none (m). */
-export const OCCLUDER_FADE_TO = 170;
+export const OCCLUDER_FADE_TO = 220;
 /** Width of the fade at the shadow box's border, as a fraction of the box. */
 export const EDGE_FADE = 0.14;
 
