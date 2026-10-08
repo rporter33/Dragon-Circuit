@@ -2,8 +2,9 @@
 //   1. moves the sun and moon and picks the key light (sun by day, moon by night),
 //   2. samples the time-of-day palette and lets the weather grey, fog or darken it,
 //   3. writes every shared uniform (render/uniforms.ts), the lights, the shadow camera (texel-
-//      snapped around the focus so shadows never shimmer), the grade and the bloom,
-//   4. updates the dome, the cloud sea and the cumulus banks.
+//      snapped around and a little ahead of the focus so shadows never shimmer; how its shadows
+//      fade at the edges and with occluder distance is in shadowFade.ts), the grade and the bloom,
+//   4. updates the dome, the cloud sea, the cumulus banks and the storm wall at the world's edge.
 
 import {
   Color,
