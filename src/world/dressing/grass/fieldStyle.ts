@@ -51,7 +51,7 @@ export function fieldStyle(def: IslandDef): FieldStyle {
     case 'rocky':
       return { ...BASE, base: '#4a5a32', tip: '#b9b465', tipDry: '#d6c37a', height: 0.34, density: 3.6, flowers: ['#ffd76a', '#ebe6d6'], flowerDensity: 0.02 };
     case 'plateau':
-      return { ...BASE, base: '#4a5a34', tip: '#c4bb6c', tipDry: '#d9c886', height: 0.38, density: 5.5, heather: 0.42, flowers: ['#f2e9d8', '#ffd76a'], flowerDensity: 0.025 };
+      return { ...BASE, base: '#56653a', tip: '#cbc070', tipDry: '#ddc98a', height: 0.5, density: 6, heather: 0.36, heatherBase: '#6a5d4a', heatherTip: '#b56fb8', flowers: ['#f2e9d8', '#ffd76a'], flowerDensity: 0.025 };
     case 'ruin':
       return { ...BASE, base: '#3f652f', tip: '#aac262', height: 0.46, density: 5.5, flowers: ['#ebe6d6', '#d8b3ff', '#ffd447'], flowerDensity: 0.07 };
     case 'cascade':

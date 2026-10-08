@@ -363,7 +363,7 @@ export function beaconSprite(center: Vector3): Mesh {
         vec4 mv = viewMatrix * vec4(uCenter, 1.0);
         float dist = -mv.z;
         // At least ~1.6% of the view distance wide, bigger at night.
-        float size = max(5.0, dist * (0.010 + 0.012 * uNight));
+        float size = max(6.0, dist * (0.012 + 0.022 * uNight));
         mv.xy += position.xy * size;
         vUv = position.xy;
         vDwWorldPos = uCenter;
@@ -377,7 +377,7 @@ export function beaconSprite(center: Vector3): Mesh {
       void main() {
         float r2 = dot(vUv, vUv);
         float core = exp(-r2 * 18.0);
-        float halo = exp(-r2 * 4.0) * 0.4;
+        float halo = (exp(-r2 * 4.5) * 0.45 + exp(-r2 * 1.6) * 0.12) * (1.0 - smoothstep(0.55, 1.0, sqrt(r2)));
         float flicker = 0.92 + 0.08 * sin(uTime * 7.3) * sin(uTime * 3.1 + 1.7);
         vec3 col = vec3(1.0, 0.58, 0.24) * (core * 1.5 + halo * 1.4) * (0.12 + uNight * 2.4) * flicker;
         // A beacon punches through the haze: only half the fog applies.

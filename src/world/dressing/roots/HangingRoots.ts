@@ -16,9 +16,9 @@ export interface RootStats {
   triangles: number;
 }
 
-const barkTop = new Color('#4a3b31');
-const barkMid = new Color('#5f4d3d');
-const barkTip = new Color('#735f4b');
+const barkTop = new Color('#3f3129');
+const barkMid = new Color('#4e3d30');
+const barkTip = new Color('#5b4838');
 const moss = new Color('#5b7f37');
 const vineA = new Color('#3d6a2d');
 const vineB = new Color('#77a148');

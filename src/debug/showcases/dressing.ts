@@ -51,7 +51,7 @@ function spots(game: Game): Record<string, () => Spot> {
     },
     cascadeBelow: () => {
       const g = L('cascade');
-      return { cam: [g.x - 120, g.y - 380, g.z + 300], look: [g.x, g.y - 100, g.z], tod: 0.4 };
+      return { cam: [g.x - 330, g.y - 400, g.z + 60], look: [g.x, g.y - 120, g.z], tod: 0.4 };
     },
     rootfall: () => {
       const g = L('rootfall');

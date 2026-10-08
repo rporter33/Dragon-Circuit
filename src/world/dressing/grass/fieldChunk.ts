@@ -26,7 +26,7 @@ export interface InstanceArrays {
   count: number;
   /** x, y, z, yaw */
   pos: Float32Array;
-  /** height (m), width scale, rank 0..1, lean/seed 0..1 */
+  /** height (m), width scale, rank 0..1, lean/seed 0..1 (+1 for heather) */
   shape: Float32Array;
   /** sRGB bytes: base r, g, b + terrain normal x (0..255 ↔ -1..1). Flowers: stem rgb + glow. */
   base: Uint8Array;
@@ -243,10 +243,11 @@ export function generateFieldChunk(
       tufts.pos[p4 + 1] = smp.y;
       tufts.pos[p4 + 2] = z;
       tufts.pos[p4 + 3] = rnd() * Math.PI * 2;
-      tufts.shape[p4] = heather ? h * 0.7 + 0.12 : h;
-      tufts.shape[p4 + 1] = heather ? 1.7 + rnd() * 0.5 : 0.8 + rnd() * 0.45;
+      tufts.shape[p4] = heather ? h * 0.55 + 0.16 : h;
+      tufts.shape[p4 + 1] = heather ? 1.25 + rnd() * 0.3 : 0.8 + rnd() * 0.45;
       tufts.shape[p4 + 2] = i / n;
-      tufts.shape[p4 + 3] = rnd();
+      // Lean/seed in 0..1; heather tufts are flagged by adding 1 (the shader splits it).
+      tufts.shape[p4 + 3] = rnd() + (heather ? 1 : 0);
       const nxB = toByte((smp.nx * 0.5 + 0.5) * 255);
       const nzB = toByte((smp.nz * 0.5 + 0.5) * 255);
       const vary = 0.88 + rnd() * 0.24; // per-tuft brightness

@@ -188,20 +188,20 @@ function mistGeometry(plans: WaterfallPlan[], quality: QualityProfile): Instance
       add(o, (2.5 + rnd() * 3) * Math.max(0.7, scaleW), 0.35 + rnd() * 0.3, 0.35, dir, 5 + rnd() * 8);
     }
     // Spray along the column: drifting off the sheet, growing as it falls.
-    for (let i = 0; i < Math.round(90 * q); i++) {
+    for (let i = 0; i < Math.round(130 * q); i++) {
       const t = plan.duration * Math.pow(rnd(), 0.8) * 0.9;
       const f = fallOffset(plan.speed, t);
       const frac = f.down / plan.drop;
       const o = at(t).clone().addScaledVector(side, (rnd() - 0.5) * plan.width * (2 + frac * 3));
       const dir = out.clone().multiplyScalar(0.5 + rnd() * 0.6).addScaledVector(side, (rnd() - 0.5) * 1.2).add(new Vector3(0, -0.6 - rnd() * 0.8, 0)).normalize();
-      add(o, (6 + frac * 26 + rnd() * 8) * Math.max(0.6, scaleW), 0.08 + rnd() * 0.1, 0.12 + 0.12 * (1 - frac), dir, 12 + frac * 35);
+      add(o, (4 + frac * 18 + rnd() * 6) * Math.max(0.6, scaleW), 0.08 + rnd() * 0.1, 0.08 + 0.1 * (1 - frac), dir, 12 + frac * 35);
     }
     // The foot: big slow puffs where the column dissolves.
     for (let i = 0; i < Math.round(40 * q); i++) {
       const t = plan.duration * (0.68 + rnd() * 0.32);
       const o = at(t).clone().addScaledVector(side, (rnd() - 0.5) * plan.width * 8).addScaledVector(out, (rnd() - 0.5) * 30);
       const dir = new Vector3(rnd() - 0.5, -0.2 - rnd() * 0.3, rnd() - 0.5).normalize();
-      add(o, (30 + rnd() * 40) * Math.max(0.7, scaleW), 0.03 + rnd() * 0.04, 0.16, dir, 20 + rnd() * 30);
+      add(o, (24 + rnd() * 30) * Math.max(0.7, scaleW), 0.03 + rnd() * 0.04, 0.1, dir, 20 + rnd() * 30);
     }
   }
   const n = origin.length / 3;

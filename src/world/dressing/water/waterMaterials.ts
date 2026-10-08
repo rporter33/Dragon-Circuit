@@ -162,8 +162,10 @@ void main() {
   vec3 p = aOrigin + aDrift.xyz * aDrift.w * life + uWind * life * (2.0 + aDrift.w * 0.08);
   float size = aParams.y * (0.55 + 0.75 * life);
   vec4 mv = viewMatrix * vec4(p, 1.0);
-  float ang = aParams.x * 6.2831 + life * 0.6;
-  vec2 c = position.xy;
+  // Spray falling with the column streaks vertically; slow puffs tumble.
+  float fall = clamp(-aDrift.y * 1.4 - 0.4, 0.0, 1.0);
+  float ang = (aParams.x * 6.2831 + life * 0.6) * (1.0 - fall);
+  vec2 c = position.xy * vec2(1.0 - 0.35 * fall, 1.0 + 1.3 * fall);
   c = vec2(c.x * cos(ang) - c.y * sin(ang), c.x * sin(ang) + c.y * cos(ang));
   mv.xy += c * size;
   gl_Position = projectionMatrix * mv;
