@@ -15,6 +15,7 @@ import { ExclusionSet } from './exclusions';
 import { GrassField } from './grass/GrassField';
 import { Forest } from './trees/Forest';
 import { scatterIsland, type PropInstance } from './trees/placement';
+import { Structures } from './structures/Structures';
 
 export interface DressingDeps {
   scene: Scene;
@@ -49,6 +50,7 @@ export class Dressing implements DressingSystem {
   readonly exclusions = new ExclusionSet();
   readonly grass: GrassField;
   forest!: Forest;
+  readonly structures: Structures;
   private terrain: Terrain;
   private quality: QualityProfile;
 
@@ -57,6 +59,8 @@ export class Dressing implements DressingSystem {
     this.quality = deps.quality;
     this.group.name = 'dressing';
 
+    this.structures = new Structures(this.terrain, { exclusions: this.exclusions, colliders: this.colliders, decks: this.decks });
+    this.group.add(this.structures.group);
     this.buildForest();
     this.grass = new GrassField(this.terrain, this.exclusions, this.quality);
     this.group.add(this.grass.group);
@@ -105,6 +109,6 @@ export class Dressing implements DressingSystem {
   }
 
   stats(): DressingStats {
-    return { grass: this.grass.stats, forest: this.forest.stats };
+    return { grass: this.grass.stats, forest: this.forest.stats, structures: this.structures.stats };
   }
 }
