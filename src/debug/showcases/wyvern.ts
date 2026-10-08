@@ -284,8 +284,9 @@ function stageReal(game: Game, scene: string, breed: BreedId): void {
   const t = game.world.terrain;
   switch (scene) {
     case 'landing': {
-      const g = t.standingPoint(-20, 60, new Vector3());
-      p.teleport(new Vector3(-20, g.y + 16, 140), Math.PI, 'flying', 21);
+      // Low over the Roost's plaza, heading west toward the stable yard.
+      const g = t.groundAt(45, 42, 1e6);
+      p.teleport(new Vector3(45, (g ? g.y : 240) + 9, 42), -Math.PI / 2, 'flying', 18);
       break;
     }
     case 'turn':

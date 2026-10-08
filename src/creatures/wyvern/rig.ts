@@ -268,6 +268,18 @@ function catmull(pts: Vector3[], i: number, t: number, out: Vector3): Vector3 {
 
 const v = (a: [number, number, number] | number[]) => new Vector3(a[0], a[1], a[2]);
 
+const rigCache = new Map<BreedId, RigDef>();
+
+/** The (immutable) rig for a breed, built once and shared. */
+export function rigFor(breed: BreedId): RigDef {
+  let r = rigCache.get(breed);
+  if (!r) {
+    r = buildRig(breed);
+    rigCache.set(breed, r);
+  }
+  return r;
+}
+
 export function buildRig(breed: BreedId): RigDef {
   const P = computeProportions(breed);
   const S = P.shape;

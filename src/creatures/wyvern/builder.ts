@@ -58,15 +58,25 @@ export class Skin {
     return this;
   }
 
-  /** Top four influences, normalized. */
+  /** Top four influences, normalized (selection without allocating). */
   top4(outIdx: number[], outW: number[]): void {
-    const order = this.bones.map((_, i) => i).sort((a, b) => this.weights[b] - this.weights[a]);
+    const n = this.bones.length;
+    const w = this.weights;
+    let used = 0; // bitmask of picked entries (n is small)
+    const pick: number[] = _pick;
+    let count = 0;
     let sum = 0;
-    for (let k = 0; k < 4 && k < order.length; k++) sum += this.weights[order[k]];
+    for (let k = 0; k < 4 && k < n; k++) {
+      let best = -1;
+      for (let i = 0; i < n; i++) if (!(used & (1 << i)) && (best < 0 || w[i] > w[best])) best = i;
+      used |= 1 << best;
+      pick[count++] = best;
+      sum += w[best];
+    }
     for (let k = 0; k < 4; k++) {
-      if (k < order.length && sum > 0) {
-        outIdx.push(this.bones[order[k]]);
-        outW.push(this.weights[order[k]] / sum);
+      if (k < count && sum > 0) {
+        outIdx.push(this.bones[pick[k]]);
+        outW.push(w[pick[k]] / sum);
       } else {
         outIdx.push(0);
         outW.push(0);
@@ -74,6 +84,8 @@ export class Skin {
     }
   }
 }
+
+const _pick = [0, 0, 0, 0];
 
 export interface VertexMat {
   region: number;
@@ -94,6 +106,19 @@ export class GeoBuilder {
   private partIndexStart = 0;
   /** 0 = body, 1 = membrane. */
   group: 0 | 1 = 0;
+
+  /** Copy of the builder's state (to cache the parts that don't change with the look). */
+  snapshot(): GeoBuilder {
+    const c = new GeoBuilder();
+    c.pos = this.pos.slice();
+    c.nrm = this.nrm.slice();
+    c.skinIdx = this.skinIdx.slice();
+    c.skinW = this.skinW.slice();
+    c.mat = this.mat.slice();
+    c.uv = this.uv.slice();
+    c.index = [this.index[0].slice(), this.index[1].slice()];
+    return c;
+  }
 
   get vertexCount(): number {
     return this.pos.length / 3;

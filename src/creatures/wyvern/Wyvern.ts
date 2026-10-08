@@ -9,7 +9,7 @@ import { Bone, Group, Matrix4, Object3D, Skeleton, SkinnedMesh, Sphere, Vector3,
 import type { WyvernLook, WyvernPose } from '../../core/types';
 import type { WyvernRenderable } from '../../game/contracts';
 import type { TerrainQuery } from '../../core/types';
-import { buildRig, type RigDef } from './rig';
+import { rigFor, type RigDef } from './rig';
 import { buildWyvernGeometry, type WyvernMeshInfo } from './geometry';
 import {
   applyLookUniforms,
@@ -127,7 +127,7 @@ export class Wyvern implements WyvernRenderable {
     const look = this.look;
     const breedChanged = !this.rig || this.rig.props.breed !== look.breed;
     this.disposeMesh();
-    if (breedChanged) this.rig = buildRig(look.breed);
+    if (breedChanged) this.rig = rigFor(look.breed);
     const rig = this.rig;
     this.info = buildWyvernGeometry(rig, look);
     this.shapeKey = shapeKeyOf(look);
