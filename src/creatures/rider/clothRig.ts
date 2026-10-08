@@ -133,6 +133,14 @@ interface Piece {
   /** Tube scratch: smoothed centerline. */
   line?: Float64Array;
   flip: boolean;
+  /** Visual subdivisions per particle span (quality dependent). */
+  sub: number;
+}
+
+export interface ClothLod {
+  /** Multiplier on visual subdivisions (1 = full). */
+  detail: number;
+  shadows: boolean;
 }
 
 const _m = new Matrix4();
@@ -148,8 +156,11 @@ export class ClothRig {
   private readonly parent: Group;
   readonly origin = new Vector3();
 
-  constructor(specs: ClothSpec[], bindPos: Vector3[], parent: Group, colliderSets: Record<ColliderName, Capsule>) {
+  private readonly lod: ClothLod;
+
+  constructor(specs: ClothSpec[], bindPos: Vector3[], parent: Group, colliderSets: Record<ColliderName, Capsule>, lod: ClothLod = { detail: 1, shadows: true }) {
     this.parent = parent;
+    this.lod = lod;
     for (const spec of specs) this.pieces.push(this.makePiece(spec, bindPos, colliderSets));
   }
 
@@ -178,7 +189,7 @@ export class ClothRig {
       carryBone[i] = spec.anchorBone[col] >= 0 ? spec.anchorBone[col] : spec.anchorBone.find((b) => b >= 0) ?? 0;
     }
     const cloth = new Cloth({ cols: spec.cols, rows: spec.rows, rest, pinned, ...spec.config });
-    const sub = spec.render.subdiv ?? 3;
+    const sub = Math.max(1, Math.round((spec.render.subdiv ?? 3) * this.lod.detail));
     let vu: number;
     let vv: number;
     if (spec.render.kind === 'tube') {
@@ -232,14 +243,14 @@ export class ClothRig {
     const mat = clothMaterial(spec.render.pattern, spec.render.color, spec.render.trim);
     const mesh = new Mesh(geo, mat);
     mesh.frustumCulled = false;
-    mesh.castShadow = true;
+    mesh.castShadow = this.lod.shadows;
     mesh.receiveShadow = true;
     mesh.matrixAutoUpdate = false;
     mesh.matrixWorldAutoUpdate = false;
     this.parent.add(mesh);
     const capsules = spec.colliders.map((c) => colliderSets[c]).filter(Boolean);
     cloth.setColliders(capsules);
-    return { spec, cloth, mesh, geo, pos, nrm, vu, vv, pinOffset, pinBone, carryBone, targets: new Float64Array(n * 3), capsules, flip };
+    return { spec, cloth, mesh, geo, pos, nrm, vu, vv, pinOffset, pinBone, carryBone, targets: new Float64Array(n * 3), capsules, flip, sub };
   }
 
   /** Put every particle back on its rest shape, carried by the current bone poses. */
@@ -298,7 +309,7 @@ export class ClothRig {
   private drawSheet(pc: Piece): void {
     const { cols, rows } = pc.spec;
     const p = pc.cloth.pos;
-    const sub = pc.spec.render.subdiv ?? 3;
+    const sub = pc.sub;
     const vu = pc.vu;
     const vv = pc.vv;
     const out = pc.pos;
@@ -359,7 +370,7 @@ export class ClothRig {
   private drawTube(pc: Piece): void {
     const rows = pc.spec.rows;
     const p = pc.cloth.pos;
-    const sub = pc.spec.render.subdiv ?? 4;
+    const sub = pc.sub;
     const vu = pc.vu;
     const vv = pc.vv;
     const ring = vu - 1;

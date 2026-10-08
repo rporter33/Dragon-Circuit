@@ -11,10 +11,11 @@ import { Group, Matrix4, Quaternion, Vector3, type Object3D } from 'three';
 import type { GameEvents, RiderLook, RiderPose, TerrainQuery } from '../../core/types';
 import type { EventBus } from '../../core/events';
 import type { RiderRenderable } from '../../game/contracts';
+import type { QualityProfile } from '../../render/quality';
 import { PLAYER_TUNING } from '../../player/tuning';
 import { buildRiderModel, type RiderModel } from './model';
 import { RiderAnimator, type AnimContext } from './animator';
-import { ClothRig } from './clothRig';
+import { ClothRig, type ClothLod } from './clothRig';
 import { allClothSpecs, type ColliderName } from './accessories';
 import type { Capsule } from './cloth';
 import { B } from './rig';
@@ -31,6 +32,13 @@ export interface RiderOptions {
   saddle?: Object3D;
   /** Event bus for touchdown jolts. */
   events?: EventBus<GameEvents>;
+  /** Graphics quality: cloth detail and shadows (see also setQuality). */
+  quality?: QualityProfile;
+}
+
+function clothLod(q: QualityProfile | undefined): ClothLod {
+  if (!q) return { detail: 1, shadows: true };
+  return { detail: q.level === 'low' ? 0.5 : q.level === 'medium' ? 0.75 : 1, shadows: q.shadows };
 }
 
 const smooth = (e0: number, e1: number, x: number) => {
@@ -97,6 +105,7 @@ export class Rider implements RiderRenderable {
   private jolt = 0;
   private readonly ctx: AnimContext;
   private readonly unsub: (() => void)[] = [];
+  private lod: ClothLod = { detail: 1, shadows: true };
 
   constructor(look: RiderLook, opts: RiderOptions = {}) {
     this.opts = opts;
@@ -121,7 +130,8 @@ export class Rider implements RiderRenderable {
       mount: cap(),
     };
     this.defineColliders();
-    this.cloth = new ClothRig(allClothSpecs(this.model.ctx, this.look), this.model.rig.bindPos, this.group, this.capsules);
+    this.lod = clothLod(opts.quality);
+    this.cloth = this.makeCloth();
     const ground = (x: number, z: number, nearY: number) => {
       const g = this.opts.terrain?.groundAt(x, z, nearY + 0.6);
       return g && Math.abs(g.y - nearY) < 0.9 ? g.y : nearY;
@@ -154,11 +164,24 @@ export class Rider implements RiderRenderable {
     this.model = buildRiderModel(this.look);
     this.group.add(this.model.mesh);
     this.animator.setRig(this.model.rig);
+    old.rig.skeleton.dispose();
     this.cloth.dispose();
     this.defineColliders();
-    this.cloth = new ClothRig(allClothSpecs(this.model.ctx, this.look), this.model.rig.bindPos, this.group, this.capsules);
+    this.cloth = this.makeCloth();
     this.ctx.standHeight = this.model.rig.dims.hipsY;
     this.clothFresh = true;
+  }
+
+  /** Optional: follow graphics quality changes (cloth detail, cloth shadows). */
+  setQuality(q: QualityProfile): void {
+    this.lod = clothLod(q);
+    this.cloth.dispose();
+    this.cloth = this.makeCloth();
+    this.clothFresh = true;
+  }
+
+  private makeCloth(): ClothRig {
+    return new ClothRig(allClothSpecs(this.model.ctx, this.look), this.model.rig.bindPos, this.group, this.capsules, this.lod);
   }
 
   private defineColliders(): void {
@@ -413,6 +436,7 @@ export class Rider implements RiderRenderable {
     this.cloth.dispose();
     this.group.removeFromParent();
     this.model.geometry.dispose();
+    this.model.rig.skeleton.dispose();
   }
 }
 
