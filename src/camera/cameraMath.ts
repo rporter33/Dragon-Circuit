@@ -114,7 +114,7 @@ export function springStep(s: SpringState, omega: number, zeta: number, dt: numb
 export function heaveFor(mass: number): { amplitude: number; omega: number; zeta: number } {
   const m = Math.max(100, mass) / 650;
   return {
-    amplitude: 0.021 * Math.sqrt(m),
+    amplitude: 0.025 * Math.sqrt(m),
     omega: 2 * Math.PI * 1.45 / Math.sqrt(m),
     zeta: 0.42,
   };

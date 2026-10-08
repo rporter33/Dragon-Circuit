@@ -196,7 +196,10 @@ export class TitleRig implements Rig {
     const yaw = yawR - thR * (1 / dolly);
     const horiz = Math.hypot(riderFeet.x - out.position.x, riderFeet.z - out.position.z);
     const below = Math.atan2(out.position.y - (riderFeet.y + 1.05), Math.max(0.5, horiz));
-    const pitch = Math.atan(-T.riderY * tanV) * (1 / dolly) - below;
+    // The rider's chest at riderY — but never so low that their feet leave the frame (wide
+    // screens bring the rider closer).
+    const chest = Math.min(Math.atan(-T.riderY * tanV), Math.atan(0.88 * tanV) - Math.atan2(1.05, horiz));
+    const pitch = chest * (1 / dolly) - below;
     out.target.set(Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw)).multiplyScalar(dR).add(out.position);
     out.shift = 0;
     return out;

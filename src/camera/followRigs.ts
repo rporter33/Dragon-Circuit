@@ -294,7 +294,7 @@ export class FlightRig implements Rig {
     bodyUp.set(0, 1, 0).applyQuaternion(pose.orientation);
     const bank = clamp(Math.atan2(bodyLeft.y, bodyUp.y), -100 * D, 100 * D);
     const targetRoll = reduced ? 0 : bank * C.rollShare * behind;
-    this.roll = damp(this.roll, targetRoll, C.rollRate / Math.sqrt(weight), dt);
+    this.roll = damp(this.roll, targetRoll, C.rollRate / (weight * weight), dt);
     out.roll = this.roll;
 
     const tuck = clamp01((1 - pose.wingSpread) / 0.72);
