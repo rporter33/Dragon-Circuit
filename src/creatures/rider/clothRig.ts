@@ -325,15 +325,17 @@ export class ClothRig {
         }
       }
     }
-    // Pass 2: across the columns (linear for two-wide ribbons).
+    // Two-wide ribbons: drawn about their centerline with a minimum width and a twist that
+    // builds along the length, so a scarf tail shows its face from any side (never a string).
+    if (cols === 2) {
+      this.drawRibbon(pc, tmp, vv);
+      return this.sheetNormals(pc);
+    }
+    // Pass 2: across the columns.
     for (let j = 0; j < vv; j++) {
       const rowBase = j * cols * 3;
       for (let i = 0; i < vu; i++) {
         const o = (j * vu + i) * 3;
-        if (cols === 2) {
-          for (let k = 0; k < 3; k++) out[o + k] = tmp[rowBase + i * 3 + k];
-          continue;
-        }
         const c = Math.min(cols - 2, Math.floor(i / sub));
         const tu = i / sub - c;
         const c0 = Math.max(0, c - 1);
@@ -343,7 +345,78 @@ export class ClothRig {
         }
       }
     }
-    // Normals by central differences on the visual grid.
+    this.sheetNormals(pc);
+  }
+
+  /** Ribbon rows from the two smoothed columns in `line` (row-major, 2 points per row). */
+  private drawRibbon(pc: Piece, line: Float64Array, vv: number): void {
+    const out = pc.pos;
+    const twist = pc.spec.render.twist ?? 0;
+    const minHalf = (pc.spec.render.minWidth ?? 0) / 2;
+    for (let j = 0; j < vv; j++) {
+      const a = j * 6;
+      const cx = (line[a] + line[a + 3]) / 2;
+      const cy = (line[a + 1] + line[a + 4]) / 2;
+      const cz = (line[a + 2] + line[a + 5]) / 2;
+      // Tangent from the neighbouring rows' centers.
+      const p0 = Math.max(0, j - 1) * 6;
+      const p1 = Math.min(vv - 1, j + 1) * 6;
+      let tx = (line[p1] + line[p1 + 3] - line[p0] - line[p0 + 3]) / 2;
+      let ty = (line[p1 + 1] + line[p1 + 4] - line[p0 + 1] - line[p0 + 4]) / 2;
+      let tz = (line[p1 + 2] + line[p1 + 5] - line[p0 + 2] - line[p0 + 5]) / 2;
+      const tl = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
+      tx /= tl;
+      ty /= tl;
+      tz /= tl;
+      // Half-width vector, made perpendicular to the tangent.
+      let hx = (line[a + 3] - line[a]) / 2;
+      let hy = (line[a + 4] - line[a + 1]) / 2;
+      let hz = (line[a + 5] - line[a + 2]) / 2;
+      const ht = hx * tx + hy * ty + hz * tz;
+      hx -= tx * ht;
+      hy -= ty * ht;
+      hz -= tz * ht;
+      let hl = Math.sqrt(hx * hx + hy * hy + hz * hz);
+      if (hl < 1e-6) {
+        // Degenerate: any perpendicular.
+        hx = -tz;
+        hy = 0;
+        hz = tx;
+        hl = Math.sqrt(hx * hx + hz * hz) || 1;
+      }
+      const w = Math.max(hl, minHalf) / hl;
+      hx *= w;
+      hy *= w;
+      hz *= w;
+      // Twist about the tangent, building up from the knot toward the end.
+      const f = j / Math.max(1, vv - 1);
+      const ang = twist * f * f * (3 - 2 * f);
+      if (ang !== 0) {
+        const c = Math.cos(ang);
+        const s = Math.sin(ang);
+        // Rodrigues with h ⟂ t: h' = h cos + (t × h) sin.
+        const qx = ty * hz - tz * hy;
+        const qy = tz * hx - tx * hz;
+        const qz = tx * hy - ty * hx;
+        hx = hx * c + qx * s;
+        hy = hy * c + qy * s;
+        hz = hz * c + qz * s;
+      }
+      const o = j * 6;
+      out[o] = cx - hx;
+      out[o + 1] = cy - hy;
+      out[o + 2] = cz - hz;
+      out[o + 3] = cx + hx;
+      out[o + 4] = cy + hy;
+      out[o + 5] = cz + hz;
+    }
+  }
+
+  /** Normals by central differences on the visual grid. */
+  private sheetNormals(pc: Piece): void {
+    const out = pc.pos;
+    const vu = pc.vu;
+    const vv = pc.vv;
     const nrm = pc.nrm;
     const s = pc.flip ? -1 : 1;
     for (let j = 0; j < vv; j++) {

@@ -38,6 +38,12 @@ export interface ClothSpec {
     radius?: (t: number) => number;
     /** Visual subdivisions per particle span. */
     subdiv?: number;
+    /**
+     * Ribbons (two columns): a twist (radians) built up along the length so the face shows
+     * from any side instead of a string edge-on, and a minimum drawn width (m).
+     */
+    twist?: number;
+    minWidth?: number;
   };
 }
 
@@ -53,7 +59,7 @@ const SHEET: ClothSpec['config'] = {
   flutterHz: 2.6,
 };
 
-const RIBBON: ClothSpec['config'] = {
+export const RIBBON: ClothSpec['config'] = {
   drag: 0.9,
   dragTangent: 0.25,
   dragQuad: 0.55,
@@ -63,6 +69,9 @@ const RIBBON: ClothSpec['config'] = {
   radius: 0.016,
   flutter: 40,
   flutterHz: 3.4,
+  // A jog shouldn't hold the scarf out like a rod: half the drag on foot, and a gentle ripple.
+  dragLow: 0.45,
+  flutterFloor: 0.16,
 };
 
 const HAIR: ClothSpec['config'] = {
@@ -154,6 +163,7 @@ function ribbon(
   color: Color,
   trim: Color,
   extra: Partial<ClothSpec['config']> = {},
+  draw: { twist: number; minWidth: number } = { twist: 1.1, minWidth: 0.12 },
 ): ClothSpec {
   const rest: Vector3[] = [];
   const anchorBone: number[] = [];
@@ -172,7 +182,7 @@ function ribbon(
     anchorBone,
     config: { ...RIBBON, ...extra },
     colliders: ['chest', 'shoulders', 'armL', 'armR', 'head', 'neck', 'belly', 'thighL', 'thighR', 'mount'],
-    render: { kind: 'sheet', color, trim, pattern: 'scarf', subdiv: 3 },
+    render: { kind: 'sheet', color, trim, pattern: 'scarf', subdiv: 3, twist: draw.twist, minWidth: draw.minWidth },
   };
 }
 
@@ -199,6 +209,7 @@ export function scarfSpecs(ctx: BodyCtx, look: RiderLook): ClothSpec[] {
           scarf,
           trim,
           { flutterPhase: i * Math.PI * 0.85, flutterHz: 3.1 + i * 0.4 },
+          { twist: i === 0 ? 1.0 : -1.0, minWidth: 0.1 },
         ),
       );
     }
@@ -217,6 +228,7 @@ export function scarfSpecs(ctx: BodyCtx, look: RiderLook): ClothSpec[] {
           scarf,
           trim,
           { flutter: 30, flutterHz: 4.5, flutterPhase: i * 2 },
+          { twist: 0.5, minWidth: 0.06 },
         ),
       );
     }

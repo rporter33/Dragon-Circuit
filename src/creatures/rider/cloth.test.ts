@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Cloth, particleDistance, type ClothConfig } from './cloth';
+import { RIBBON } from './accessories';
 
 /** A grid hanging down from a pinned top row along x, spacing `seg`, in the plane z = 0. */
 function grid(cols: number, rows: number, seg: number, extra: Partial<ClothConfig> = {}): Cloth {
@@ -89,7 +90,38 @@ describe('cloth', () => {
     expect(angle).toBeLessThan(1.45);
   });
 
-  it('is stable at any frame rate, including hitches', () => {
+  it('a scarf tail droops and swings at a running pace, and streams back in flight (VIS-18)', () => {
+    // Mean angle of the tail below horizontal (degrees) over two seconds in a steady headwind.
+    const droop = (air: number, extra: Partial<ClothConfig> = {}) => {
+      const c = grid(2, 13, 0.1, { ...RIBBON, ...extra });
+      let sum = 0;
+      let n = 0;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < 480; i++) {
+        c.update(1 / 60, { airX: 0, airY: 0, airZ: -air, time: i / 60 });
+        if (i < 360) continue;
+        const [, y, z] = trail(c);
+        const below = (Math.atan2(-y, -z) * 180) / Math.PI;
+        sum += below;
+        n++;
+        lo = Math.min(lo, below);
+        hi = Math.max(hi, below);
+      }
+      return { mean: sum / n, swing: hi - lo };
+    };
+    // A run plus a breeze: the tail hangs at least 30° below horizontal, not out like a rod...
+    expect(droop(6).mean).toBeGreaterThan(40);
+    expect(droop(9).mean).toBeGreaterThan(30);
+    // ...where the old full drag held it within 15° of level at the same speed.
+    expect(droop(9, { dragLow: 1, flutterFloor: 0 }).mean).toBeLessThan(15);
+    // It still moves at a jog (the flutter floor), and streams straight back when flying.
+    expect(droop(6).swing).toBeGreaterThan(5);
+    expect(Math.abs(droop(30).mean)).toBeLessThan(10);
+  });
+
+  // ~150k assertions: give it room on a loaded machine.
+  it('is stable at any frame rate, including hitches', { timeout: 30000 }, () => {
     const c = grid(8, 10, 0.12);
     let t = 0;
     const dts = [1 / 240, 1 / 144, 1 / 60, 1 / 30, 1 / 15, 0.1, 0.25];
