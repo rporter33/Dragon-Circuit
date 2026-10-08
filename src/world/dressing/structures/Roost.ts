@@ -3,7 +3,7 @@
 // a flagstone path and the launch deck that juts out over the void toward Gull's Rest.
 
 import { BoxGeometry, ConeGeometry, CylinderGeometry, Matrix4, TorusGeometry, Vector3 } from 'three';
-import type { CylinderCollider } from '../../../core/types';
+import type { Collider } from '../../../core/types';
 import type { Terrain } from '../../terrain';
 import type { ExclusionSet } from '../exclusions';
 import type { Deck } from '../Dressing';
@@ -33,6 +33,7 @@ import {
   type SiteBuilders,
 } from './kit';
 import type { RoostPlan, TowerPlan } from './roostPlan';
+import { colBox, colCone, colCyl, colGable, colSpan, colSphere, toWorld } from '../colliderKit';
 
 const boxGeo = new BoxGeometry(1, 1, 1);
 const torusGeo = new TorusGeometry(1, 0.12, 6, 20);
@@ -40,7 +41,8 @@ const discGeo = new CylinderGeometry(1, 1, 1, 16);
 
 export interface SiteOutputs {
   exclusions: ExclusionSet;
-  colliders: CylinderCollider[];
+  /** Collision shapes in world space (boxes for buildings and roofs, cylinders, spheres). */
+  colliders: Collider[];
   decks: Deck[];
 }
 
@@ -212,16 +214,49 @@ function buildStable(s: SiteBuilders, plan: RoostPlan, out: SiteOutputs): void {
   const a = loc(0, -D / 2 + 2);
   const c = loc(0, -D / 2 - 2);
   out.exclusions.capsule(a.x, a.z, c.x, c.z, hw + 1.5);
-  const addCol = (lx: number, lz: number, r: number) => {
-    const p = loc(lx, lz);
-    out.colliders.push({ x: p.x, z: p.z, radius: r, y0: plan.ground - 1, y1: plan.ground + eave });
-  };
-  for (let z = 0; z >= -D; z -= 2) {
-    addCol(-hw, z, 0.6);
-    addCol(hw, z, 0.6);
-  }
-  for (let x = -hw + 2; x < hw; x += 2) addCol(x, -D, 0.6);
-  for (const x of [-hw + 1, -hw + 2.5, hw - 1, hw - 2.5]) addCol(x, 0, 0.6);
+  stableColliders(out.colliders, F, W, D, eave, ridge);
+}
+
+/**
+ * The stable as boxes: plinth and floor you can walk on, four walls (the front split around the
+ * 16 m opening, with the lintel above it), the gable roof as stepped boxes whose tops follow the
+ * shingles within ±0.4 m (walkable: wyverns perch on it), and the furniture inside and out.
+ */
+function stableColliders(out: Collider[], F: Matrix4, W: number, D: number, eave: number, ridge: number): void {
+  const hw = W / 2;
+  const stone = { surface: 'stone' as const };
+  const wood = { surface: 'wood' as const };
+  // Plinth (stone, a step up from the yard) and the plank floor inside.
+  colBox(out, F, 0, 0.025, -D / 2, W + 1.2, 1.05, D + 1.2, 0, stone);
+  colBox(out, F, 0, 0.295, -D / 2, W - 0.5, 0.59, D - 0.5, 0, wood);
+  // Walls: stone footing, plaster and timber up to the top plate (7.5 m).
+  const top = eave + 0.3;
+  colSpan(out, F, -hw, 0.3, -hw, -D - 0.3, -0.5, top, 0.7, wood);
+  colSpan(out, F, hw, 0.3, hw, -D - 0.3, -0.5, top, 0.7, wood);
+  colSpan(out, F, -hw - 0.3, -D, hw + 0.3, -D, -0.5, top, 0.7, wood);
+  colSpan(out, F, -hw - 0.3, 0, -8, 0, -0.5, top, 0.7, wood);
+  colSpan(out, F, 8, 0, hw + 0.3, 0, -0.5, top, 0.7, wood);
+  // Lintel over the opening and the hanging sign under it.
+  colSpan(out, F, -8.3, 0.05, 8.3, 0.05, 6.15, top, 0.8, wood);
+  colBox(out, F, 0, 5.25, 0.35, 2.6, 0.75, 0.2, 0, wood);
+  // Roof: shingles from the eaves (6.85) to the ridge cap (13.0), overhanging the walls.
+  colGable(out, F, -D - 1.8, 2.2, hw + 1.6, eave - 0.35, ridge + 0.25, eave, 8, wood);
+  // The wyvern-head finial on the front ridge end.
+  colBox(out, F, 0, ridge + 1.2, 2.9, 0.6, 2.2, 1.6, 0, wood);
+  // Inside: perch posts and beam, hay, bales, saddle racks, trough.
+  for (const x of [-9, 9]) colCyl(out, F, x, 0, -14, 0.3, 3.5, wood);
+  colSpan(out, F, -9.8, -14, 9.8, -14, 2.95, 3.65, 0.7, wood);
+  colSphere(out, F, -8.5, 1.0, -17, 2.0, { soft: true });
+  colSphere(out, F, 7.5, 1.0, -17.5, 1.7, { soft: true });
+  colSphere(out, F, -1.5, 0.9, -18, 1.4, { soft: true });
+  colBox(out, F, -10.5, 1.5, -7.0, 1.7, 1.8, 3.2, 0, wood);
+  colBox(out, F, -10.6, 1.35, -10.5, 1.2, 1.5, 1.5, 0, wood);
+  colBox(out, F, 10.4, 1.25, -8.0, 1.2, 1.3, 6.6, 0, wood);
+  colBox(out, F, 9.8, 1.0, -13, 1.3, 0.85, 3.3, 0, wood);
+  // Outside the front corners: barrels and crates.
+  colCyl(out, F, -13.5, 0, 1.5, 0.45, 1.1, wood);
+  colCyl(out, F, -14.4, 0, 0.6, 0.45, 1.1, wood);
+  colBox(out, F, 14.15, 0.75, 0.7, 1.6, 1.5, 1.9, 0, wood);
 }
 
 function buildTower(s: SiteBuilders, t: TowerPlan, idx: number, out: SiteOutputs): void {
@@ -280,7 +315,35 @@ function buildTower(s: SiteBuilders, t: TowerPlan, idx: number, out: SiteOutputs
   lantern(s, F, 0, 2.6, r + 0.45, 0.9, -1.9);
 
   out.exclusions.circle(t.x, t.z, r + 2.5);
-  out.colliders.push({ x: t.x, z: t.z, radius: r + 0.3, y0: t.y - 1, y1: t.y + t.height });
+  towerColliders(out.colliders, F, r, shaftH, idx);
+}
+
+/**
+ * A rookery tower: stone shaft on its plinth, the gallery floor (walkable) with its rail and
+ * posts, the plaster drum, the perch beams wyverns land on, and the slate cone.
+ */
+function towerColliders(out: Collider[], F: Matrix4, r: number, shaftH: number, idx: number): void {
+  const stone = { surface: 'stone' as const };
+  const wood = { surface: 'wood' as const };
+  const gy = 0.7 + shaftH;
+  const gr = r * 1.35;
+  colBox(out, F, 0, -0.2, 0, r * 2.4, 1.9, r * 2.4, 0.4, stone);
+  colCyl(out, F, 0, -1, 0, r, gy + 0.75, stone);
+  colCyl(out, F, 0, gy - 0.25, 0, gr, 0.5, wood);
+  colCyl(out, F, 0, gy + 0.25, 0, r * 0.95, 3.3, wood);
+  const rr = gr * 0.95;
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2;
+    const a2 = ((k + 1) / 8) * Math.PI * 2;
+    colCyl(out, F, Math.sin(a) * rr, gy, Math.cos(a) * rr, 0.2, 3.6, wood);
+    colSpan(out, F, Math.sin(a) * rr, Math.cos(a) * rr, Math.sin(a2) * rr, Math.cos(a2) * rr, gy + 0.25, gy + 1.2, 0.25, wood);
+  }
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2 + 0.4 + idx;
+    const len = 4.5 + (k % 2) * 1.5;
+    colSpan(out, F, Math.sin(a) * r * 0.9, Math.cos(a) * r * 0.9, Math.sin(a) * (gr + len + 0.3), Math.cos(a) * (gr + len + 0.3), gy - 0.4, gy + 0.45, 0.62, wood);
+  }
+  colCone(out, F, 0, gy + 3.4, 0, gr + 0.9, 5.3 + r * 0.4, 5, stone);
 }
 
 function buildDeck(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, out: SiteOutputs): void {
@@ -322,31 +385,41 @@ function buildDeck(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, out: Site
     for (let z = -0.5; z <= L - 2.5; z += 2.5) {
       posts.push(v(sx * hw, 0, z));
       post(b, F, v(sx * hw, -0.3, z), v(sx * hw, 1.15, z), 0.09, PALETTE.timber, 6);
-      const w = toWorld(sx * hw, 0, z);
-      out.colliders.push({ x: w.x, z: w.z, radius: 0.3, y0: dk.y - 1, y1: dk.y + 1.2 });
     }
     for (let i = 0; i < posts.length - 1; i++) {
       beam(b, F, posts[i].clone().setY(1.12), posts[i + 1].clone().setY(1.12), 0.12, PALETTE.timberLight);
       beam(b, F, posts[i].clone().setY(0.55), posts[i + 1].clone().setY(0.55), 0.04, PALETTE.rope);
     }
+    // The rail as one thin wall from the first post to the last.
+    colSpan(out.colliders, F, sx * hw, posts[0].z, sx * hw, posts[posts.length - 1].z, -0.3, 1.2, 0.25, { surface: 'wood' });
   }
-  // Launch gate at the end: tall posts, crossbar, pennants, lanterns.
+  // Launch gate at the end: tall posts, crossbar, pennants, lanterns. Tall enough for the biggest
+  // wyvern to run out under it with its head up.
+  const gateH = 7.6;
   for (const sx of [-1, 1]) {
-    post(b, F, v(sx * (hw + 0.2), -0.6, L - 0.4), v(sx * (hw + 0.2), 5.2, L - 0.4), 0.2, PALETTE.timber, 8);
-    box(b, F, sx * (hw + 0.2), 5.35, L - 0.4, 0.5, 0.3, 0.5, PALETTE.brass);
-    lantern(s, F, sx * (hw + 0.2) - sx * 0.5, 3.7, L - 0.4, 0.8);
-    pennant(s, F, sx * (hw + 0.2), 4.6, L - 0.4, 2.6, 0.8, sx < 0 ? PALETTE.bannerBlue : PALETTE.bannerRed);
+    post(b, F, v(sx * (hw + 0.2), -0.6, L - 0.4), v(sx * (hw + 0.2), gateH, L - 0.4), 0.22, PALETTE.timber, 8);
+    box(b, F, sx * (hw + 0.2), gateH + 0.15, L - 0.4, 0.5, 0.3, 0.5, PALETTE.brass);
+    lantern(s, F, sx * (hw + 0.2) - sx * 0.5, gateH - 1.7, L - 0.4, 0.8);
+    pennant(s, F, sx * (hw + 0.2), gateH - 0.8, L - 0.4, 2.6, 0.8, sx < 0 ? PALETTE.bannerBlue : PALETTE.bannerRed);
+    colCyl(out.colliders, F, sx * (hw + 0.2), -0.6, L - 0.4, 0.3, gateH + 0.9, { surface: 'wood' });
   }
-  beam(b, F, v(-hw - 0.6, 4.7, L - 0.4), v(hw + 0.6, 4.7, L - 0.4), 0.3, PALETTE.timber);
+  beam(b, F, v(-hw - 0.6, gateH - 0.5, L - 0.4), v(hw + 0.6, gateH - 0.5, L - 0.4), 0.3, PALETTE.timber);
+  colSpan(out.colliders, F, -hw - 0.6, L - 0.4, hw + 0.6, L - 0.4, gateH - 0.7, gateH - 0.3, 0.35, { surface: 'wood' });
   // Windsock on the left gate post.
-  pennant(s, F, -hw - 0.2, 5.0, L - 0.4, 3.0, 0.7, '#e8e2d6');
-  // Root arch with a sign and chimes.
-  for (const sx of [-1, 1]) post(b, F, v(sx * (hw + 0.3), -0.3, -1.2), v(sx * (hw + 0.3), 3.8, -1.2), 0.22, PALETTE.timber, 8);
-  beam(b, F, v(-hw - 0.9, 3.9, -1.2), v(hw + 0.9, 3.9, -1.2), 0.36, PALETTE.timber);
-  box(b, F, 0, 3.25, -1.25, 2.4, 0.6, 0.1, PALETTE.timberLight);
-  box(b, F, 0, 3.25, -1.18, 1.0, 0.18, 0.05, PALETTE.gold);
-  windChime(s, F, -1.8, 3.7, -1.2);
-  windChime(s, F, 1.8, 3.7, -1.2);
+  pennant(s, F, -hw - 0.2, gateH - 0.2, L - 0.4, 3.0, 0.7, '#e8e2d6');
+  // Root arch with a sign and chimes, as tall as the launch gate.
+  const archH = 7.6;
+  for (const sx of [-1, 1]) {
+    post(b, F, v(sx * (hw + 0.3), -0.3, -1.2), v(sx * (hw + 0.3), archH, -1.2), 0.22, PALETTE.timber, 8);
+    colCyl(out.colliders, F, sx * (hw + 0.3), -0.3, -1.2, 0.3, archH + 0.4, { surface: 'wood' });
+  }
+  beam(b, F, v(-hw - 0.9, archH + 0.1, -1.2), v(hw + 0.9, archH + 0.1, -1.2), 0.36, PALETTE.timber);
+  box(b, F, 0, archH - 0.55, -1.25, 2.4, 0.6, 0.1, PALETTE.timberLight);
+  box(b, F, 0, archH - 0.55, -1.18, 1.0, 0.18, 0.05, PALETTE.gold);
+  for (const cx of [-0.9, 0.9]) post(b, F, v(cx, archH - 0.08, -1.25), v(cx, archH - 0.25, -1.25), 0.02, PALETTE.iron, 6);
+  colSpan(out.colliders, F, -hw - 0.9, -1.2, hw + 0.9, -1.2, archH - 0.9, archH + 0.3, 0.45, { surface: 'wood' });
+  windChime(s, F, -1.8, archH - 0.1, -1.2);
+  windChime(s, F, 1.8, archH - 0.1, -1.2);
 
   // Walkable surface + keep-outs.
   out.decks.push({ x: dk.x, z: dk.z, yaw: dk.yaw, halfWidth: hw, back: 1.5, length: L, y: dk.y, surface: 'wood' });
@@ -355,8 +428,16 @@ function buildDeck(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, out: Site
   out.exclusions.capsule(root.x, root.z, tip.x, tip.z, hw + 2, false);
 }
 
+/** A banner pole (base at the frame origin, facing frame +Z): pole, crossbar, and the cloth (soft). */
+function bannerColliders(out: Collider[], F: Matrix4, height: number): void {
+  colCyl(out, F, 0, -0.5, 0, 0.22, height + 0.85, { surface: 'wood' });
+  colSpan(out, F, -1.4, 0.15, 1.4, 0.15, height - 0.6, height - 0.3, 0.25, { surface: 'wood' });
+  const clothH = height * 0.55;
+  colBox(out, F, 0, height - 0.5 - clothH / 2, 0.2, 2.2, clothH, 0.4, 0, { soft: true });
+}
+
 /** A stone well with a little shingled roof, a winch and a bucket. */
-function buildWell(s: SiteBuilders, x: number, y: number, z: number): void {
+function buildWell(s: SiteBuilders, x: number, y: number, z: number, colliders: Collider[]): void {
   const F = xf(x, y, z, 0, 0.4, 0);
   const b = s.solid;
   for (let c = 0; c < 3; c++) {
@@ -372,6 +453,9 @@ function buildWell(s: SiteBuilders, x: number, y: number, z: number): void {
   shingleRoof(b, F, -1.1, 1.1, 1.9, 2.3, 3.1, PALETTE.shingle, PALETTE.shingleAlt);
   post(b, F, v(0, 1.85, 0), v(0, 1.0, 0), 0.015, PALETTE.rope, 6);
   b.add(new CylinderGeometry(0.22, 0.17, 0.32, 10), under(F, xf(0, 0.85, 0)), { color: jitter(PALETTE.timberLight) });
+  colCyl(colliders, F, 0, -0.5, 0, 1.6, 1.47, { surface: 'stone' });
+  for (const sx of [-1.45, 1.45]) colCyl(colliders, F, sx, 0.9, 0, 0.18, 1.5, { surface: 'wood' });
+  colGable(colliders, F, -1.1, 1.1, 1.9, 2.3, 3.15, 2.2, 2, { surface: 'wood' });
 }
 
 /** Build everything on the Roost into the site builders; registers keep-outs/colliders/decks. */
@@ -391,12 +475,12 @@ export function buildRoost(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, o
   for (const bn of plan.banners) {
     bannerPole(s, I, bn.x, gy(bn.x, bn.z), bn.z, bn.yaw, 9, bn.color === 'blue' ? PALETTE.bannerBlue : PALETTE.bannerRed, PALETTE.gold);
     out.exclusions.circle(bn.x, bn.z, 1.2);
-    out.colliders.push({ x: bn.x, z: bn.z, radius: 0.35, y0: gy(bn.x, bn.z) - 1, y1: gy(bn.x, bn.z) + 9 });
+    bannerColliders(out.colliders, xf(bn.x, gy(bn.x, bn.z), bn.z, 0, bn.yaw, 0), 9);
   }
   for (const l of plan.lanterns) {
     lanternPost(s, I, l.x, gy(l.x, l.z), l.z, l.yaw);
     out.exclusions.circle(l.x, l.z, 1);
-    out.colliders.push({ x: l.x, z: l.z, radius: 0.3, y0: gy(l.x, l.z) - 1, y1: gy(l.x, l.z) + 3 });
+    colCyl(out.colliders, I, l.x, gy(l.x, l.z) - 0.5, l.z, 0.22, 3.5, { surface: 'wood' });
   }
   // Flagstone path.
   plan.path.forEach((p, i) => {
@@ -418,6 +502,12 @@ export function buildRoost(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, o
   });
   // Paddock with a gate gap facing the plaza.
   const pts = plan.paddock;
+  const fenceRun = (ax: number, az: number, bx: number, bz: number) => {
+    fence(s.solid, I, v(ax, 0, az), v(bx, 0, bz), 2.6, gy);
+    const lo = Math.min(gy(ax, az), gy(bx, bz));
+    const hi = Math.max(gy(ax, az), gy(bx, bz));
+    colSpan(out.colliders, I, ax, az, bx, bz, lo - 0.4, hi + 1.3, 0.25, { surface: 'wood' });
+  };
   for (let i = 0; i < pts.length; i++) {
     const a = pts[i];
     const c = pts[(i + 1) % pts.length];
@@ -425,15 +515,14 @@ export function buildRoost(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, o
       // Leave a gate: fence only the first and last thirds of the closing side.
       const m1 = { x: a.x + (c.x - a.x) * 0.33, z: a.z + (c.z - a.z) * 0.33 };
       const m2 = { x: a.x + (c.x - a.x) * 0.67, z: a.z + (c.z - a.z) * 0.67 };
-      fence(s.solid, I, v(a.x, 0, a.z), v(m1.x, 0, m1.z), 2.6, gy);
-      fence(s.solid, I, v(m2.x, 0, m2.z), v(c.x, 0, c.z), 2.6, gy);
+      fenceRun(a.x, a.z, m1.x, m1.z);
+      fenceRun(m2.x, m2.z, c.x, c.z);
     } else {
-      fence(s.solid, I, v(a.x, 0, a.z), v(c.x, 0, c.z), 2.6, gy);
+      fenceRun(a.x, a.z, c.x, c.z);
     }
   }
   // A well on the plaza and a feeding trough by where the wyvern waits.
-  buildWell(s, plan.well.x, gy(plan.well.x, plan.well.z), plan.well.z);
-  out.colliders.push({ x: plan.well.x, z: plan.well.z, radius: 1.9, y0: gy(plan.well.x, plan.well.z) - 1, y1: gy(plan.well.x, plan.well.z) + 4 });
+  buildWell(s, plan.well.x, gy(plan.well.x, plan.well.z), plan.well.z, out.colliders);
   out.exclusions.circle(plan.well.x, plan.well.z, 3);
   {
     const t = plan.trough;
@@ -443,13 +532,18 @@ export function buildRoost(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, o
     for (const sx of [-1.6, 1.6]) box(s.solid, T, sx, 0.4, 0, 0.2, 0.85, 1.35, PALETTE.timber);
     hayPile(s.solid, T, 0.4, 0.1, 2.0, 1.6, 29);
     barrel(s.solid, T, 2.6, 0, 0.6);
-    out.colliders.push({ x: t.x, z: t.z, radius: 1.7, y0: gy(t.x, t.z) - 1, y1: gy(t.x, t.z) + 1.2 });
+    colBox(out.colliders, T, 0, 0.42, 0, 3.6, 0.85, 1.35, 0, { surface: 'wood' });
+    colCyl(out.colliders, T, 2.6, -0.3, 0.6, 0.45, 1.4, { surface: 'wood' });
+    colSphere(out.colliders, T, 0.4, -0.4, 2.0, 1.3, { soft: true });
     out.exclusions.circle(t.x, t.z, 3.5);
   }
   const pc = { x: pts.reduce((t, p) => t + p.x, 0) / pts.length, z: pts.reduce((t, p) => t + p.z, 0) / pts.length };
   hayPile(s.solid, I, pc.x + 2, gy(pc.x + 2, pc.z - 2), pc.z - 2, 1.8, 23);
   hayBale(s.solid, I, pc.x - 2.5, gy(pc.x - 2.5, pc.z + 3), pc.z + 3, 0.6, false);
   box(s.solid, I, pc.x - 3, gy(pc.x - 3, pc.z - 4) + 0.45, pc.z - 4, 2.6, 0.7, 1.0, PALETTE.timberLight, { ry: 0.3 });
+  colSphere(out.colliders, I, pc.x + 2, gy(pc.x + 2, pc.z - 2) - 0.45, pc.z - 2, 1.45, { soft: true });
+  colBox(out.colliders, I, pc.x - 2.5, gy(pc.x - 2.5, pc.z + 3) + 0.75, pc.z + 3, 1.2, 1.5, 1.5, 0.6, { surface: 'wood' });
+  colBox(out.colliders, I, pc.x - 3, gy(pc.x - 3, pc.z - 4) + 0.4, pc.z - 4, 2.6, 0.9, 1.0, 0.3, { surface: 'wood' });
   out.exclusions.capsule(pts[0].x, pts[0].z, pts[2].x, pts[2].z, 7, true);
 }
 

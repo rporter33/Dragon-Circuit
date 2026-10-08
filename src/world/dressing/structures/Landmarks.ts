@@ -39,6 +39,7 @@ import {
   type SiteBuilders,
 } from './kit';
 import type { SiteOutputs } from './Roost';
+import { colBox, colChain, colCyl, colFrustum, colSpan, colSphere } from '../colliderKit';
 
 const VERDIGRIS = '#4f9585';
 const BRONZE = '#8a6a35';
@@ -96,28 +97,36 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
   }
   // Front steps.
   for (let i = 0; i < 4; i++) box(b, F, 0, 0.18 + i * 0.32, 18.6 - i * 0.55, 7, 0.36, 1.2, PALETTE.stone);
+  const C = out.colliders;
+  const stone = { surface: 'stone' as const };
+  colCyl(C, F, 0, -1, 0, 19.4, 1.5, stone);
+  colCyl(C, F, 0, -1, 0, 17.4, 2.42, stone);
+  for (let i = 0; i < 4; i++) colBox(C, F, 0, (0.36 + i * 0.32) / 2 - 0.3, 18.6 - i * 0.55, 7, 0.36 + i * 0.32 + 0.6, 1.2, 0, stone);
 
   // The drum: crumbling courses, a doorway at the front, a breach at the back-left.
   const segs = 28;
-  stoneRing(
-    s,
-    F,
-    14,
-    1.4,
-    1.3,
-    segs,
-    (k) => {
-      if (k === 0 || k === segs - 1) return 0; // doorway (front)
-      if (k >= 17 && k <= 19) return k === 18 ? 0 : 1; // breach
-      const h = Math.sin(k * 1.7) * 0.5 + 0.5;
-      return h > 0.75 ? 2 : h > 0.5 ? 3 : 4;
-    },
-    1.25,
-    202,
-  );
+  const drumCourses = (k: number) => {
+    if (k === 0 || k === segs - 1) return 0; // doorway (front)
+    if (k >= 17 && k <= 19) return k === 18 ? 0 : 1; // breach
+    const h = Math.sin(k * 1.7) * 0.5 + 0.5;
+    return h > 0.75 ? 2 : h > 0.5 ? 3 : 4;
+  };
+  stoneRing(s, F, 14, 1.4, 1.3, segs, drumCourses, 1.25, 202);
+  // Each drum segment as a box exactly as high as its surviving courses.
+  for (let k = 0; k < segs; k++) {
+    const n = drumCourses(k);
+    if (n === 0) continue;
+    const a = ((k + 0.5) / segs) * Math.PI * 2;
+    const top = 1.4 + n * 1.25;
+    colBox(C, F, Math.sin(a) * 14, (1.0 + top) / 2, Math.cos(a) * 14, ((Math.PI * 2 * 14) / segs) * 1.04, top - 1.0, 1.4, a, stone);
+  }
   // Door jambs and a lintel fragment.
-  for (const sx of [-1, 1]) column(b, F, sx * 2.0, 1.4, 13.6, 0.45, 4.6, PALETTE.stoneWarm);
+  for (const sx of [-1, 1]) {
+    column(b, F, sx * 2.0, 1.4, 13.6, 0.45, 4.6, PALETTE.stoneWarm);
+    colCyl(C, F, sx * 2.0, 1.0, 13.6, 0.65, 5.3, stone);
+  }
   box(b, F, -0.6, 6.25, 13.6, 3.6, 0.6, 1.1, PALETTE.stoneWarm, { rz: 0.06 });
+  colBox(C, F, -0.6, 6.25, 13.6, 3.6, 0.75, 1.1, 0, stone);
 
   // Colonnade around the platform rim.
   for (let k = 0; k < 12; k++) {
@@ -125,14 +134,15 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
     const broken = [2, 5, 9].includes(k) ? 0.35 + rand() * 0.35 : 0;
     if (k === 7) continue; // fallen, see debris
     column(b, F, Math.sin(a) * 16.1, 1.4, Math.cos(a) * 16.1, 0.55, 6.6, PALETTE.stoneWarm, broken);
-    const w = new Vector3(Math.sin(a) * 16.1, 0, Math.cos(a) * 16.1).applyMatrix4(F);
-    out.colliders.push({ x: w.x, z: w.z, radius: 0.8, y0: gy - 1, y1: gy + 8 });
+    // Base to capital (8.3 m), or to the jagged break.
+    colCyl(C, F, Math.sin(a) * 16.1, 1.0, Math.cos(a) * 16.1, 0.78, broken ? 6.6 * (1 - broken) + 0.75 : 7.3, stone);
   }
   // Architrave fragments resting on intact neighbors.
   for (const k of [0, 3, 10]) {
     const a0 = ((k + 0.5) / 12) * Math.PI * 2;
     const a1 = ((k + 1.5) / 12) * Math.PI * 2;
     beam(b, F, v(Math.sin(a0) * 16.1, 8.25, Math.cos(a0) * 16.1), v(Math.sin(a1) * 16.1, 8.25, Math.cos(a1) * 16.1), 0.8, PALETTE.stoneWarm);
+    colSpan(C, F, Math.sin(a0) * 16.1, Math.cos(a0) * 16.1, Math.sin(a1) * 16.1, Math.cos(a1) * 16.1, 7.85, 8.65, 0.8, stone);
   }
 
   // Dome ribs: copper gone green. Some reach the oculus, some snapped, a few are stubs.
@@ -150,6 +160,7 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
       pts.push(v(Math.sin(th) * R * Math.cos(ph), base + R * Math.sin(ph), Math.cos(th) * R * Math.cos(ph)).applyMatrix4(F));
     }
     b.add(tube(pts, pts.map(() => 0.42), 6, status[k] < 1), null, { color: jitter(VERDIGRIS, 0.05) });
+    colChain(C, pts, 0.55, { surface: 'stone' }, 0.85);
     // Brass collar where the rib meets the drum.
     b.add(new CylinderGeometry(0.62, 0.62, 0.5, 8), under(F, xf(Math.sin(th) * R, base + 0.1, Math.cos(th) * R)), { color: jitter(PALETTE.brass) });
     if (status[k] < 1 && status[k] > 0.2) {
@@ -160,6 +171,14 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
   }
   // Oculus ring, held by the intact ribs; two horizontal hoops.
   ring(b, under(F, xf(0, base + R * Math.sin(phiTop), 0, Math.PI / 2, 0, 0)), 2.6, 0.38, VERDIGRIS, 32);
+  {
+    const pts: Vector3[] = [];
+    for (let i = 0; i <= 24; i++) {
+      const th = (i / 24) * Math.PI * 2;
+      pts.push(v(Math.sin(th) * 2.6, base + R * Math.sin(phiTop), Math.cos(th) * 2.6).applyMatrix4(F));
+    }
+    colChain(C, pts, 0.5, stone, 0.75);
+  }
   for (const ph of [0.55, 1.0]) {
     // Partial hoops: arcs between intact ribs only.
     const r = R * Math.cos(ph);
@@ -171,6 +190,7 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
         pts.push(v(Math.sin(th) * r, y, Math.cos(th) * r).applyMatrix4(F));
       }
       b.add(tube(pts, pts.map(() => 0.26), 5, false), null, { color: jitter(VERDIGRIS, 0.05) });
+      colChain(C, pts, 0.4, stone, 0.6);
     }
   }
   // Surviving dome panels (both faces), streaked with patina.
@@ -196,6 +216,16 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
     };
     b.add(g, F, { color: streak });
     b.add(g, F, { color: streak, invert: true });
+    // A thin curved sheet: a grid of spheres centered on it, close enough to leave no gap.
+    const rows = Math.max(2, Math.ceil(((ph1 - ph0) * R) / 1.0));
+    for (let i = 0; i <= rows; i++) {
+      const ph = ph0 + ((ph1 - ph0) * i) / rows;
+      const cols = Math.max(2, Math.ceil((Math.abs(th1 - th0) * R * Math.cos(ph)) / 1.0));
+      for (let j = 0; j <= cols; j++) {
+        const th = th0 + ((th1 - th0) * j) / cols;
+        colSphere(C, F, Math.sin(th) * R * Math.cos(ph), base + R * Math.sin(ph), Math.cos(th) * R * Math.cos(ph), 0.75, stone);
+      }
+    }
   };
   panel(6, 7, 0.08, 1.05);
   panel(0, 1, 0.08, 0.7);
@@ -214,6 +244,7 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
   // Tapered barrel as a lathe-like tube with brass bands.
   const barrel = [lower, pivot, upper].map((p) => p.clone().applyMatrix4(F));
   b.add(tube(bezier(barrel, 8), [1.05, 1.0, 0.98, 0.95, 0.9, 0.86, 0.82, 0.78, 0.74], 14, false), null, { color: jitter(PALETTE.brass, 0.04) });
+  colChain(C, [barrel[0], barrel[2]], 0.95, { surface: 'stone' }, 1.1);
   for (const t of [0.05, 0.3, 0.62, 0.97]) {
     const c = lower.clone().lerp(upper, t);
     const q = new Matrix4().lookAt(v(0, 0, 0), dir, v(0, 1, 0));
@@ -226,8 +257,9 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
   post(b, F, pivot.clone().addScaledVector(side, 1.2).addScaledVector(dir, 2), pivot.clone().addScaledVector(side, 1.2).addScaledVector(dir, 6), 0.22, PALETTE.brass, 8);
   sphere(b, under(F, xf(pivot.x - side.x * 1.6, pivot.y - 0.5, pivot.z - side.z * 1.6, 0, 0, 0, 0.9)), BRONZE);
   s.glow.add(new CylinderGeometry(0.7, 0.7, 0.05, 16), under(F, new Matrix4().makeTranslation(upper.x, upper.y, upper.z).multiply(new Matrix4().lookAt(v(0, 0, 0), dir, v(0, 1, 0))).multiply(xf(0, 0, 0.02, Math.PI / 2, 0, 0))), { color: '#9fd8ff', glow: 0.6 });
-  const pw = v(0, 0, -4.5).applyMatrix4(F);
-  out.colliders.push({ x: pw.x, z: pw.z, radius: 2.1, y0: gy - 1, y1: gy + 6 });
+  colBox(C, F, 0, 3.05, -4.5, 3.0, 3.3, 3.0, 0, stone);
+  for (const sx of [-1.1, 1.1]) colBox(C, F, sx, 5.5, -4.5, 0.4, 1.9, 0.4, 0, stone);
+  colSphere(C, F, pivot.x - side.x * 1.6, pivot.y - 0.5, pivot.z - side.z * 1.6, 0.9, stone);
 
   // Armillary sphere on a pedestal in front of the telescope.
   const ac = v(0, 7.0, 6.5);
@@ -241,8 +273,9 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
   ring(b, under(A, xf(0, 0, 0, 0, Math.PI / 2, 0)), 2.6, 0.08, BRONZE, 48);
   sphere(b, under(A, xf(0, 0, 0, 0, 0, 0, 0.7)), '#5c88a8');
   post(b, A, v(-1.6, -2.6, 0.7), v(1.6, 2.6, -0.7), 0.06, PALETTE.brass, 6);
-  const aw = v(ac.x, 0, ac.z).applyMatrix4(F);
-  out.colliders.push({ x: aw.x, z: aw.z, radius: 1.2, y0: gy - 1, y1: gy + 4 });
+  colCyl(C, F, ac.x, 1.0, ac.z, 1.0, 2.9, stone);
+  colCyl(C, F, ac.x, 3.6, ac.z, 0.3, 0.6, stone);
+  colSphere(C, F, ac.x, ac.y, ac.z, 3.25, stone);
 
   // Debris: a fallen column in drums, a fallen rib, scattered blocks.
   const a7 = (7.5 / 12) * Math.PI * 2;
@@ -250,19 +283,18 @@ export function buildObservatory(s: SiteBuilders, shape: IslandShape, terrain: T
     const r = 18.5 + i * 1.3;
     const m = under(F, xf(Math.sin(a7 + 0.15) * r, 0.55, Math.cos(a7 + 0.15) * r, Math.PI / 2, a7 + 0.15 + i * 0.1, 0));
     b.add(new CylinderGeometry(0.55, 0.55, 1.2, 12), m, { color: jitter(PALETTE.stoneWarm) });
+    colBox(C, F, Math.sin(a7 + 0.15) * r, 0.45, Math.cos(a7 + 0.15) * r, 1.1, 1.3, 1.2, a7 + 0.15 + i * 0.1, stone);
   }
-  b.add(tube(bezier([v(-6, 1.7, -9), v(-3, 1.9, -11), v(1, 1.6, -11.5)], 6).map((p) => p.applyMatrix4(F)), [0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42], 6, true), null, { color: jitter(VERDIGRIS) });
+  const fallenRib = bezier([v(-6, 1.7, -9), v(-3, 1.9, -11), v(1, 1.6, -11.5)], 6).map((p) => p.applyMatrix4(F));
+  b.add(tube(fallenRib, [0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42], 6, true), null, { color: jitter(VERDIGRIS) });
+  colChain(C, fallenRib, 0.5, stone, 0.8);
   for (let i = 0; i < 18; i++) {
     const a = rand() * Math.PI * 2;
     const r = 6 + rand() * 18;
     const sz = 0.5 + rand() * 0.9;
-    stoneBlock(b, F, Math.sin(a) * r, r > 17 ? 0.2 : 1.6, Math.cos(a) * r, sz * 1.4, sz, sz, 300 + i, PALETTE.stone, 0.6);
-  }
-  // Drum colliders (skip the doorway).
-  for (let k = 1; k < segs - 1; k++) {
-    const a = ((k + 0.5) / segs) * Math.PI * 2;
-    const w = v(Math.sin(a) * 14, 0, Math.cos(a) * 14).applyMatrix4(F);
-    out.colliders.push({ x: w.x, z: w.z, radius: 1.3, y0: gy - 1, y1: gy + 6.4 });
+    const y = r > 17 ? 0.2 : 1.6;
+    stoneBlock(b, F, Math.sin(a) * r, y, Math.cos(a) * r, sz * 1.4, sz, sz, 300 + i, PALETTE.stone, 0.6);
+    colBox(C, F, Math.sin(a) * r, y - 0.15, Math.cos(a) * r, sz * 1.45, sz + 0.3, sz * 1.05, 0, stone);
   }
 }
 
@@ -274,6 +306,19 @@ export function buildPavilion(s: SiteBuilders, sp: SpireDef, out: SiteOutputs): 
   resetJitter(0x1a7);
   const F = xf(sp.x, sp.topY, sp.z, 0, 0.3, 0);
   const b = s.solid;
+  const C = out.colliders;
+  const wood = { surface: 'wood' as const };
+  const stone = { surface: 'stone' as const };
+  // Platform (walkable), two roof tiers as stepped frustums (hexagons: radius between the
+  // corner and the flat side), the finial, brazier and beacon, the great lantern.
+  colCyl(C, F, 0, -1, 0, 9.3, 1.96, stone);
+  colFrustum(C, F, 0, 5.95, 0, 9.4 * 0.93, 4.2 * 0.93, 2.7, 3, wood);
+  colCyl(C, F, 0, 8.65, 0, 4.0, 0.65, wood);
+  colFrustum(C, F, 0, 9.2, 0, 5.45 * 0.93, 0.5, 2.7, 3, wood);
+  colCyl(C, F, 0, 11.8, 0, 0.4, 2.1, wood);
+  colCyl(C, F, 0, 13.9, 0, 0.9, 0.8, wood);
+  colSphere(C, F, 0, 15.0, 0, 0.8, wood);
+  colCyl(C, F, 0, 2.15, 0, 1.3, 3.5, wood);
   const n = 6;
   const R = 7.2;
   // Hexagonal stone platform with a rim.
@@ -293,8 +338,8 @@ export function buildPavilion(s: SiteBuilders, sp: SpireDef, out: SiteOutputs): 
     beam(b, F, v(p.x, 5.2, p.z), v(q.x, 5.2, q.z), 0.18, PALETTE.gold);
     // A low lattice railing except on the entry side.
     if (k !== 0) beam(b, F, v(p.x, 1.9, p.z), v(q.x, 1.9, q.z), 0.14, PALETTE.lacquer);
-    const w = p.clone().applyMatrix4(F);
-    out.colliders.push({ x: w.x, z: w.z, radius: 0.5, y0: sp.topY - 1, y1: sp.topY + 6.5 });
+    colCyl(C, F, p.x, 0.9, p.z, 0.5, 5.6, wood);
+    if (k !== 0) colSpan(C, F, p.x, p.z, q.x, q.z, 0.95, 2.05, 0.3, wood);
   }
   // Two-tier roof with upturned eaves.
   const roofTier = (y: number, r0: number, r1: number, h: number) => {
@@ -334,6 +379,7 @@ export function buildPavilion(s: SiteBuilders, sp: SpireDef, out: SiteOutputs): 
       const c = corner(k, R + 0.4);
       const yaw = Math.atan2(c.x, c.z);
       bannerCloth(s, under(F, xf(c.x, 0, c.z, 0, yaw, 0)), 0, 6.1, 0.1, 0.9, 3.2, PALETTE.bannerRed, PALETTE.gold);
+      colBox(C, under(F, xf(c.x, 0, c.z, 0, yaw, 0)), 0, 4.5, 0.1, 0.9, 3.2, 0.35, 0, { soft: true });
     }
   }
   windChime(s, F, 0, 6.3, R * 0.5);

@@ -5,6 +5,7 @@ import { Terrain } from '../terrain';
 import { QUALITY } from '../../render/quality';
 import { Dressing } from './Dressing';
 import { roostPlan } from './structures/roostPlan';
+import { signedDistance } from '../colliders';
 
 // Building the whole system takes a second or two; give heavy tests room on a busy machine.
 const SLOW = 30000;
@@ -16,17 +17,54 @@ describe('Dressing system', () => {
   it('exposes well-formed colliders for buildings and big trunks', () => {
     expect(dressing.colliders.length).toBeGreaterThan(50);
     for (const c of dressing.colliders) {
-      expect(c.radius).toBeGreaterThan(0);
-      expect(c.y1).toBeGreaterThan(c.y0);
+      if (c.kind === 'box') expect(Math.min(c.hx, c.hy, c.hz)).toBeGreaterThan(0);
+      else if (c.kind === 'sphere') expect(c.radius).toBeGreaterThan(0);
+      else {
+        expect(c.radius).toBeGreaterThan(0);
+        expect(c.y1).toBeGreaterThan(c.y0);
+      }
       expect(Number.isFinite(c.x) && Number.isFinite(c.z)).toBe(true);
     }
     // The stable walls are solid; its open front is not.
     const st = LAYOUT.stable;
-    const near = (x: number, z: number) => dressing.colliders.some((c) => Math.hypot(c.x - x, c.z - z) < c.radius);
-    expect(near(st.x - 12, st.z - 10)).toBe(true);
-    expect(near(st.x, st.z - 1)).toBe(false);
-    expect(near(LAYOUT.spawn.position[0], LAYOUT.spawn.position[2])).toBe(false);
-    expect(near(LAYOUT.wyvernSpawn.position[0], LAYOUT.wyvernSpawn.position[2])).toBe(false);
+    const gy = terrain.groundAt(st.x, st.z, 1e6)!.y;
+    const solidAt = (x: number, y: number, z: number) => dressing.colliders.some((c) => !c.soft && signedDistance(c, new Vector3(x, y, z), null) < 0);
+    expect(solidAt(st.x - 12, gy + 3, st.z - 10)).toBe(true);
+    expect(solidAt(st.x, gy + 2, st.z - 1)).toBe(false);
+    expect(solidAt(st.x, gy + 2, st.z - 10)).toBe(false);
+    const sp = LAYOUT.spawn.position;
+    const ws = LAYOUT.wyvernSpawn.position;
+    expect(solidAt(sp[0], terrain.groundAt(sp[0], sp[2], 1e6)!.y + 1, sp[2])).toBe(false);
+    expect(solidAt(ws[0], terrain.groundAt(ws[0], ws[2], 1e6)!.y + 2, ws[2])).toBe(false);
+  });
+
+  it('roofs are walkable, the launch deck and its gates leave room for the biggest wyvern', () => {
+    const t = new Terrain(LAYOUT);
+    t.colliders.addAll(dressing.colliders);
+    const plan = roostPlan(LAYOUT, terrain)!;
+    // The stable roof: standing on the ridge from above, within half a meter of the shingles.
+    const st = plan.stable;
+    const mid = { x: st.x - Math.sin(st.yaw) * (st.depth / 2), z: st.z - Math.cos(st.yaw) * (st.depth / 2) };
+    const ridge = t.groundAt(mid.x, mid.z, 1e6)!;
+    expect(ridge.y - plan.ground).toBeGreaterThan(12.5);
+    expect(ridge.y - plan.ground).toBeLessThan(13.6);
+    // Every tower's gallery floor, between the drum and the rail.
+    for (const tw of plan.towers) {
+      const gy = tw.y + 0.7 + tw.height * 0.72;
+      const r = tw.radius * 1.15;
+      const g = t.groundAt(tw.x + r, tw.z, gy + 0.5)!;
+      expect(Math.abs(g.y - (gy + 0.25))).toBeLessThan(0.05);
+    }
+    // Along the deck's centerline, nothing solid between 0.3 m and 6.6 m above the planks.
+    const d = plan.deck;
+    for (let s = -1; s <= d.length; s += 0.5) {
+      const x = d.x + d.dirX * s;
+      const z = d.z + d.dirZ * s;
+      for (let h = 0.3; h <= 6.2; h += 0.4) {
+        const solid = dressing.colliders.some((c) => !c.soft && signedDistance(c, new Vector3(x, d.y + h, z), null) < 0.4);
+        expect(solid, `blocked at ${s.toFixed(1)} m along the deck, ${h.toFixed(1)} m up`).toBe(false);
+      }
+    }
   });
 
   it('lets walkers stand on the launch deck past the rim', () => {

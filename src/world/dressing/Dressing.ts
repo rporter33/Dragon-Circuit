@@ -6,7 +6,7 @@
 // grass never grow through a floor or a stream.
 
 import { Group, Vector3, type PerspectiveCamera, type Scene } from 'three';
-import type { CylinderCollider } from '../../core/types';
+import type { Collider } from '../../core/types';
 import type { DressingSystem } from '../../game/contracts';
 import type { QualityProfile } from '../../render/quality';
 import type { Terrain } from '../terrain';
@@ -19,6 +19,8 @@ import { Waterfalls } from './water/Waterfalls';
 import { planWaterfalls } from './water/waterfallPlan';
 import { HangingRoots } from './roots/HangingRoots';
 import { planRoots, type RootPlan } from './roots/rootPlan';
+import { colliderView } from './colliderView';
+import { deckCollider } from '../colliders';
 
 export interface DressingDeps {
   scene: Scene;
@@ -52,7 +54,8 @@ export interface DressingStats {
 
 export class Dressing implements DressingSystem {
   readonly group = new Group();
-  readonly colliders: CylinderCollider[] = [];
+  /** Collision shapes of everything built (boxes, cylinders, spheres; foliage-soft where noted). */
+  readonly colliders: Collider[] = [];
   readonly decks: Deck[] = [];
   readonly exclusions = new ExclusionSet();
   readonly grass: GrassField;
@@ -150,6 +153,19 @@ export class Dressing implements DressingSystem {
     if (rebuild) this.buildForest();
     else this.forest.setQuality(q);
     this.water.setQuality(q);
+  }
+
+  private colliderDebug: Group | null = null;
+
+  /** Debug: draw every dressing collider (structures, decks, forest) as wireframes. */
+  showColliders(on: boolean): void {
+    if (this.colliderDebug) {
+      this.colliderDebug.removeFromParent();
+      this.colliderDebug = null;
+    }
+    if (!on) return;
+    this.colliderDebug = colliderView([this.colliders, this.forest.colliders, this.decks.map(deckCollider)]);
+    this.group.add(this.colliderDebug);
   }
 
   stats(): DressingStats {

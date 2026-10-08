@@ -15,11 +15,11 @@ import {
   type Material,
   type PerspectiveCamera,
 } from 'three';
-import type { CylinderCollider } from '../../../core/types';
+import type { Collider } from '../../../core/types';
 import type { QualityProfile } from '../../../render/quality';
 import { dressMaterial, swayDepthMaterial } from '../materials';
 import type { PropInstance } from './placement';
-import { SPECIES, SPECIES_IDS, instanceMatrix, type SpeciesId } from './species';
+import { SPECIES, SPECIES_IDS, instanceMatrix, speciesShapes, type SpeciesId } from './species';
 
 interface LodMesh {
   mesh: InstancedMesh;
@@ -57,9 +57,47 @@ export interface ForestStats {
   byLod: [number, number, number];
 }
 
+/** World-space colliders of one placed prop (its species' shapes, placed, turned and scaled). */
+export function instanceColliders(p: PropInstance, out: Collider[]): void {
+  const shapes = speciesShapes(p.species);
+  if (shapes.length === 0) return;
+  const s = p.scale;
+  const sv = p.scale * p.scaleY;
+  const cs = Math.cos(p.yaw);
+  const sn = Math.sin(p.yaw);
+  // Local (x, z) → world, turned by yaw like the instance matrix (Y rotation).
+  const wx = (x: number, z: number) => p.x + (x * cs + z * sn) * s;
+  const wz = (x: number, z: number) => p.z + (-x * sn + z * cs) * s;
+  for (const sh of shapes) {
+    if (sh.t === 'cyl') {
+      const c: Collider = { x: wx(sh.x, sh.z), z: wz(sh.x, sh.z), radius: sh.r * s, y0: p.y + sh.y0 * sv, y1: p.y + sh.y1 * sv, surface: 'wood' };
+      if (sh.soft) c.soft = true;
+      out.push(c);
+    } else if (sh.t === 'ell') {
+      const a = sh.a * s;
+      const b = sh.b * sv;
+      const r = (a + b) / 2;
+      // Centered on the ellipsoid, or with its top where the drawn top is.
+      const y = p.y + sh.y * sv + (sh.top ? b - r : 0);
+      const c: Collider = { kind: 'sphere', x: wx(sh.x, sh.z), y, z: wz(sh.x, sh.z), radius: r, surface: 'rock' };
+      if (sh.soft) {
+        c.soft = true;
+        delete c.surface;
+      }
+      out.push(c);
+    } else {
+      out.push({ kind: 'box', x: wx(sh.x, sh.z), y: p.y + sh.y * sv, z: wz(sh.x, sh.z), hx: sh.hx * s, hy: sh.hy * sv, hz: sh.hz * s, yaw: p.yaw, surface: 'wood' });
+    }
+  }
+}
+
 export class Forest {
   readonly group = new Group();
-  readonly colliders: CylinderCollider[] = [];
+  /**
+   * Every tree's trunk (solid) and canopy (soft), bushes (soft), boulders and logs (solid), for
+   * the instances this quality level plants. A new Forest (quality change) brings a new array.
+   */
+  readonly colliders: Collider[] = [];
   readonly stats: ForestStats = { instances: 0, drawn: [], drawCalls: 0, byLod: [0, 0, 0] };
   private buckets = new Map<SpeciesId, SpeciesBucket>();
   /** Packed per-instance data, sorted by island. */
@@ -92,10 +130,7 @@ export class Forest {
       this.cols.set(p.tint, i * 3);
       this.scaleOf[i] = p.scale;
       counts.set(p.species, (counts.get(p.species) ?? 0) + 1);
-      const spec = SPECIES[p.species];
-      if (spec.trunkRadius * p.scale > 0.55) {
-        this.colliders.push({ x: p.x, z: p.z, radius: spec.trunkRadius * p.scale + 0.25, y0: p.y - 1, y1: p.y + spec.height * p.scale * 0.6 });
-      }
+      instanceColliders(p, this.colliders);
     });
     this.stats.instances = n;
 
