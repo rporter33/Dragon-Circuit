@@ -9,6 +9,7 @@ import { Renderer } from '../render/renderer';
 import { QUALITY } from '../render/quality';
 import { globalUniforms } from '../render/uniforms';
 import { Input, emptyFrame } from '../input/Input';
+import { Haptics } from '../input/haptics';
 import { World } from '../world/World';
 import { Weather } from '../sky/Weather';
 import { Sky } from '../sky/Sky';
@@ -37,6 +38,7 @@ export class Game implements GameActions {
   readonly renderer: Renderer;
   readonly save = new LocalSaveStore();
   readonly input: Input;
+  readonly haptics: Haptics;
   readonly world: World;
   readonly weather: Weather;
   readonly sky: Sky;
@@ -77,7 +79,8 @@ export class Game implements GameActions {
       this.camera.updateProjectionMatrix();
     });
 
-    this.input = new Input(this.renderer.canvas, () => this.settings);
+    this.input = new Input(this.renderer.canvas, () => this.settings, this.events);
+    this.haptics = new Haptics(this.events, this.input, () => this.settings);
     this.world = new World(this.scene, quality);
     this.weather = new Weather(this.scene, this.world.layout, this.events, quality);
     this.sky = new Sky(this.scene, this.renderer, quality);
@@ -149,6 +152,7 @@ export class Game implements GameActions {
   /** Advance the game by dt seconds (sim + presentation) and, unless told not to, render. */
   frame(dt: number, render = true): void {
     const input = this.input.poll(dt);
+    this.haptics.update(dt);
     const simulate = (this.screen === 'play' || this.screen === 'title') && !this.debug.freeze;
 
     if (simulate) {
@@ -341,7 +345,6 @@ export class Game implements GameActions {
   private wireEvents(): void {
     this.events.on('terrainHit', ({ impulse }) => {
       this.cameraRig.shake(Math.min(1, impulse / 25));
-      this.input.rumble(Math.min(1, impulse / 20), 0.4, 200);
     });
   }
 }

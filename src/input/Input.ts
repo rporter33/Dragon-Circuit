@@ -1,11 +1,39 @@
-// Keyboard/mouse + gamepad → InputFrame. (Baseline implementation; the input module owner
-// replaces internals but keeps the InputSystem contract.)
+// Keyboard, mouse and gamepad → one InputFrame per rendered frame.
+//
+// The controller is the primary device: sticks get a radial deadzone, flight axes a square map
+// and an expo curve so small corrections are precise, triggers are analog. Keyboard flight keys
+// ramp in and out so they are never twitchy. Both devices are always read and merged (the
+// stronger deflection wins); `device` only says which one was used LAST, for button prompts,
+// and it switches on deliberate actions only (presses, real stick throws, real mouse travel),
+// never on stick noise.
+//
+// Bindings come from scheme.ts (the single source of truth). Rumble patterns are mixed here
+// (Input owns the actuator) and fed by haptics.ts.
 
+import type { GameEventBus } from '../core/events';
 import type { InputDevice, InputFrame, InputPresses, Settings } from '../core/types';
 import type { InputSystem } from '../game/contracts';
-import { clamp, deadzone } from '../core/math';
+import { clamp } from '../core/math';
+import { KEYS, PAD, PAD_AXIS, PAD_BUTTON, type PadButton } from './scheme';
+import {
+  RepeatTimer,
+  SHAPING,
+  StickNav,
+  TapPulse,
+  circleToSquare,
+  detectPadStyle,
+  dominant,
+  expo,
+  radialDeadzone,
+  rampAxis,
+  triggerDeadzone,
+  wheelNotches,
+  type PadStyle,
+  type Vec2,
+} from './shaping';
+import { HapticMixer, type RumbleLevels, type RumblePulse, type RumbleSink } from './haptics';
 
-function emptyPresses(): InputPresses {
+export function emptyPresses(): InputPresses {
   return {
     confirm: false, back: false, interact: false, pause: false, restart: false, jump: false,
     navUp: false, navDown: false, navLeft: false, navRight: false, tabPrev: false, tabNext: false,
@@ -22,50 +50,148 @@ export function emptyFrame(): InputFrame {
     lookY: 0,
     lookIsRate: false,
     lookActive: false,
+    zoom: 0,
     jumpHeld: false,
     pressed: emptyPresses(),
   };
 }
 
-export class Input implements InputSystem {
-  frame: InputFrame = emptyFrame();
+/**
+ * Radians of camera turn per pixel of mouse travel at look sensitivity 1. Mouse look arrives in
+ * InputFrame.lookX/Y already multiplied by this and the sensitivity (lookIsRate = false).
+ */
+export const MOUSE_RAD_PER_PX = 0.0022;
+/** Mouse travel (px, decaying) that counts as "switched to the mouse". */
+const MOUSE_SWITCH_CAPTURED = 6;
+const MOUSE_SWITCH_FREE = 40;
+/** Zoom rate (notches per second) from fully pulled triggers outside play. */
+const TRIGGER_ZOOM_RATE = 2.5;
+/** Keys whose browser default (scrolling, focus moves, history back) must not fire in-game. */
+const PREVENT_DEFAULT = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Backspace']);
+const BUTTON_COUNT = 17;
+
+const noop = () => {};
+
+/** The bits of GamepadHapticActuator we use, typed loosely across browser versions. */
+interface HapticActuatorLike {
+  effects?: readonly string[];
+  playEffect?(type: string, params: Record<string, number>): Promise<unknown>;
+  reset?(): Promise<unknown>;
+  pulse?(value: number, duration: number): Promise<unknown>;
+}
+
+function isEditable(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el || typeof el.tagName !== 'string') return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
+}
+
+function now(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+export class Input implements InputSystem, RumbleSink {
+  readonly frame: InputFrame = emptyFrame();
   device: InputDevice = 'keyboard';
-  padStyle: 'xbox' | 'playstation' | 'generic' | null = null;
+  padStyle: PadStyle | null = null;
+  /** True while the mouse is captured for look (pointer lock). */
+  pointerLocked = false;
+
+  private target: HTMLElement;
+  private settings: () => Settings;
+  private events?: GameEventBus;
+
+  // Keyboard + mouse buttons (Mouse0..2 only while captured), as KeyboardEvent.code values.
   private keys = new Set<string>();
   private keysDown = new Set<string>();
   private mouseDX = 0;
   private mouseDY = 0;
-  private scripted: Partial<InputFrame> | null = null;
-  private prevButtons: boolean[] = [];
-  private target: HTMLElement;
-  private settings: () => Settings;
+  private wheel = 0;
+  private dragButton = -1;
+  private mouseTravel = 0;
+  private kbActivityAt = -1;
+  private padActivityAt = -1;
 
-  constructor(target: HTMLElement, settings: () => Settings) {
+  // Pointer lock bookkeeping.
+  private wantLock = false;
+  private releasing = false;
+  private escAt = -1e9;
+  private pendingPause = false;
+
+  // Gamepads (standard mapping). Per pad index: held state this poll and last poll.
+  private padIndex = -1;
+  private pad: Gamepad | null = null;
+  private padHeld: boolean[][] = [];
+  private padPrev: boolean[][] = [];
+  private padStickPrev: number[][] = [];
+
+  // Shaping state.
+  private rampPitch = 0;
+  private rampRoll = 0;
+  private rampYaw = 0;
+  private tap = new TapPulse();
+  private sprintLatch = false;
+  private sprintIdle = 0;
+  private stickNav = new StickNav();
+  private repeat = { up: new RepeatTimer(), down: new RepeatTimer(), left: new RepeatTimer(), right: new RepeatTimer() };
+  private ls: Vec2 = { x: 0, y: 0 };
+  private rs: Vec2 = { x: 0, y: 0 };
+  private sq: Vec2 = { x: 0, y: 0 };
+
+  private scripted: Partial<InputFrame> | null = null;
+
+  // Haptics.
+  private mixer = new HapticMixer();
+  private levels: RumbleLevels = { strong: 0, weak: 0, left: 0, right: 0 };
+  private sent: RumbleLevels = { strong: 0, weak: 0, left: 0, right: 0 };
+  private sentAt = -1e9;
+  private sentPad: Gamepad | null = null;
+
+  constructor(target: HTMLElement, settings: () => Settings, events?: GameEventBus) {
     this.target = target;
     this.settings = settings;
-    window.addEventListener('keydown', (e) => {
-      if (!this.keys.has(e.code)) this.keysDown.add(e.code);
-      this.keys.add(e.code);
-      this.device = 'keyboard';
-      if (['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(e.code)) e.preventDefault();
+    this.events = events;
+    if (typeof window === 'undefined') return;
+
+    window.addEventListener('keydown', (e) => this.onKeyDown(e));
+    window.addEventListener('keyup', (e) => {
+      this.keys.delete(e.code);
+      // macOS swallows keyups for other keys while Cmd is held; drop everything when it lifts.
+      if (e.key === 'Meta') this.keys.clear();
     });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
-    window.addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement === this.target) {
-        this.mouseDX += e.movementX;
-        this.mouseDY += e.movementY;
-        this.device = 'keyboard';
-      }
+    window.addEventListener('blur', () => this.releaseAll());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.releaseAll();
     });
+
+    window.addEventListener('mousemove', (e) => this.onMouseMove(e));
+    target.addEventListener('mousedown', (e) => this.onMouseDown(e));
+    window.addEventListener('mouseup', (e) => {
+      this.keys.delete(`Mouse${e.button}`);
+      if (e.button === this.dragButton) this.dragButton = -1;
+    });
+    target.addEventListener('contextmenu', (e) => e.preventDefault());
+    target.addEventListener(
+      'wheel',
+      (e) => {
+        this.wheel += wheelNotches(e.deltaY, e.deltaMode);
+        this.kbActivityAt = now();
+      },
+      { passive: true },
+    );
+    document.addEventListener('pointerlockchange', () => this.onLockChange());
+
+    window.addEventListener('gamepadconnected', (e) => this.onPadConnected(e.gamepad));
+    window.addEventListener('gamepaddisconnected', (e) => this.onPadDisconnected(e.gamepad));
   }
 
+  // --- InputSystem ---------------------------------------------------------------------------
+
   setPointerLock(on: boolean): void {
-    if (on && document.pointerLockElement !== this.target) {
-      this.target.requestPointerLock?.()?.catch?.(() => {});
-    } else if (!on && document.pointerLockElement) {
-      document.exitPointerLock();
-    }
+    this.wantLock = on;
+    if (on) this.requestLock();
+    else this.releaseLock();
   }
 
   setScripted(frame: Partial<InputFrame> | null): void {
@@ -73,110 +199,452 @@ export class Input implements InputSystem {
   }
 
   rumble(strong: number, weak: number, durationMs: number): void {
+    this.pulse({ strong, weak, ms: Math.max(1, durationMs), attackMs: 0, shape: 'flat' });
+  }
+
+  /** RumbleSink: queue one enveloped pulse (haptics.ts plays its patterns through this). */
+  pulse(p: RumblePulse, delayMs = 0): void {
     if (!this.settings().rumble) return;
-    const pad = this.activePad();
-    const act = (pad as unknown as { vibrationActuator?: { playEffect?: Function } })?.vibrationActuator;
-    act?.playEffect?.('dual-rumble', { duration: durationMs, strongMagnitude: clamp(strong, 0, 1), weakMagnitude: clamp(weak, 0, 1) });
+    this.mixer.add(p, delayMs);
   }
 
-  private activePad(): Gamepad | null {
-    const pads = navigator.getGamepads?.() ?? [];
-    for (const p of pads) if (p && p.connected) return p;
-    return null;
+  /** True while play wants the mouse captured (click the view to capture it). */
+  get pointerLockWanted(): boolean {
+    return this.wantLock;
   }
 
-  poll(_dt: number): InputFrame {
-    const f = emptyFrame();
-    const k = (c: string) => this.keys.has(c);
-    const kd = (c: string) => this.keysDown.has(c);
+  poll(dt: number): InputFrame {
     const s = this.settings();
-
-    // Keyboard
-    const kbPitch = (k('KeyS') || k('ArrowDown') ? 1 : 0) - (k('KeyW') || k('ArrowUp') ? 1 : 0);
-    const kbRoll = (k('KeyD') || k('ArrowRight') ? 1 : 0) - (k('KeyA') || k('ArrowLeft') ? 1 : 0);
-    f.flight.pitch = kbPitch * (s.invertPitch ? -1 : 1);
-    f.flight.roll = kbRoll;
-    f.flight.yaw = (k('KeyE') ? 1 : 0) - (k('KeyQ') ? 1 : 0);
-    f.flight.flap = k('Space') ? 1 : 0;
-    f.flight.tuck = k('ShiftLeft') || k('ShiftRight') ? 1 : 0;
-    f.flight.flare = k('ControlLeft') || k('KeyC') ? 1 : 0;
-    f.foot.moveX = kbRoll;
-    f.foot.moveY = (k('KeyW') || k('ArrowUp') ? 1 : 0) - (k('KeyS') || k('ArrowDown') ? 1 : 0);
-    f.foot.sprint = k('ShiftLeft');
-    f.jumpHeld = k('Space');
-    f.lookX = this.mouseDX * 0.0025 * s.lookSensitivity;
-    f.lookY = this.mouseDY * 0.0025 * s.lookSensitivity;
-    f.lookActive = this.mouseDX !== 0 || this.mouseDY !== 0;
-    this.mouseDX = this.mouseDY = 0;
+    const f = this.frame;
     const p = f.pressed;
-    p.confirm = kd('Enter') || kd('Space');
-    p.jump = kd('Space');
-    p.back = kd('Escape') || kd('Backspace');
-    p.pause = kd('Escape');
-    p.interact = kd('KeyF');
-    p.restart = kd('KeyR');
-    p.navUp = kd('ArrowUp') || kd('KeyW');
-    p.navDown = kd('ArrowDown') || kd('KeyS');
-    p.navLeft = kd('ArrowLeft') || kd('KeyA');
-    p.navRight = kd('ArrowRight') || kd('KeyD');
-    p.tabPrev = kd('KeyQ');
-    p.tabNext = kd('KeyE');
-    p.recenter = kd('KeyV');
-    p.toggleHud = kd('KeyH');
-    this.keysDown.clear();
+    this.readPads();
+    const pad = this.pad;
 
-    // Gamepad (standard mapping)
-    const pad = this.activePad();
+    // --- Gamepad axes and triggers ----------------------------------------------------------
+    let rt = 0;
+    let lt = 0;
     if (pad) {
-      const ax = (i: number) => pad.axes[i] ?? 0;
-      const bt = (i: number) => pad.buttons[i]?.value ?? 0;
-      const pressed = (i: number) => (pad.buttons[i]?.pressed ?? false) && !this.prevButtons[i];
-      const lx = deadzone(ax(0), 0.15);
-      const ly = deadzone(ax(1), 0.15);
-      const rx = deadzone(ax(2), 0.15);
-      const ry = deadzone(ax(3), 0.15);
-      const any = Math.abs(lx) + Math.abs(ly) + Math.abs(rx) + Math.abs(ry) + pad.buttons.reduce((a, b) => a + b.value, 0) > 0.2;
-      if (any) this.device = 'gamepad';
-      if (this.device === 'gamepad') {
-        f.flight.pitch = ly * (s.invertPitch ? -1 : 1);
-        f.flight.roll = lx;
-        f.flight.yaw = bt(5) - bt(4);
-        f.flight.flap = bt(7);
-        f.flight.flare = bt(6);
-        f.flight.tuck = bt(0);
-        f.foot.moveX = lx;
-        f.foot.moveY = -ly;
-        f.foot.sprint = bt(10) > 0.5 || bt(1) > 0.5;
-        f.jumpHeld = bt(0) > 0.5;
-        f.lookX = rx * s.lookSensitivity;
-        f.lookY = ry * s.lookSensitivity;
-        f.lookIsRate = true;
-        f.lookActive = Math.abs(rx) + Math.abs(ry) > 0;
-        p.confirm ||= pressed(0);
-        p.jump ||= pressed(0);
-        p.back ||= pressed(1);
-        p.interact ||= pressed(3);
-        p.pause ||= pressed(9);
-        p.restart ||= pressed(8);
-        p.navUp ||= pressed(12);
-        p.navDown ||= pressed(13);
-        p.navLeft ||= pressed(14);
-        p.navRight ||= pressed(15);
-        p.tabPrev ||= pressed(4);
-        p.tabNext ||= pressed(5);
-        p.recenter ||= pressed(11);
-      }
-      this.prevButtons = pad.buttons.map((b) => b.pressed);
-      const id = pad.id.toLowerCase();
-      this.padStyle = /054c|playstation|dualsense|dualshock/.test(id) ? 'playstation' : /xbox|xinput|045e/.test(id) ? 'xbox' : 'generic';
+      const ax = pad.axes;
+      radialDeadzone(ax[PAD_AXIS.LX] ?? 0, ax[PAD_AXIS.LY] ?? 0, SHAPING.stickInner, SHAPING.stickOuter, this.ls);
+      radialDeadzone(ax[PAD_AXIS.RX] ?? 0, ax[PAD_AXIS.RY] ?? 0, SHAPING.stickInner, SHAPING.stickOuter, this.rs);
+      rt = triggerDeadzone(pad.buttons[PAD_BUTTON.RT]?.value ?? 0);
+      lt = triggerDeadzone(pad.buttons[PAD_BUTTON.LT]?.value ?? 0);
+    } else {
+      this.ls.x = this.ls.y = this.rs.x = this.rs.y = 0;
     }
+
+    // --- Flight -------------------------------------------------------------------------------
+    // Keyboard: ramped digital axes. +pitch = nose up, so W (forward) pitches the nose down.
+    const kbPitch = (this.held(KEYS.pitchUp) ? 1 : 0) - (this.held(KEYS.pitchDown) ? 1 : 0);
+    const kbRoll = (this.held(KEYS.rollRight) ? 1 : 0) - (this.held(KEYS.rollLeft) ? 1 : 0);
+    const yawTarget =
+      (this.held(KEYS.yawRight) || this.padHeldAny(PAD.yawRight) ? 1 : 0) -
+      (this.held(KEYS.yawLeft) || this.padHeldAny(PAD.yawLeft) ? 1 : 0);
+    this.rampPitch = rampAxis(this.rampPitch, kbPitch, dt);
+    this.rampRoll = rampAxis(this.rampRoll, kbRoll, dt);
+    this.rampYaw = rampAxis(this.rampYaw, yawTarget, dt);
+
+    // Stick: square-mapped so a full diagonal is full pitch AND full roll, then expo.
+    // Raw stick Y is +1 pulled back, which is nose up — the flight-sim convention.
+    this.sq.x = this.ls.x;
+    this.sq.y = this.ls.y;
+    circleToSquare(this.sq);
+    const padPitch = expo(this.sq.y, SHAPING.flightExpo);
+    const padRoll = expo(this.sq.x, SHAPING.flightExpo);
+
+    const fl = f.flight;
+    const pitch = dominant(this.rampPitch, padPitch);
+    fl.pitch = s.invertPitch ? -pitch : pitch;
+    fl.roll = dominant(this.rampRoll, padRoll);
+    fl.yaw = this.rampYaw;
+    const flapRaw = Math.max(rt, this.held(KEYS.flap) ? 1 : 0);
+    fl.flap = s.holdToFlap ? flapRaw : this.tap.update(flapRaw, dt);
+    fl.flare = Math.max(lt, this.held(KEYS.flare) ? 1 : 0);
+    fl.tuck = this.held(KEYS.tuck) || this.padHeldAny(PAD.tuck) ? 1 : 0;
+
+    // --- On foot ------------------------------------------------------------------------------
+    let kx = (this.held(KEYS.moveRight) ? 1 : 0) - (this.held(KEYS.moveLeft) ? 1 : 0);
+    let ky = (this.held(KEYS.moveForward) ? 1 : 0) - (this.held(KEYS.moveBack) ? 1 : 0);
+    if (kx !== 0 && ky !== 0) {
+      kx *= Math.SQRT1_2;
+      ky *= Math.SQRT1_2;
+    }
+    const ft = f.foot;
+    if (kx !== 0 || ky !== 0) {
+      ft.moveX = kx;
+      ft.moveY = ky;
+    } else {
+      ft.moveX = this.ls.x;
+      ft.moveY = -this.ls.y;
+    }
+    // L3 latches a run until the stick comes back to rest for a moment.
+    if (this.padPressedAny(PAD.sprintLatch)) this.sprintLatch = !this.sprintLatch;
+    if (Math.hypot(this.ls.x, this.ls.y) < 0.15) {
+      this.sprintIdle += dt;
+      if (this.sprintIdle > 0.3) this.sprintLatch = false;
+    } else {
+      this.sprintIdle = 0;
+    }
+    ft.sprint = this.held(KEYS.sprint) || this.padHeldAny(PAD.sprint) || this.sprintLatch;
+    f.jumpHeld = this.held(KEYS.jump) || this.padHeldAny(PAD.jump);
+
+    // --- Look -------------------------------------------------------------------------------
+    const rmag = Math.hypot(this.rs.x, this.rs.y);
+    if (rmag > 0) {
+      const k = (expo(rmag, SHAPING.lookExpo) / rmag) * s.lookSensitivity;
+      f.lookX = this.rs.x * k;
+      f.lookY = this.rs.y * k;
+      f.lookIsRate = true;
+      f.lookActive = true;
+    } else {
+      const k = MOUSE_RAD_PER_PX * s.lookSensitivity;
+      f.lookX = this.mouseDX * k;
+      f.lookY = this.mouseDY * k;
+      f.lookIsRate = false;
+      f.lookActive = this.mouseDX !== 0 || this.mouseDY !== 0;
+    }
+    this.mouseDX = this.mouseDY = 0;
+    this.mouseTravel *= Math.exp(-4 * dt);
+
+    // Wheel always zooms; triggers zoom only outside play (in play they fly).
+    f.zoom = this.wheel + (this.wantLock ? 0 : (rt - lt) * TRIGGER_ZOOM_RATE * dt);
+    this.wheel = 0;
+
+    // --- Presses ------------------------------------------------------------------------------
+    p.confirm = this.down(KEYS.confirm) || this.padPressedAny(PAD.confirm);
+    p.jump = this.down(KEYS.jump) || this.padPressedAny(PAD.jump);
+    p.back = this.down(KEYS.back) || this.padPressedAny(PAD.back);
+    p.pause = this.down(KEYS.pause) || this.padPressedAny(PAD.pause) || this.pendingPause;
+    p.interact = this.down(KEYS.interact) || this.padPressedAny(PAD.interact);
+    p.restart = this.down(KEYS.restart) || this.padPressedAny(PAD.restart);
+    p.recenter = this.down(KEYS.recenter) || this.padPressedAny(PAD.recenter);
+    p.toggleHud = this.down(KEYS.toggleHud) || this.padPressedAny(PAD.toggleHud);
+    p.tabPrev = this.down(KEYS.tabPrev) || this.padPressedAny(PAD.tabPrev);
+    p.tabNext = this.down(KEYS.tabNext) || this.padPressedAny(PAD.tabNext);
+    this.pendingPause = false;
+
+    const nav = this.stickNav.update(this.ls.x, this.ls.y);
+    p.navUp = this.repeat.up.update(this.held(KEYS.navUp) || this.padHeldAny(PAD.navUp) || nav === 'up', dt);
+    p.navDown = this.repeat.down.update(this.held(KEYS.navDown) || this.padHeldAny(PAD.navDown) || nav === 'down', dt);
+    p.navLeft = this.repeat.left.update(this.held(KEYS.navLeft) || this.padHeldAny(PAD.navLeft) || nav === 'left', dt);
+    p.navRight = this.repeat.right.update(this.held(KEYS.navRight) || this.padHeldAny(PAD.navRight) || nav === 'right', dt);
+
+    this.keysDown.clear();
+    this.commitPads();
+
+    // --- Device (for prompts): last deliberate use wins --------------------------------------
+    if (this.pad && this.padActivityAt > this.kbActivityAt) this.device = 'gamepad';
+    else if (!this.pad || this.kbActivityAt > this.padActivityAt) this.device = 'keyboard';
     f.device = this.device;
 
-    if (this.scripted) {
-      const sc = this.scripted;
-      Object.assign(f, { ...sc, flight: { ...f.flight, ...sc.flight }, foot: { ...f.foot, ...sc.foot }, pressed: { ...f.pressed, ...sc.pressed } });
-    }
-    this.frame = f;
+    if (this.scripted) this.applyScripted(this.scripted);
+
+    this.flushHaptics(dt, s);
     return f;
+  }
+
+  // --- Keyboard / mouse -----------------------------------------------------------------------
+
+  private held(codes: readonly string[]): boolean {
+    for (let i = 0; i < codes.length; i++) if (this.keys.has(codes[i]) || this.keysDown.has(codes[i])) return true;
+    return false;
+  }
+
+  private down(codes: readonly string[]): boolean {
+    for (let i = 0; i < codes.length; i++) if (this.keysDown.has(codes[i])) return true;
+    return false;
+  }
+
+  private onKeyDown(e: KeyboardEvent): void {
+    if (isEditable(e.target)) return;
+    const code = e.code;
+    if (!code) return;
+    if (!e.repeat) {
+      if (!this.keys.has(code)) this.keysDown.add(code);
+      this.kbActivityAt = now();
+    }
+    this.keys.add(code);
+    if (code === 'Escape') this.escAt = now();
+    if (PREVENT_DEFAULT.has(code)) e.preventDefault();
+  }
+
+  private onMouseMove(e: MouseEvent): void {
+    // Some platforms report a huge jump on the first event after capture; ignore spikes.
+    const mx = clamp(e.movementX || 0, -300, 300);
+    const my = clamp(e.movementY || 0, -300, 300);
+    const steering = this.pointerLocked || this.dragButton >= 0;
+    if (steering) {
+      this.mouseDX += mx;
+      this.mouseDY += my;
+    }
+    this.mouseTravel += Math.abs(mx) + Math.abs(my);
+    if (this.mouseTravel > (steering ? MOUSE_SWITCH_CAPTURED : MOUSE_SWITCH_FREE)) this.kbActivityAt = now();
+  }
+
+  private onMouseDown(e: MouseEvent): void {
+    this.kbActivityAt = now();
+    if (this.pointerLocked) {
+      // Captured: mouse buttons are game buttons (left flaps, right flares, middle recenters).
+      const code = `Mouse${e.button}`;
+      if (!this.keys.has(code)) this.keysDown.add(code);
+      this.keys.add(code);
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0 && this.wantLock) {
+      // Click the view to capture the mouse for look. This click does not flap.
+      this.requestLock();
+      return;
+    }
+    if (e.button === 1) {
+      this.keysDown.add('Mouse1'); // middle click recenters even without capture
+      e.preventDefault(); // no autoscroll
+      return;
+    }
+    // Uncaptured look: right-drag in play; any drag in menus / the stable.
+    if (e.button === 2 || (e.button === 0 && !this.wantLock)) this.dragButton = e.button;
+  }
+
+  private releaseAll(): void {
+    this.keys.clear();
+    this.keysDown.clear();
+    this.dragButton = -1;
+    this.mouseDX = this.mouseDY = 0;
+  }
+
+  // --- Pointer lock -------------------------------------------------------------------------
+
+  private requestLock(): void {
+    if (typeof document === 'undefined' || this.pointerLocked) return;
+    const el = this.target as HTMLElement & {
+      requestPointerLock(options?: { unadjustedMovement?: boolean }): Promise<void> | void;
+    };
+    if (typeof el.requestPointerLock !== 'function') return;
+    try {
+      // Raw (unaccelerated) mouse motion where supported; fall back to the plain request.
+      const r = el.requestPointerLock({ unadjustedMovement: true });
+      if (r && typeof r.then === 'function') {
+        r.catch(() => {
+          if (!this.wantLock || this.pointerLocked) return;
+          try {
+            const r2 = el.requestPointerLock();
+            if (r2 && typeof r2.catch === 'function') r2.catch(noop);
+          } catch {
+            /* needs a user gesture; the next click on the view will capture */
+          }
+        });
+      }
+    } catch {
+      /* needs a user gesture; the next click on the view will capture */
+    }
+  }
+
+  private releaseLock(): void {
+    if (typeof document === 'undefined') return;
+    if (document.pointerLockElement === this.target) {
+      this.releasing = true;
+      document.exitPointerLock();
+    }
+  }
+
+  private onLockChange(): void {
+    const was = this.pointerLocked;
+    this.pointerLocked = document.pointerLockElement === this.target;
+    if (was && !this.pointerLocked) {
+      this.keys.delete('Mouse0');
+      this.keys.delete('Mouse1');
+      this.keys.delete('Mouse2');
+      if (this.releasing) {
+        this.releasing = false;
+      } else if (this.wantLock && now() - this.escAt > 300) {
+        // The browser took the mouse back (an Esc it swallowed, alt-tab, a system dialog): pause.
+        // If Esc did reach us it already produced the pause press; don't send a second one.
+        this.pendingPause = true;
+      }
+    }
+  }
+
+  // --- Gamepads -------------------------------------------------------------------------------
+
+  private readPads(): void {
+    this.pad = null;
+    let list: (Gamepad | null)[] | null = null;
+    try {
+      list = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : null;
+    } catch {
+      list = null; // insecure context or blocked by permissions policy
+    }
+    if (!list) {
+      this.padStyle = null;
+      return;
+    }
+    let first = -1;
+    const t = now();
+    for (let i = 0; i < list.length; i++) {
+      const g = list[i];
+      if (!g || !g.connected) continue;
+      if (first < 0) first = i;
+      const held = (this.padHeld[i] ??= new Array<boolean>(BUTTON_COUNT).fill(false));
+      const prev = (this.padPrev[i] ??= new Array<boolean>(BUTTON_COUNT).fill(false));
+      const sticks = (this.padStickPrev[i] ??= [0, 0]);
+      let active = false;
+      for (let b = 0; b < BUTTON_COUNT; b++) {
+        const btn = g.buttons[b];
+        // Triggers count as "held" past half travel; their analog value is read separately.
+        const isTrigger = b === PAD_BUTTON.LT || b === PAD_BUTTON.RT;
+        held[b] = btn ? (isTrigger ? btn.value > 0.5 : btn.pressed) : false;
+        if (held[b] && !prev[b]) active = true;
+      }
+      // A deliberate stick throw (not drift): crossing half deflection, or a big fast move.
+      for (let st = 0; st < 2; st++) {
+        const m = Math.hypot(g.axes[st * 2] ?? 0, g.axes[st * 2 + 1] ?? 0);
+        const pm = sticks[st];
+        if ((m > 0.5 && pm <= 0.5) || (m > 0.3 && Math.abs(m - pm) > 0.25)) active = true;
+        sticks[st] = m;
+      }
+      if (active) {
+        this.padIndex = i;
+        this.padActivityAt = t;
+      }
+    }
+    const cur = this.padIndex >= 0 ? list[this.padIndex] : null;
+    if (!cur || !cur.connected) this.padIndex = first;
+    this.pad = this.padIndex >= 0 ? list[this.padIndex] : null;
+    this.padStyle = this.pad ? detectPadStyle(this.pad.id) : null;
+  }
+
+  private commitPads(): void {
+    for (let i = 0; i < this.padHeld.length; i++) {
+      const held = this.padHeld[i];
+      const prev = this.padPrev[i];
+      if (!held || !prev) continue;
+      for (let b = 0; b < BUTTON_COUNT; b++) prev[b] = held[b];
+    }
+  }
+
+  private padHeldAny(buttons: readonly PadButton[]): boolean {
+    if (!this.pad) return false;
+    const held = this.padHeld[this.padIndex];
+    for (let i = 0; i < buttons.length; i++) if (held[PAD_BUTTON[buttons[i]]]) return true;
+    return false;
+  }
+
+  private padPressedAny(buttons: readonly PadButton[]): boolean {
+    if (!this.pad) return false;
+    const held = this.padHeld[this.padIndex];
+    const prev = this.padPrev[this.padIndex];
+    for (let i = 0; i < buttons.length; i++) {
+      const b = PAD_BUTTON[buttons[i]];
+      if (held[b] && !prev[b]) return true;
+    }
+    return false;
+  }
+
+  private onPadConnected(g: Gamepad): void {
+    const style = detectPadStyle(g.id);
+    const name = style === 'xbox' ? 'Xbox controller' : style === 'playstation' ? 'PlayStation controller' : 'Gamepad';
+    this.events?.emit('toast', { text: 'Controller connected', sub: name, icon: 'info' });
+    if (this.padIndex < 0) this.padIndex = g.index;
+  }
+
+  private onPadDisconnected(g: Gamepad): void {
+    this.padHeld[g.index]?.fill(false);
+    this.padPrev[g.index]?.fill(false);
+    const wasActive = g.index === this.padIndex;
+    const wasUsing = wasActive && this.device === 'gamepad';
+    if (wasActive) {
+      this.padIndex = -1;
+      this.padActivityAt = -1;
+      this.sentPad = null;
+    }
+    // Losing the controller mid-flight pauses, like a console would.
+    if (wasUsing && this.wantLock) this.pendingPause = true;
+    this.events?.emit('toast', {
+      text: 'Controller disconnected',
+      sub: wasUsing && this.wantLock ? 'Paused — reconnect it or use keyboard & mouse' : 'Keyboard & mouse active',
+      icon: 'info',
+    });
+  }
+
+  // --- Automation -----------------------------------------------------------------------------
+
+  /** Scripted input replaces device input wholesale, so automated runs are deterministic. */
+  private applyScripted(sc: Partial<InputFrame>): void {
+    const f = this.frame;
+    const fl = f.flight;
+    fl.pitch = fl.roll = fl.yaw = fl.flap = fl.tuck = fl.flare = 0;
+    f.foot.moveX = f.foot.moveY = 0;
+    f.foot.sprint = false;
+    f.lookX = f.lookY = 0;
+    f.lookIsRate = false;
+    f.zoom = 0;
+    f.jumpHeld = false;
+    const p = f.pressed as unknown as Record<string, boolean>;
+    for (const k in p) p[k] = false;
+    if (sc.flight) Object.assign(fl, sc.flight);
+    if (sc.foot) Object.assign(f.foot, sc.foot);
+    if (sc.pressed) Object.assign(p, sc.pressed);
+    if (sc.lookX !== undefined) f.lookX = sc.lookX;
+    if (sc.lookY !== undefined) f.lookY = sc.lookY;
+    if (sc.lookIsRate !== undefined) f.lookIsRate = sc.lookIsRate;
+    f.lookActive = sc.lookActive ?? (f.lookX !== 0 || f.lookY !== 0);
+    if (sc.zoom !== undefined) f.zoom = sc.zoom;
+    if (sc.jumpHeld !== undefined) f.jumpHeld = sc.jumpHeld;
+    if (sc.device) f.device = sc.device;
+  }
+
+  // --- Haptics -------------------------------------------------------------------------------
+
+  private flushHaptics(dt: number, s: Settings): void {
+    if (!s.rumble) this.mixer.clear();
+    this.mixer.advance(dt * 1000);
+    const pad = this.device === 'gamepad' ? this.pad : null;
+    const lv = this.mixer.sample(this.levels);
+    const loud = Math.max(lv.strong, lv.weak, lv.left, lv.right) > 0.01;
+    const t = now();
+    if (!pad || !loud) {
+      const sent = this.sent;
+      if (this.sentPad && Math.max(sent.strong, sent.weak, sent.left, sent.right) > 0) this.stopRumble();
+      return;
+    }
+    const sent = this.sent;
+    const changed =
+      Math.abs(lv.strong - sent.strong) > 0.04 || Math.abs(lv.weak - sent.weak) > 0.04 ||
+      Math.abs(lv.left - sent.left) > 0.04 || Math.abs(lv.right - sent.right) > 0.04;
+    // Refresh long effects before they run out; a new request simply replaces the old one.
+    if (!changed && t - this.sentAt < 80 && this.sentPad === pad) return;
+    const act = (pad as unknown as { vibrationActuator?: HapticActuatorLike | null }).vibrationActuator;
+    if (act?.playEffect) {
+      const triggers = act.effects?.includes('trigger-rumble') ?? false;
+      act
+        .playEffect(triggers ? 'trigger-rumble' : 'dual-rumble', {
+          startDelay: 0,
+          duration: 120,
+          strongMagnitude: lv.strong,
+          weakMagnitude: lv.weak,
+          leftTrigger: lv.left,
+          rightTrigger: lv.right,
+        })
+        .catch(noop);
+    } else {
+      // Firefox's older API: a single-motor pulse.
+      const legacy = (pad as unknown as { hapticActuators?: HapticActuatorLike[] }).hapticActuators?.[0];
+      legacy?.pulse?.(Math.max(lv.strong, lv.weak), 120)?.catch?.(noop);
+    }
+    sent.strong = lv.strong;
+    sent.weak = lv.weak;
+    sent.left = lv.left;
+    sent.right = lv.right;
+    this.sentAt = t;
+    this.sentPad = pad;
+  }
+
+  private stopRumble(): void {
+    const pad = this.sentPad as unknown as { vibrationActuator?: HapticActuatorLike | null } | null;
+    const act = pad?.vibrationActuator;
+    if (act?.reset) act.reset().catch(noop);
+    else act?.playEffect?.('dual-rumble', { duration: 1, strongMagnitude: 0, weakMagnitude: 0 }).catch(noop);
+    this.sent.strong = this.sent.weak = this.sent.left = this.sent.right = 0;
+    this.sentPad = null;
   }
 }
