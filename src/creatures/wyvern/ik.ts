@@ -1,41 +1,87 @@
 // Pure rotation helpers for the procedural animator: aiming a bone, two-bone IK and a
 // critically-damped vector spring. No allocations in the per-frame paths.
 
-import { Matrix4, Quaternion, Vector3 } from 'three';
-import { clamp } from '../../core/math';
-
-const _m0 = new Matrix4();
-const _m1 = new Matrix4();
-const _a = new Vector3();
-const _b = new Vector3();
-const _c = new Vector3();
-const _d = new Vector3();
-const _e = new Vector3();
-const _f = new Vector3();
+import type { Quaternion, Vector3 } from 'three';
 
 /**
  * The rotation that takes `restDir` to `dir` while keeping `restRef` (any vector not parallel to
  * restDir) as close as possible to `ref`. All vectors in the same space; dirs need not be unit.
  */
 export function aimRotation(restDir: Vector3, restRef: Vector3, dir: Vector3, ref: Vector3, out: Quaternion): Quaternion {
-  basis(restDir, restRef, _m0);
-  basis(dir, ref, _m1);
-  // out = B1 · B0ᵀ
-  _m0.transpose();
-  _m1.multiply(_m0);
-  return out.setFromRotationMatrix(_m1);
+  basis(restDir, restRef, _b0);
+  basis(dir, ref, _b1);
+  // R = B1 · B0ᵀ (columns of B are the basis vectors a, b, a × b).
+  const A = _b1;
+  const B = _b0;
+  const m11 = A[0] * B[0] + A[3] * B[3] + A[6] * B[6];
+  const m12 = A[0] * B[1] + A[3] * B[4] + A[6] * B[7];
+  const m13 = A[0] * B[2] + A[3] * B[5] + A[6] * B[8];
+  const m21 = A[1] * B[0] + A[4] * B[3] + A[7] * B[6];
+  const m22 = A[1] * B[1] + A[4] * B[4] + A[7] * B[7];
+  const m23 = A[1] * B[2] + A[4] * B[5] + A[7] * B[8];
+  const m31 = A[2] * B[0] + A[5] * B[3] + A[8] * B[6];
+  const m32 = A[2] * B[1] + A[5] * B[4] + A[8] * B[7];
+  const m33 = A[2] * B[2] + A[5] * B[5] + A[8] * B[8];
+  // Quaternion from a rotation matrix (as Quaternion.setFromRotationMatrix).
+  const tr = m11 + m22 + m33;
+  if (tr > 0) {
+    const s = 0.5 / Math.sqrt(tr + 1.0);
+    return out.set((m32 - m23) * s, (m13 - m31) * s, (m21 - m12) * s, 0.25 / s);
+  }
+  if (m11 > m22 && m11 > m33) {
+    const s = 2.0 * Math.sqrt(1.0 + m11 - m22 - m33);
+    return out.set(0.25 * s, (m12 + m21) / s, (m13 + m31) / s, (m32 - m23) / s);
+  }
+  if (m22 > m33) {
+    const s = 2.0 * Math.sqrt(1.0 + m22 - m11 - m33);
+    return out.set((m12 + m21) / s, 0.25 * s, (m23 + m32) / s, (m13 - m31) / s);
+  }
+  const s = 2.0 * Math.sqrt(1.0 + m33 - m11 - m22);
+  return out.set((m13 + m31) / s, (m23 + m32) / s, 0.25 * s, (m21 - m12) / s);
 }
 
-function basis(dir: Vector3, ref: Vector3, out: Matrix4): void {
-  _a.copy(dir).normalize();
-  _b.copy(ref).addScaledVector(_a, -ref.dot(_a));
-  if (_b.lengthSq() < 1e-10) {
-    // ref parallel to dir: pick any perpendicular.
-    _b.set(_a.y, _a.z, -_a.x).cross(_a);
+const _b0 = new Float64Array(9);
+const _b1 = new Float64Array(9);
+
+/** Orthonormal basis (a = dir, b = ref made perpendicular, a × b) as three columns. */
+function basis(dir: Vector3, ref: Vector3, out: Float64Array): void {
+  // Scalar math (no Vector3 calls that return numbers): this runs ~60 times a frame and every
+  // non-inlined call returning a double boxes it on the heap.
+  let ax = dir.x;
+  let ay = dir.y;
+  let az = dir.z;
+  let l = Math.sqrt(ax * ax + ay * ay + az * az) || 1;
+  ax /= l;
+  ay /= l;
+  az /= l;
+  const d = ref.x * ax + ref.y * ay + ref.z * az;
+  let bx = ref.x - ax * d;
+  let by = ref.y - ay * d;
+  let bz = ref.z - az * d;
+  l = bx * bx + by * by + bz * bz;
+  if (l < 1e-10) {
+    // ref parallel to dir: pick any perpendicular, (ay, az, -ax) × a.
+    const px = ay;
+    const py = az;
+    const pz = -ax;
+    bx = py * az - pz * ay;
+    by = pz * ax - px * az;
+    bz = px * ay - py * ax;
+    l = bx * bx + by * by + bz * bz;
   }
-  _b.normalize();
-  _c.crossVectors(_a, _b);
-  out.makeBasis(_a, _b, _c);
+  l = Math.sqrt(l) || 1;
+  bx /= l;
+  by /= l;
+  bz /= l;
+  out[0] = ax;
+  out[1] = ay;
+  out[2] = az;
+  out[3] = bx;
+  out[4] = by;
+  out[5] = bz;
+  out[6] = ay * bz - az * by;
+  out[7] = az * bx - ax * bz;
+  out[8] = ax * by - ay * bx;
 }
 
 /**
@@ -44,20 +90,40 @@ function basis(dir: Vector3, ref: Vector3, out: Matrix4): void {
  * (0 when reachable).
  */
 export function solveTwoBone(root: Vector3, l1: number, l2: number, target: Vector3, pole: Vector3, outMid: Vector3): number {
-  _d.subVectors(target, root);
-  const dist = _d.length();
+  let dx = target.x - root.x;
+  let dy = target.y - root.y;
+  let dz = target.z - root.z;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   const maxReach = (l1 + l2) * 0.9995;
   const minReach = Math.abs(l1 - l2) * 1.001 + 1e-4;
-  const d = clamp(dist, minReach, maxReach);
-  if (dist > 1e-6) _d.multiplyScalar(1 / dist);
-  else _d.set(0, -1, 0);
+  const d = dist < minReach ? minReach : dist > maxReach ? maxReach : dist;
+  if (dist > 1e-6) {
+    dx /= dist;
+    dy /= dist;
+    dz /= dist;
+  } else {
+    dx = 0;
+    dy = -1;
+    dz = 0;
+  }
   // Distance from root along the root→target line to the foot of the middle joint.
   const a = (l1 * l1 - l2 * l2 + d * d) / (2 * d);
   const h = Math.sqrt(Math.max(0, l1 * l1 - a * a));
-  _e.copy(pole).addScaledVector(_d, -pole.dot(_d));
-  if (_e.lengthSq() < 1e-10) _e.set(_d.y, _d.z, -_d.x).cross(_d);
-  _e.normalize();
-  outMid.copy(root).addScaledVector(_d, a).addScaledVector(_e, h);
+  // Pole made perpendicular to the line.
+  const pd = pole.x * dx + pole.y * dy + pole.z * dz;
+  let ex = pole.x - dx * pd;
+  let ey = pole.y - dy * pd;
+  let ez = pole.z - dz * pd;
+  let el = ex * ex + ey * ey + ez * ez;
+  if (el < 1e-10) {
+    // (dy, dz, -dx) × d
+    ex = dz * dz + dx * dy;
+    ey = -dx * dx - dy * dz;
+    ez = dy * dy - dz * dx;
+    el = ex * ex + ey * ey + ez * ez;
+  }
+  el = Math.sqrt(el) || 1;
+  outMid.set(root.x + dx * a + (ex / el) * h, root.y + dy * a + (ey / el) * h, root.z + dz * a + (ez / el) * h);
   return Math.max(0, dist - maxReach);
 }
 
@@ -65,9 +131,18 @@ export function solveTwoBone(root: Vector3, l1: number, l2: number, target: Vect
 export function rotateAbout(v: Vector3, axis: Vector3, angle: number): Vector3 {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
-  _f.crossVectors(axis, v);
-  const k = axis.dot(v) * (1 - c);
-  return v.multiplyScalar(c).addScaledVector(_f, s).addScaledVector(axis, k);
+  const ax = axis.x;
+  const ay = axis.y;
+  const az = axis.z;
+  const vx = v.x;
+  const vy = v.y;
+  const vz = v.z;
+  const k = (ax * vx + ay * vy + az * vz) * (1 - c);
+  return v.set(
+    vx * c + (ay * vz - az * vy) * s + ax * k,
+    vy * c + (az * vx - ax * vz) * s + ay * k,
+    vz * c + (ax * vy - ay * vx) * s + az * k,
+  );
 }
 
 /** Mirror a left-side rotation to the right side (reflection across the YZ plane). */
@@ -132,10 +207,12 @@ export class Bouncy {
 export function noise1(x: number, seed = 0): number {
   const i = Math.floor(x);
   const f = x - i;
-  const h = (n: number) => {
-    const s = Math.sin((n + seed * 17.13) * 127.1 + seed * 311.7) * 43758.5453;
-    return (s - Math.floor(s)) * 2 - 1;
-  };
   const u = f * f * (3 - 2 * f);
-  return h(i) * (1 - u) + h(i + 1) * u;
+  return hash1(i, seed) * (1 - u) + hash1(i + 1, seed) * u;
+}
+
+/** Hash of an integer lattice point to [-1, 1] (module-level: no closure per call). */
+function hash1(n: number, seed: number): number {
+  const s = Math.sin((n + seed * 17.13) * 127.1 + seed * 311.7) * 43758.5453;
+  return (s - Math.floor(s)) * 2 - 1;
 }
