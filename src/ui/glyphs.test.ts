@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bindingFor } from '../input/scheme';
-import { bindingKeyboardHtml, bindingPadHtml, controlsFor, glyphDevice, glyphHtml, keyGlyph, padGlyph } from './glyphs';
+import { bindingKeyboardHtml, bindingPadHtml, controlLabel, controlsFor, glyphDevice, glyphHtml, keyGlyph, padGlyph } from './glyphs';
 
 describe('glyph device', () => {
   it('follows the last-used device and pad family', () => {
@@ -46,5 +46,18 @@ describe('glyph markup', () => {
     expect(kb).toContain('dw-g-mouse');
     expect(kb).toContain('click to capture');
     expect(bindingPadHtml(bindingFor('tuck')!, 'xbox')).toContain('hold');
+  });
+});
+
+describe('device-correct copy', () => {
+  it('shows the whole WASD cluster for walking on the keyboard, not just W', () => {
+    expect(glyphHtml('move', 'keyboard')).toContain('>WASD<');
+    expect(glyphHtml('flap', 'keyboard')).toContain('>Space<');
+  });
+  it('drops gamepad-only notes from keyboard control labels', () => {
+    expect(controlLabel('Run (hold, or click L3 to keep running)', 'keyboard')).toBe('Run (hold)');
+    expect(controlLabel('Run (hold, or click L3 to keep running)', 'xbox')).toBe('Run (hold, or click L3 to keep running)');
+    expect(controlLabel('Dismount (when landed)', 'keyboard')).toBe('Dismount (when landed)');
+    expect(controlLabel('Turn (right stick)', 'keyboard')).toBe('Turn');
   });
 });

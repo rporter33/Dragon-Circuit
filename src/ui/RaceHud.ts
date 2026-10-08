@@ -1,6 +1,10 @@
 // The race layer of the HUD: "fly through the gate", the countdown, the timer with ring count,
 // a split delta that flashes green (ahead of your best) or red (behind) at each ring, an arrow
 // at the screen edge toward the next ring, and the alarm when a ring is missed.
+//
+// The centre of the screen shows one thing at a time: the RACE READY card while a race is armed,
+// then the 3-2-1 (the card steps aside), then GO. Arming another race, standing down or aborting
+// clears a stale count at once. Missing the start gate says so (and how to try again).
 
 import { Vector3 } from 'three';
 import type { GameEventBus } from '../core/events';
@@ -9,15 +13,25 @@ import type { GameView, RaceDef } from '../game/contracts';
 import { LiveClass, LiveStyle, LiveText, div, fromHtml, h } from './dom';
 import { formatDelta, formatTime, titleCase } from './format';
 import { ICONS, RULE } from './icons';
+import type { NoticeSpec } from './notices';
 
 export interface RaceHudCtx {
   events: GameEventBus;
   reducedMotion(): boolean;
-  /** Announce something in the HUD's toast stack. */
-  toast(text: string, sub?: string): void;
+  /** Announce something through the HUD's notice queue. */
+  notify(spec: NoticeSpec): void;
 }
 
 const tmp = new Vector3();
+/** Within this distance of the gate, standing down past its plane means the gate was missed (m). */
+const MISSED_GATE_RANGE = 160;
+
+/** Why a race ended early, as the notice says it (unknown reasons say nothing). */
+const ABORT_LINES: Record<string, string> = {
+  'left-course': 'You strayed too far from the course',
+  respawn: 'You fell into the clouds',
+  dismount: 'You dismounted',
+};
 
 export class RaceHud {
   readonly root: HTMLElement;
@@ -35,9 +49,13 @@ export class RaceHud {
   private gate: HTMLElement;
   private gateName: HTMLElement;
   private gateOn: LiveClass;
+  /** A race stood down this frame (raceDisarmed): judged against the player's position in update. */
+  private disarmedId: string | null = null;
 
   private count: HTMLElement;
   private countLeft = 0;
+  /** Between the first count of a countdown and GO (or a stand-down). */
+  private counting = false;
 
   private edge: HTMLElement;
   private edgeOn: LiveClass;
@@ -50,7 +68,8 @@ export class RaceHud {
   /** The race the HUD is showing (from events; the race system may be idle again by now). */
   private raceId: string | null = null;
   private armed = false;
-  private armedAge = 0;
+  /** The clock is running (raceStart seen): only then is an abort worth a notice. */
+  private started = false;
   private finishedLeft = 0;
   private ringIndex = 0;
   private ringTotal = 0;
@@ -104,19 +123,29 @@ export class RaceHud {
     ev.on('raceArmed', (e: GameEvents['raceArmed']) => {
       this.raceId = e.raceId;
       this.armed = true;
-      this.armedAge = 0;
+      this.started = false;
       this.finishedLeft = 0;
       this.ringIndex = 0;
       this.ringTotal = 0;
+      this.disarmedId = null;
+      this.clearCount();
+    });
+    ev.on('raceDisarmed', (e: GameEvents['raceDisarmed']) => {
+      if (this.raceId !== e.raceId) return;
+      this.armed = false;
+      this.clearCount();
+      this.disarmedId = e.raceId;
     });
     ev.on('raceCountdown', (e: GameEvents['raceCountdown']) => {
       this.raceId = e.raceId;
-      this.armed = false;
+      this.counting = true;
       this.showCount(String(e.count), false);
     });
     ev.on('raceStart', (e: GameEvents['raceStart']) => {
       this.raceId = e.raceId;
       this.armed = false;
+      this.started = true;
+      this.counting = false;
       this.finishedLeft = 0;
       this.ringIndex = 0;
       this.showCount('Go!', true);
@@ -132,20 +161,39 @@ export class RaceHud {
     });
     ev.on('raceFinish', (e: GameEvents['raceFinish']) => {
       this.finalMs = e.timeMs;
+      this.started = false;
       this.finishedLeft = 2;
       this.missedLeft = 0;
       this.showCount('Finish', true);
     });
     ev.on('raceAbort', (e: GameEvents['raceAbort']) => {
-      const wasRunning = this.raceId !== null;
+      const wasRunning = this.started;
+      this.started = false;
       this.armed = false;
       this.finishedLeft = 0;
       this.missedLeft = 0;
+      this.clearCount();
       if (e.reason !== 'restart') this.raceId = null;
-      if (wasRunning && (e.reason === 'left-course' || e.reason === 'respawn')) {
-        this.ctx.toast('Race abandoned', e.reason === 'left-course' ? 'You strayed too far from the course' : 'You fell into the clouds');
+      const reason: string = e.reason;
+      if (reason === 'missed-gate') {
+        this.missedGate(e.raceId);
+        return;
       }
+      const line = ABORT_LINES[reason];
+      if (wasRunning && line) this.ctx.notify({ key: `race-abort:${e.raceId}`, text: 'Race abandoned', sub: line, icon: 'race', priority: 2 });
     });
+  }
+
+  /** Hide the 3-2-1 / GO at once (another race armed, stood down or aborted). */
+  private clearCount(): void {
+    this.counting = false;
+    this.countLeft = 0;
+    this.count.classList.remove('is-tick', 'is-go');
+    this.count.style.opacity = '';
+  }
+
+  private missedGate(raceId: string): void {
+    this.ctx.notify({ key: `missed-gate:${raceId}`, text: 'Missed the start gate', sub: 'Turn back and fly through it to start', icon: 'race', priority: 2, life: 5 });
   }
 
   private showCount(text: string, go: boolean): void {
@@ -213,14 +261,23 @@ export class RaceHud {
       }
     }
 
-    // There is no "disarm" event: the gate banner stays while you are near that start (or for
-    // a few seconds after arming) and goes once you fly off.
-    if (this.armed) {
-      this.armedAge += dt;
-      const near = races.nearbyStart(view.player.position)?.id === this.raceId;
-      if (!near && this.armedAge > 6) this.armed = false;
+    // Stood down: past the gate's plane and close to it means it was missed (rather than left).
+    if (this.disarmedId) {
+      const d = races.defs.find((r) => r.id === this.disarmedId);
+      this.disarmedId = null;
+      if (d && passedGate(d, view.player.position)) this.missedGate(d.id);
+      if (this.raceId === d?.id && races.state === 'idle') this.raceId = null;
     }
-    this.gateOn.set(hudVisible && this.armed && races.state !== 'running');
+    // A race system that stands down silently (no raceDisarmed) goes idle: same judgement.
+    if (this.armed && races.state === 'idle' && this.raceId) {
+      this.armed = false;
+      this.clearCount();
+      const d = races.defs.find((r) => r.id === this.raceId);
+      if (d && passedGate(d, view.player.position)) this.missedGate(d.id);
+      this.raceId = null;
+    }
+    // Once the 3-2-1 starts, the card steps aside: one thing in the middle of the screen.
+    this.gateOn.set(hudVisible && this.armed && races.state === 'countdown' && !this.counting);
     if (this.armed) this.gateName.textContent = def?.name ?? titleCase(this.raceId ?? '');
 
     this.missedOn.set(hudVisible && running && this.missedLeft > 0);
@@ -259,4 +316,13 @@ export class RaceHud {
     const rot = Math.round(90 - (a * 180) / Math.PI);
     this.edgePos.set(`translate(${px}px,${py}px) rotate(${rot}deg)`);
   }
+}
+
+/** True when `p` is past the start gate's plane, near enough that it flew by the gate. */
+export function passedGate(def: Pick<RaceDef, 'start'>, p: { x: number; y: number; z: number }): boolean {
+  const [gx, gy, gz] = def.start.position;
+  const nx = Math.sin(def.start.yaw);
+  const nz = Math.cos(def.start.yaw);
+  const side = (p.x - gx) * nx + (p.z - gz) * nz;
+  return side > 0 && Math.hypot(p.x - gx, p.y - gy, p.z - gz) < MISSED_GATE_RANGE;
 }

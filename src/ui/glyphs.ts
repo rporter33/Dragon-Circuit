@@ -240,7 +240,10 @@ export function glyphHtml(action: ControlAction, dev: GlyphDevice, all = false):
   if (action === 'navigate' && !all) return dev === 'keyboard' ? keyGlyph('ArrowUp') + keyGlyph('ArrowDown') : padGlyph('DPad', dev);
   const c = controlsFor(action, dev, all);
   if (dev === 'keyboard') {
-    if (all) return bindingKeyboardHtml(bindingFor(action));
+    const b = bindingFor(action);
+    if (all) return bindingKeyboardHtml(b);
+    // A cluster the scheme names as one word ("WASD") reads better than its first key ("W").
+    if (b && /^[A-Z]{3,5}$/.test(b.keyboard)) return keyWordGlyph(b.keyboard);
     return c.keys.map(keyGlyph).join(SEP);
   }
   return c.pad.map((p) => padGlyph(p, dev, c.axis)).join(SEP);
@@ -265,4 +268,24 @@ export function bindingPadHtml(b: Binding, style: PadStyle): string {
   const axis = b.xbox.includes('↕') ? '↕' : b.xbox.includes('↔') ? '↔' : '';
   const glyphs = [...new Set(b.pad)].map((p) => padGlyph(p, style, axis)).join(SEP);
   return b.xbox.includes('(hold)') ? `${glyphs}<span class="dw-glyph-note">hold</span>` : glyphs;
+}
+
+/** Pad controls a label might mention (a note that only makes sense with a controller). */
+const PAD_WORDS = /\b(L3|R3|LS|RS|LB|RB|LT|RT|D-pad|stick)\b/;
+
+/**
+ * A control's description for one device: notes that name gamepad controls are dropped on the
+ * keyboard page ("Run (hold, or click L3 to keep running)" → "Run (hold)").
+ */
+export function controlLabel(label: string, dev: GlyphDevice): string {
+  if (dev !== 'keyboard') return label;
+  return label
+    .replace(/\s*\(([^)]*)\)/g, (_all, inner: string) => {
+      const kept = inner
+        .split(/,\s*/)
+        .filter((part) => !PAD_WORDS.test(part))
+        .join(', ');
+      return kept ? ` (${kept})` : '';
+    })
+    .trim();
 }

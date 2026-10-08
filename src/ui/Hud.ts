@@ -1,33 +1,54 @@
 // The in-flight HUD: deliberately sparse. A stamina arc around the wing emblem (only while it
-// is being spent or refilling), airspeed and altitude, a compass ribbon with the race waypoint
-// and nearby landmarks, the one context prompt, toasts, a discovery banner and a stall warning.
-// Readouts fade back when nothing is happening. Per frame it only writes to the DOM when a
-// displayed value changes, and it allocates nothing in steady state.
+// is being spent or refilling, or while the wyvern is Rested), airspeed and altitude, a compass
+// ribbon with the race waypoint and nearby landmarks, the one context prompt, corner notices, a
+// discovery banner and a stall warning. Readouts fade back when nothing is happening. Per frame
+// it only writes to the DOM when a displayed value changes, and it allocates nothing in steady
+// state.
+//
+// Every announcement goes through one NoticeQueue (corner notices) or BannerQueue (the centred
+// title card), so a pickup, unlock or discovery is announced exactly once, however many systems
+// report it (see notices.ts).
 
 import { Vector3 } from 'three';
 import type { GameEventBus } from '../core/events';
-import type { GameEvents, PlayerMode } from '../core/types';
-import type { GameView, PromptAction } from '../game/contracts';
+import type { GameEvents } from '../core/types';
+import type { GameView, PromptAction, SaveData } from '../game/contracts';
+import { bindingFor, type ControlAction } from '../input/scheme';
+import { COLLECTIBLE_SPECS } from '../progression/collectibleDefs';
+import { slotLabel } from '../progression/unlocks';
 import { LAYOUT } from '../world/layout';
-import { CARDINALS, headingFromYaw, headingOf, relativeBearing, ribbonPosition } from './compass';
+import { CARDINALS, headingFromYaw, headingOf, layoutLabels, relativeBearing, ribbonPosition, type LabelCandidate } from './compass';
 import { LiveClass, LiveStyle, LiveText, div, fromHtml, h } from './dom';
 import { formatDistance, kmh } from './format';
 import { ICONS, RULE } from './icons';
+import { BannerQueue, NoticeQueue, type Notice, type NoticeSpec } from './notices';
 
 const DEG = Math.PI / 180;
 /** Half the angle the compass ribbon shows, each side of center. */
 const HALF_SPAN = 60 * DEG;
 /** Compass ribbon width in --u units (must match .dw-compass width in ui.css). */
 const RIBBON_U = 36;
+/** Mark labels: font size in --u (.dw-mark-label), average glyph width and padding in em. */
+const LABEL_EM = 0.74;
+const LABEL_CHAR_EM = 0.53;
+const LABEL_PAD_EM = 1.5;
 /** Seconds of calm before the readouts fade back. */
 const IDLE_AFTER = 5;
 /** Stamina arc: 300° of a circle, gap at the bottom. */
 const ARC_R = 42;
 const ARC_C = 2 * Math.PI * ARC_R;
 const ARC_LEN = (ARC_C * 300) / 360;
-/** Prompts that are flying tips (hidden when control hints are off). Interactions always show. */
-const TIP_ACTIONS: ReadonlySet<PromptAction> = new Set(['flap', 'flare', 'tuck']);
-const FLIGHT_MODES: ReadonlySet<PlayerMode> = new Set(['flying', 'falling']);
+/** The Rested ring hugs the outside of the stamina arc. */
+const REST_R = 49;
+const REST_C = 2 * Math.PI * REST_R;
+const REST_LEN = (REST_C * 300) / 360;
+/** Prompts that are flying tips (hidden when tips are off). Interactions always show. */
+const TIP_ACTIONS: ReadonlySet<PromptAction> = new Set<PromptAction>(['flap', 'flare', 'tuck', 'rest']);
+/** "Click to look around" shows this long each time it is needed, then steps aside. */
+const POINTER_HINT_SECONDS = 6;
+/** Past this far beyond the boundary radius the "winds turn you back" notice shows (once per trip). */
+const BOUNDARY_NOTICE_IN = -150;
+const BOUNDARY_NOTICE_REARM = -500;
 
 export interface HudCtx {
   events: GameEventBus;
@@ -43,6 +64,7 @@ interface Marker {
   realName: string;
   lastDist: number;
   lastName: string;
+  text: string;
   el: HTMLElement;
   label: LiveText;
   pos: LiveStyle;
@@ -51,19 +73,14 @@ interface Marker {
   near: LiveClass;
   unknown: LiveClass;
   lastX: number;
+  /** This frame: wants a label, its ribbon x (px), priority. */
+  wants: boolean;
+  lx: number;
+  priority: number;
 }
 
-interface Toast {
-  el: HTMLElement;
-  age: number;
-  life: number;
-}
-
-interface BannerItem {
-  kicker: string;
-  name: string;
-  sub: string;
-}
+/** Where a feather or relic was found, as a caption ("Behind the Roost’s waterfall"). */
+const PLACE_OF = new Map(COLLECTIBLE_SPECS.map((s) => [s.id, s.where.charAt(0).toUpperCase() + s.where.slice(1)]));
 
 /** Pixel size of one --u at the current viewport (mirrors the clamp() in ui.css). */
 export function unitPx(): number {
@@ -71,11 +88,23 @@ export function unitPx(): number {
   return Math.min(40, Math.max(14, vh * 0.01667));
 }
 
+/** Prompt actions that are not a button: drawn as an emblem instead of a glyph. */
+function isButtonAction(action: PromptAction): boolean {
+  return !!bindingFor(action as ControlAction);
+}
+
 export class Hud {
   readonly root: HTMLElement;
-  /** Toasts sit outside the HUD layer so they still show over menus. */
+  /** Notices sit outside the HUD layer so they still show over menus. */
   readonly toastLayer: HTMLElement;
+  /** The one queue every corner notice goes through. */
+  readonly notices = new NoticeQueue();
   private ctx: HudCtx;
+  private noticeEls = new Map<number, { el: HTMLElement; t: HTMLElement; s: HTMLElement; rev: number }>();
+  private leaving: { el: HTMLElement; left: number }[] = [];
+  /** Latest view (event handlers run between frames and read it). */
+  private view: GameView | null = null;
+  private saveData: SaveData | null = null;
 
   // Flight info.
   private flightInfo: HTMLElement;
@@ -85,14 +114,20 @@ export class Hud {
   private alt: LiveText;
   private vario: HTMLElement;
   private varioState = '';
+  private lift: LiveClass;
+  private liftAir = new Vector3();
   private gauge: HTMLElement;
   private gaugeFill: SVGCircleElement;
   private gaugeDash: LiveStyle;
+  private restDash: LiveStyle;
   private gaugeFull: LiveClass;
   private gaugeLow: LiveClass;
   private gaugeWinded: LiveClass;
+  private gaugeRested: LiveClass;
+  private restNote: LiveClass;
   private fullTime = 0;
   private lastArc = -1;
+  private lastRest = -1;
   private lastStrip = NaN;
 
   // Compass.
@@ -102,17 +137,22 @@ export class Hud {
   private strip: HTMLElement;
   private stripPos: LiveStyle;
   private markers: Marker[] = [];
+  private allMarkers: Marker[] = [];
   private home: Marker;
   private waypoint: Marker;
   private waypointOn: LiveClass;
   private startGate: Marker;
   private wp = new Vector3();
   private ribbon = { x: 0, edge: false };
+  private candidates: LabelCandidate[] = [];
+  private candidateOf: Marker[] = [];
+  private rows: number[] = [];
 
   // Prompt, stall, pointer hint.
   private prompt: HTMLElement;
   private promptOn: LiveClass;
   private promptWarn: LiveClass;
+  private promptCalm: LiveClass;
   private promptGlyph: HTMLElement;
   private promptText: LiveText;
   private promptAction: string | null = null;
@@ -120,21 +160,21 @@ export class Hud {
   private stallOn: LiveClass;
   private pointerHint: HTMLElement;
   private pointerOn: LiveClass;
+  private pointerLeft = 0;
+  private pointerWasNeeded = false;
 
-  // Toasts and banners.
-  private toasts: Toast[] = [];
+  // Banner.
   private banner: HTMLElement;
   private bannerKicker: HTMLElement;
   private bannerName: HTMLElement;
   private bannerSub: HTMLElement;
-  private bannerQueue: BannerItem[] = [];
-  /** Seconds the current banner has left; 0 = none showing. */
-  private bannerLeft = 0;
+  readonly banners = new BannerQueue();
 
   private idleTime = 0;
   private lastSpeed = 0;
   private visible = true;
   private unit = unitPx();
+  private beyondBoundary = false;
 
   constructor(ctx: HudCtx) {
     this.ctx = ctx;
@@ -167,11 +207,12 @@ export class Hud {
       const el = div(`dw-mark ${cls}`, fromHtml(icon));
       marks.append(el);
       labels.append(label);
-      return {
+      const m: Marker = {
         id, x, z, name, el,
         realName: name,
         lastDist: -1,
         lastName: '',
+        text: '',
         label: new LiveText(label),
         pos: new LiveStyle(el, 'transform'),
         labelPos: new LiveStyle(label, 'transform'),
@@ -179,7 +220,12 @@ export class Hud {
         near: new LiveClass(label, 'is-on'),
         unknown: new LiveClass(el, 'is-unknown'),
         lastX: NaN,
+        wants: false,
+        lx: 0,
+        priority: 0,
       };
+      this.allMarkers.push(m);
+      return m;
     };
     for (const l of LAYOUT.landmarks) {
       if (l.id === 'roost') continue;
@@ -200,22 +246,32 @@ export class Hud {
       `<svg class="dw-gauge-ring" viewBox="0 0 100 100" aria-hidden="true">
         <defs><linearGradient id="dw-stamina-grad" x1="0" y1="1" x2="1" y2="0">
           <stop offset="0" stop-color="#c88f3a"/><stop offset=".55" stop-color="#ffd27e"/><stop offset="1" stop-color="#fff2cf"/>
+        </linearGradient>
+        <linearGradient id="dw-rest-grad" x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0" stop-color="#ff9a52"/><stop offset="1" stop-color="#ffd59a"/>
         </linearGradient></defs>
         <circle class="dw-gauge-track" cx="50" cy="50" r="${ARC_R}" transform="rotate(120 50 50)" stroke-dasharray="${ARC_LEN.toFixed(2)} ${ARC_C.toFixed(2)}"/>
         <circle class="dw-gauge-fill" cx="50" cy="50" r="${ARC_R}" transform="rotate(120 50 50)" stroke-dasharray="${ARC_LEN.toFixed(2)} ${ARC_C.toFixed(2)}"/>
+        <circle class="dw-gauge-rest" cx="50" cy="50" r="${REST_R}" transform="rotate(120 50 50)" stroke-dasharray="0 ${REST_C.toFixed(2)}"/>
       </svg>`,
     );
     this.gaugeFill = ring.querySelector('.dw-gauge-fill') as SVGCircleElement;
     this.gaugeDash = new LiveStyle(this.gaugeFill, 'stroke-dasharray');
+    this.restDash = new LiveStyle(ring.querySelector('.dw-gauge-rest') as SVGCircleElement, 'stroke-dasharray');
     this.gauge = div('dw-gauge is-full', ring, div('dw-gauge-face', fromHtml(ICONS.wing)));
     this.gaugeFull = new LiveClass(this.gauge, 'is-full');
     this.gaugeLow = new LiveClass(this.gauge, 'is-low');
     this.gaugeWinded = new LiveClass(this.gauge, 'is-winded');
+    this.gaugeRested = new LiveClass(this.gauge, 'is-rested');
 
     const speedV = h('span', { class: 'dw-readout-v', text: '0' });
     const altV = h('span', { class: 'dw-readout-v', text: '0' });
     this.vario = fromHtml(ICONS.arrow);
     this.vario.classList.add('dw-vario', 'is-level');
+    const liftEl = h('span', { class: 'dw-lift', text: 'Rising air' });
+    this.lift = new LiveClass(liftEl, 'is-on');
+    const restNote = h('span', { class: 'dw-restnote', text: 'Glide or land to rest' });
+    this.restNote = new LiveClass(restNote, 'is-on');
     const readouts = div(
       'dw-readouts dw-fadeable',
       div('dw-readout dw-readout--speed', speedV, h('span', { class: 'dw-readout-u', text: 'km/h' })),
@@ -225,7 +281,7 @@ export class Hud {
     this.alt = new LiveText(altV);
     this.readouts = new LiveClass(readouts, 'is-gone');
     this.readoutsIdle = new LiveClass(readouts, 'is-idle');
-    this.flightInfo = div('dw-flightinfo', readouts, this.gauge);
+    this.flightInfo = div('dw-flightinfo', div('dw-flightinfo-notes', liftEl, restNote), readouts, this.gauge);
 
     // --- Prompt, stall, pointer hint ---------------------------------------------------------
     this.promptGlyph = h('span', { class: 'dw-hint-g' });
@@ -234,6 +290,7 @@ export class Hud {
     this.promptText = new LiveText(promptText);
     this.promptOn = new LiveClass(this.prompt, 'is-on');
     this.promptWarn = new LiveClass(this.prompt, 'is-warn');
+    this.promptCalm = new LiveClass(this.prompt, 'is-calm');
 
     this.stall = div('dw-stall', fromHtml(ICONS.stall), h('span', { text: 'STALL' }));
     this.stallOn = new LiveClass(this.stall, 'is-on');
@@ -255,7 +312,13 @@ export class Hud {
     this.toastLayer = div('dw-toasts');
 
     this.subscribe(ctx.events);
-    if (typeof window !== 'undefined') window.addEventListener('resize', () => (this.unit = unitPx()));
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', () => (this.unit = unitPx()));
+      // Moving the mouse while it isn't captured brings "click to look around" back briefly.
+      window.addEventListener('mousemove', () => {
+        if (this.pointerWasNeeded && this.pointerLeft < 2.5) this.pointerLeft = 2.5;
+      });
+    }
   }
 
   setVisible(on: boolean): void {
@@ -264,36 +327,68 @@ export class Hud {
     this.root.classList.toggle('is-off', !on);
   }
 
-  /** Queue a toast (also used by the Ui for its own notices). */
-  toast(text: string, sub = '', icon: keyof typeof ICONS = 'info', variant = ''): void {
-    const el = div(
-      `dw-toast${variant ? ` dw-toast--${variant}` : ''}`,
-      div('dw-toast-icon', fromHtml(ICONS[icon])),
-      div('dw-toast-text', h('span', { class: 'dw-toast-t', text }), sub ? h('span', { class: 'dw-toast-s', text: sub }) : null),
-    );
-    this.toastLayer.append(el);
-    this.toasts.push({ el, age: 0, life: 4.2 });
-    // Keep the stack short: retire the oldest early.
-    const live = this.toasts.filter((t) => t.age < t.life);
-    if (live.length > 4) live[0].life = Math.min(live[0].life, live[0].age + 0.01);
+  /** Announce something in the corner (the Ui and the race HUD use this too). */
+  notify(spec: NoticeSpec): void {
+    this.notices.push(spec);
+  }
+
+  /** Queue a toast (kept for showcases and older callers). */
+  toast(text: string, sub = '', icon: NoticeSpec['icon'] = 'info', variant = ''): void {
+    this.notices.push({ key: `toast:${text}`, aliases: [text], text, sub, icon, variant });
   }
 
   /** A centered title card: "Discovered — Cascade Isle". */
   showBanner(kicker: string, name: string, sub = ''): void {
-    this.bannerQueue.push({ kicker, name, sub });
+    this.banners.push({ key: `${kicker}:${name}`, kicker, name, sub });
+  }
+
+  private racing(): boolean {
+    const r = this.view?.races;
+    return !!r && r.activeId !== null && (r.state === 'countdown' || r.state === 'running');
   }
 
   private subscribe(ev: GameEventBus): void {
     ev.on('flapRefused', () => this.pulseGauge());
-    ev.on('toast', (e: GameEvents['toast']) => this.toast(e.text, e.sub ?? '', e.icon ?? 'info'));
-    ev.on('collect', (e: GameEvents['collect']) => {
-      if (e.kind === 'feather') this.toast(`Feather ${e.total} of ${e.ofTotal}`, e.name, 'feather');
-      else this.toast(`Relic found: ${e.name}`, `${e.total} of ${e.ofTotal} relics`, 'relic', 'relic');
+    // Generic notices from any system. Typed events below own pickups, unlocks and discoveries;
+    // when an emitter also sends a plain toast for them, the queue merges it away (same text).
+    ev.on('toast', (e: GameEvents['toast']) => {
+      const icon = e.icon ?? 'info';
+      this.notices.push({ key: `toast:${e.text}`, aliases: [e.text], text: e.text, sub: e.sub ?? '', icon, always: icon === 'info', priority: icon === 'info' ? 2 : 1 });
     });
-    ev.on('unlock', (e: GameEvents['unlock']) => this.toast(`Unlocked: ${e.name}`, 'New look in the Stable', 'unlock', 'unlock'));
+    ev.on('collect', (e: GameEvents['collect']) => {
+      const place = PLACE_OF.get(e.id) ?? '';
+      if (e.kind === 'feather') {
+        const text = `Feather ${e.total} of ${e.ofTotal}`;
+        this.notices.push({ key: `collect:${e.id}`, aliases: [text], text, sub: place, icon: 'feather', group: 'feather', priority: 1 });
+      } else {
+        const text = `Relic found: ${e.name}`;
+        this.notices.push({
+          key: `collect:${e.id}`,
+          aliases: [text, e.name],
+          text,
+          sub: `${e.total} of ${e.ofTotal} relics · its story is in your Collection`,
+          icon: 'relic',
+          variant: 'relic',
+          priority: 3,
+          life: 5.5,
+        });
+      }
+    });
+    ev.on('unlock', (e: GameEvents['unlock']) => {
+      const text = `Unlocked: ${e.name}`;
+      this.notices.push({ key: `unlock:${e.slot}:${e.cosmeticId}`, aliases: [text], text, sub: `${slotLabel(e.slot)} · new in the Stable`, icon: 'unlock', variant: 'unlock', priority: 3, life: 5 });
+    });
     ev.on('discover', (e: GameEvents['discover']) => {
       const l = LAYOUT.landmarks.find((m) => m.id === e.landmarkId);
-      this.showBanner('DISCOVERED', e.name, l?.description ?? '');
+      // The banner (or, mid-race, a corner note) is the one announcement. Either way the name is
+      // claimed, so a plain toast for the same discovery merges away instead of repeating it.
+      if (this.racing()) {
+        // Mid-race the middle of the screen belongs to the rings: a quiet corner note instead.
+        this.notices.push({ key: `discover:${e.landmarkId}`, aliases: [e.name], text: `Discovered: ${e.name}`, sub: l?.description ?? '', icon: 'landmark', priority: 2 });
+      } else {
+        this.notices.remember([e.name], 10);
+        this.banners.push({ key: `discover:${e.landmarkId}`, kicker: 'DISCOVERED', name: e.name, sub: l?.description ?? '' });
+      }
     });
   }
 
@@ -307,14 +402,26 @@ export class Hud {
   }
 
   update(dt: number, view: GameView): void {
-    this.updateToasts(dt);
+    this.view = view;
+    if (view.save.data !== this.saveData) {
+      // A new game (progress erased): places can be discovered and announced again.
+      if (this.saveData) {
+        this.banners.reset();
+        this.notices.clear();
+      }
+      this.saveData = view.save.data;
+    }
+    // Nothing new on the title screen: the first discovery waits for play.
+    this.notices.held = view.screen === 'title' || view.screen === 'loading';
+    this.updateNotices(dt);
     this.updateBanner(dt);
     if (!this.visible) return;
 
     const player = view.player;
     const f = player.flight;
     const mode = player.mode;
-    const flying = FLIGHT_MODES.has(mode);
+    // Only the wyvern in flight has an airspeed worth showing (not a rider stepping off a ledge).
+    const flying = mode === 'flying';
     const input = view.input.frame;
 
     // --- Activity → idle fade ----------------------------------------------------------------
@@ -331,6 +438,7 @@ export class Hud {
 
     // --- Readouts --------------------------------------------------------------------------
     this.readouts.set(!flying);
+    let rising = false;
     if (flying) {
       this.speed.set(kmh(f.airspeed));
       this.alt.set(Math.max(0, Math.round(f.position.y)));
@@ -341,21 +449,35 @@ export class Hud {
         this.vario.classList.add(v);
         this.varioState = v;
       }
+      // Rising air under the wings (thermals, ridge lift): the cue that circling here pays.
+      rising = view.weather.windAt(f.position, this.liftAir).y > 2;
     }
+    this.lift.set(rising);
 
     // --- Stamina -----------------------------------------------------------------------------
     const st = Math.max(0, Math.min(1, f.stamina));
+    const rested = Math.max(0, Math.min(1, player.rested ?? 0));
     const full = st >= 0.995 && !f.winded;
     this.fullTime = full ? this.fullTime + dt : 0;
-    this.gaugeFull.set(this.fullTime > 1.2);
+    this.gaugeFull.set(this.fullTime > 1.2 && rested <= 0);
+    this.gaugeRested.set(rested > 0);
     // Quantized, and the dash string is only rebuilt when the arc actually moves.
     const len = Math.round(ARC_LEN * st * 10) / 10;
     if (len !== this.lastArc) {
       this.lastArc = len;
       this.gaugeDash.set(`${len} ${ARC_C}`);
     }
-    this.gaugeLow.set(st < 0.3 && !f.winded);
+    const rlen = Math.round(REST_LEN * rested * 10) / 10;
+    if (rlen !== this.lastRest) {
+      this.lastRest = rlen;
+      this.restDash.set(`${rlen} ${REST_C}`);
+    }
+    const low = st < 0.3 && !f.winded;
+    this.gaugeLow.set(low);
     this.gaugeWinded.set(f.winded);
+    // Tired reads as a suggestion, not a failure: glide, or land on any island to rest. (Winded,
+    // the prompt says it; while the stamina tip is up, the tip says it.)
+    this.restNote.set(flying && low && !rising);
 
     // --- Stall -------------------------------------------------------------------------------
     this.stallOn.set(flying && f.stall > 0.35);
@@ -369,24 +491,59 @@ export class Hud {
     const promptVisible = pr !== null && (showHints || !TIP_ACTIONS.has(pr.action));
     this.promptOn.set(promptVisible);
     if (pr && promptVisible) {
-      if (pr.action !== this.promptAction) {
-        this.promptAction = pr.action;
-        this.promptGlyph.setAttribute('data-glyph', pr.action);
-        this.ctx.fillGlyphs(this.prompt);
+      // Never show a button that won't work right now: winded, wingbeats are refused.
+      const refused = flying && f.winded && pr.action === 'flap';
+      const shown = refused ? 'rest' : pr.action;
+      if (shown !== this.promptAction) {
+        this.promptAction = shown;
+        if (isButtonAction(shown)) {
+          this.promptGlyph.className = 'dw-hint-g';
+          this.promptGlyph.setAttribute('data-glyph', shown);
+          this.ctx.fillGlyphs(this.prompt);
+        } else {
+          // Not a button ('rest': glide or land): the wing emblem, so it never says "press".
+          this.promptGlyph.removeAttribute('data-glyph');
+          this.promptGlyph.className = 'dw-hint-g dw-prompt-emblem';
+          this.promptGlyph.innerHTML = ICONS.wing;
+        }
       }
       this.promptText.set(pr.text);
-      // Recovery advice (stalling, winded) gets the warm warning edge.
-      this.promptWarn.set(flying && (f.stall > 0.5 || f.winded) && (pr.action === 'tuck' || pr.action === 'flap'));
+      // Stalling gets the warm warning edge; being winded is calm advice, never an alarm.
+      this.promptWarn.set(flying && f.stall > 0.5);
+      this.promptCalm.set(flying && f.winded && f.stall <= 0.5);
     }
 
     // --- Pointer lock hint -------------------------------------------------------------------
     const inp = view.input;
-    this.pointerOn.set(!!inp.pointerLockWanted && !inp.pointerLocked && inp.device === 'keyboard');
+    const needed = !!inp.pointerLockWanted && !inp.pointerLocked && inp.device === 'keyboard';
+    if (needed && !this.pointerWasNeeded) this.pointerLeft = POINTER_HINT_SECONDS;
+    this.pointerWasNeeded = needed;
+    if (this.pointerLeft > 0) this.pointerLeft -= dt;
+    this.pointerOn.set(needed && this.pointerLeft > 0);
+
+    // --- The edge of the world -----------------------------------------------------------------
+    this.updateBoundary(view, flying);
   }
 
   /** Re-render glyphs after a device change. */
   refreshGlyphs(): void {
     this.promptAction = null;
+  }
+
+  /** Where the player is for the compass: the rider (on foot they may be far from the wyvern). */
+  private origin(view: GameView): Vector3 {
+    return view.player.riderPosition;
+  }
+
+  private updateBoundary(view: GameView, flying: boolean): void {
+    const p = this.origin(view);
+    const past = Math.hypot(p.x, p.z) - LAYOUT.boundaryRadius;
+    if (!this.beyondBoundary && flying && past > BOUNDARY_NOTICE_IN) {
+      this.beyondBoundary = true;
+      this.notices.push({ key: 'boundary', text: 'The winds of the Drift turn you back', sub: 'Follow the compass home to the Roost', icon: 'wing', priority: 3, life: 6 });
+    } else if (this.beyondBoundary && past < BOUNDARY_NOTICE_REARM) {
+      this.beyondBoundary = false;
+    }
   }
 
   private updateCompass(view: GameView): void {
@@ -399,89 +556,156 @@ export class Hud {
       this.stripPos.set(`translate3d(${sx}px,0,0)`);
     }
 
-    const p = view.player.position;
+    const p = this.origin(view);
     const discovered = view.save.data.discovered;
     for (let i = 0; i < this.markers.length; i++) {
       const m = this.markers[i];
       const known = discovered.includes(m.id);
       m.unknown.set(!known);
       m.name = known ? m.realName : 'Unexplored';
-      this.placeMarker(m, p, heading, halfW, false);
+      this.placeMarker(m, p, heading, halfW, false, known ? 2 : 1);
     }
-    this.placeMarker(this.home, p, heading, halfW, false);
+    // Far out over the Drift, home stays pinned to the ribbon so you always know the way back.
+    const lost = Math.hypot(p.x, p.z) > LAYOUT.boundaryRadius - 400;
+    this.placeMarker(this.home, p, heading, halfW, lost, 3);
 
     const wp = view.races.waypoint(this.wp);
     const racing = view.races.activeId !== null && view.races.state !== 'idle';
     this.waypointOn.set(!wp || !racing);
     this.startGate.shown.set(!wp || racing);
-    if (!wp || !racing) this.waypoint.near.set(false);
-    if (!wp || racing) this.startGate.near.set(false);
+    this.waypoint.wants = false;
+    this.startGate.wants = false;
     if (wp) {
       const m = racing ? this.waypoint : this.startGate;
       m.x = wp.x;
       m.z = wp.z;
-      this.placeMarker(m, p, heading, halfW, racing);
+      this.placeMarker(m, p, heading, halfW, racing, racing ? 9 : 4);
     }
+    this.layoutCompassLabels(racing);
   }
 
-  private placeMarker(m: Marker, p: Vector3, heading: number, halfW: number, isWaypoint: boolean): void {
+  /** Position a marker's icon and decide whether it wants a label this frame. */
+  private placeMarker(m: Marker, p: Vector3, heading: number, halfW: number, pinned: boolean, priority: number): void {
     const dx = m.x - p.x;
     const dz = m.z - p.z;
     const rel = relativeBearing(headingOf(dx, dz), heading);
     ribbonPosition(rel, HALF_SPAN, this.ribbon);
     // The waypoint pins to the edge when behind you, so it always says which way to turn.
-    const visible = isWaypoint || !this.ribbon.edge;
+    const visible = pinned || !this.ribbon.edge;
     m.shown.set(!visible);
-    if (!visible) {
-      m.near.set(false);
-      return;
-    }
+    m.wants = false;
+    if (!visible) return;
     const x = Math.round(this.ribbon.x * halfW * 0.92 * 2) / 2;
     if (x !== m.lastX) {
       m.lastX = x;
       m.pos.set(`translate3d(${x}px,0,0)`);
-      // Keep the label inside the readable middle of the ribbon.
-      const lx = Math.max(-halfW * 0.74, Math.min(halfW * 0.74, x));
-      m.labelPos.set(`translate3d(${lx}px,0,0) translateX(-50%)`);
     }
-    const near = isWaypoint || Math.abs(rel) < 9 * DEG;
-    m.near.set(near);
-    if (!near) return;
+    // Keep the label inside the readable middle of the ribbon.
+    m.lx = Math.max(-halfW * 0.74, Math.min(halfW * 0.74, x));
+    m.priority = priority;
+    m.wants = pinned || Math.abs(rel) < 9 * DEG;
+    if (!m.wants) return;
     // Distance labels: quantized first, so the string is only rebuilt when it would change.
+    const isWaypoint = m === this.waypoint;
     const d = isWaypoint ? Math.hypot(dx, dz, this.wp.y - p.y) : Math.hypot(dx, dz);
     const q = d < 995 ? Math.round(d / 5) : 1000 + Math.round(d / 100);
     if (q === m.lastDist && m.name === m.lastName) return;
     m.lastDist = q;
     m.lastName = m.name;
-    m.label.set(isWaypoint ? formatDistance(d) : `${m.name} · ${formatDistance(d)}`);
+    m.text = isWaypoint ? formatDistance(d) : `${m.name} · ${formatDistance(d)}`;
+    m.label.set(m.text);
   }
 
-  private updateToasts(dt: number): void {
-    for (let i = this.toasts.length - 1; i >= 0; i--) {
-      const t = this.toasts[i];
-      const was = t.age;
-      t.age += dt;
-      if (was < t.life && t.age >= t.life) t.el.classList.add('is-out');
-      if (t.age >= t.life + 0.6) {
-        t.el.remove();
-        this.toasts.splice(i, 1);
+  /**
+   * One label per place, never on top of another: the race waypoint keeps the first row, the rest
+   * take the first free row (or stay quiet); only the nearest of several unexplored places speaks.
+   */
+  private layoutCompassLabels(racing: boolean): void {
+    const c = this.candidates;
+    const of = this.candidateOf;
+    c.length = 0;
+    of.length = 0;
+    const px = this.unit * LABEL_EM;
+    let unknown: Marker | null = null;
+    for (const m of this.allMarkers) {
+      if (!m.wants) continue;
+      if (m.name === 'Unexplored' && m.priority === 1) {
+        if (!unknown || Math.abs(m.lx) < Math.abs(unknown.lx)) unknown = m;
+        continue;
+      }
+      of.push(m);
+    }
+    if (unknown) of.push(unknown);
+    for (const m of of) c.push({ x: m.lx, width: (m.text.length * LABEL_CHAR_EM + LABEL_PAD_EM) * px, priority: m.priority });
+    // Mid-race the second row would sit on the race timer.
+    layoutLabels(c, px * 0.6, racing ? 1 : 2, this.rows);
+    const rowH = px * 1.55;
+    for (const m of this.allMarkers) {
+      const i = of.indexOf(m);
+      const row = i >= 0 ? this.rows[i] : -1;
+      m.near.set(row >= 0);
+      if (row >= 0) m.labelPos.set(`translate3d(${m.lx}px,${row * rowH}px,0) translateX(-50%)`);
+    }
+  }
+
+  private updateNotices(dt: number): void {
+    const q = this.notices;
+    q.update(dt);
+    for (const n of q.retired) this.retireNotice(n);
+    for (const n of q.visible) {
+      const r = this.noticeEls.get(n.id);
+      if (!r) this.showNotice(n);
+      else if (r.rev !== n.rev) {
+        r.rev = n.rev;
+        r.t.textContent = n.text;
+        r.s.textContent = n.sub;
+        r.s.style.display = n.sub ? '' : 'none';
+        // A streak (feathers in a row): a little bump so the new count reads.
+        r.el.classList.remove('is-bump');
+        void r.el.offsetWidth;
+        r.el.classList.add('is-bump');
+      }
+    }
+    for (let i = this.leaving.length - 1; i >= 0; i--) {
+      const l = this.leaving[i];
+      l.left -= dt;
+      if (l.left <= 0) {
+        l.el.remove();
+        this.leaving.splice(i, 1);
       }
     }
   }
 
+  private showNotice(n: Notice): void {
+    const t = h('span', { class: 'dw-toast-t', text: n.text });
+    const s = h('span', { class: 'dw-toast-s', text: n.sub });
+    if (!n.sub) s.style.display = 'none';
+    const el = div(`dw-toast${n.variant ? ` dw-toast--${n.variant}` : ''}`, div('dw-toast-icon', fromHtml(ICONS[n.icon])), div('dw-toast-text', t, s));
+    this.toastLayer.append(el);
+    this.noticeEls.set(n.id, { el, t, s, rev: n.rev });
+  }
+
+  private retireNotice(n: Notice): void {
+    const r = this.noticeEls.get(n.id);
+    if (!r) return;
+    this.noticeEls.delete(n.id);
+    r.el.classList.add('is-out');
+    this.leaving.push({ el: r.el, left: 0.6 });
+  }
+
   private updateBanner(dt: number): void {
-    if (this.bannerLeft > 0) {
-      this.bannerLeft -= dt;
-      if (this.bannerLeft <= 0.9 && this.banner.classList.contains('is-on')) this.banner.classList.remove('is-on');
-      if (this.bannerLeft > 0) return;
-    }
-    const next = this.bannerQueue.shift();
-    if (!next) return;
-    this.bannerKicker.textContent = next.kicker;
-    this.bannerName.textContent = next.name;
-    this.bannerSub.textContent = next.sub;
-    this.bannerSub.style.display = next.sub ? '' : 'none';
+    // A race owns the middle of the screen; hidden HUD (menus) just pauses the card.
+    if (!this.visible) return;
+    const step = this.banners.update(dt, this.racing());
+    if (step === 'hide') this.banner.classList.remove('is-on');
+    if (step !== 'show') return;
+    const b = this.banners.current!;
+    this.bannerKicker.textContent = b.kicker;
+    this.bannerName.textContent = b.name;
+    this.bannerSub.textContent = b.sub ?? '';
+    this.bannerSub.style.display = b.sub ? '' : 'none';
+    this.banner.classList.remove('is-on');
+    void this.banner.offsetWidth; // restart the entrance
     this.banner.classList.add('is-on');
-    this.bannerLeft = 5;
   }
 }

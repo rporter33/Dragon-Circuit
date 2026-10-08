@@ -106,7 +106,7 @@ export class Ui implements UiSystem {
     this.root = div('dw-ui');
     this.root.dataset.device = 'keyboard';
     this.hud = new Hud({ events: this.events, fillGlyphs: (el) => this.fillGlyphs(el), reducedMotion: () => this.reduced });
-    this.raceHud = new RaceHud({ events: this.events, reducedMotion: () => this.reduced, toast: (t, s) => this.hud.toast(t, s ?? '', 'race') });
+    this.raceHud = new RaceHud({ events: this.events, reducedMotion: () => this.reduced, notify: (n) => this.hud.notify(n) });
     this.veil = div('dw-veil');
     this.stackLayer = div('dw-layer dw-stack');
     this.hudNote = div('dw-hud-note');
