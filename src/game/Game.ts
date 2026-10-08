@@ -108,7 +108,14 @@ export class Game implements GameActions {
       settings: () => this.settings,
       camera: this.cameraRig,
     });
-    this.collectibles = new Collectibles();
+    this.collectibles = new Collectibles({
+      scene: this.scene,
+      events: this.events,
+      save: this.save,
+      terrain: this.world.terrain,
+      dressing: this.dressing,
+      quality,
+    });
     this.fx = new Fx({
       scene: this.scene,
       renderer: this.renderer,
