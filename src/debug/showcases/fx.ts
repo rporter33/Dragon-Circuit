@@ -9,6 +9,7 @@ import { launchDeckEnd } from '../../fx/Fx';
 /**
  * ?view=fx&scene=<name> — stages the visual effects for review.
  *   dive      flying fast (pass steps input {"flight":{"tuck":1}}): speed lines, blur, trails
+ *   skim      fast and low over the cloud sea (cloud wisps)
  *   turn      a hard banked pull (wingtip vortices from g)
  *   thermal   a thermal column seen from the side
  *   fireflies night on Gull's Rest
@@ -46,6 +47,11 @@ function stage(game: Game, scene: string): Stage {
     case 'dive': {
       p.teleport(new Vector3(-150, 950, 120), (200 * Math.PI) / 180, 'flying', 72);
       return { tod: 0.38, every: 0 };
+    }
+    case 'skim': {
+      // Fast and low over the cloud sea: cloud wisps tear past.
+      p.teleport(new Vector3(-300, 150, -200), (130 * Math.PI) / 180, 'flying', 74);
+      return { tod: 0.7, every: 0 };
     }
     case 'turn': {
       p.teleport(new Vector3(-150, 700, 120), (160 * Math.PI) / 180, 'flying', 48);
@@ -200,7 +206,7 @@ function standInNight(game: Game): void {
 
 const fx: Showcase = {
   name: 'fx',
-  description: 'Visual effects staging (scene=dive|turn|thermal|fireflies|ring|landing|scrape|collect|leaves|gust|breath)',
+  description: 'Visual effects staging (scene=dive|skim|turn|thermal|fireflies|ring|landing|scrape|collect|leaves|gust|breath)',
   setup(game, params) {
     const scene = params.get('scene') ?? 'dive';
     current = stage(game, scene);

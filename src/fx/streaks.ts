@@ -48,8 +48,11 @@ void main() {
   float sl = length(side);
   side = sl > 1e-4 ? side / sl : vec3(1.0, 0.0, 0.0);
   float width = uWidth * (0.55 + 0.9 * fract(aSeed.w * 7.31));
+  // At least ~2 px wide (thinner lines widen and fade rather than alias away).
+  float minW = 2.0 * length(wp - cameraPosition) / uPxScale;
+  float thin = min(1.0, width / max(minW, 1e-4));
   // position.y in [-0.5, 0.5]: +0.5 = head (leading), -0.5 = tail.
-  vec3 p = wp + uDir * len * (position.y - 0.5) + side * position.x * width;
+  vec3 p = wp + uDir * len * (position.y - 0.5) + side * position.x * max(width, minW);
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 
   float edge = max(max(abs(local.x), abs(local.y)), abs(local.z)) / (0.5 * uBox);
@@ -58,8 +61,10 @@ void main() {
   vec4 clip = projectionMatrix * viewMatrix * vec4(wp, 1.0);
   float centerFade = 1.0;
   if (clip.w > 0.0) centerFade = smoothstep(uCenterFade, uCenterFade + 0.45, length(clip.xy / clip.w));
-  vAlpha = uAmount * boxFade * nearFade * centerFade * fxFogTransmittance(wp);
-  vColor = dwApplyFog(fxLitDust(vec3(1.0), wp) * 1.35, wp, cameraPosition);
+  vAlpha = uAmount * boxFade * nearFade * centerFade * thin * fxFogTransmittance(wp);
+  // Lines carry a hint of sky blue (they still read over white cloud); wisps are white.
+  vec3 tint = uNearFade < 5.0 ? mix(vec3(1.0), normalize(uSkyZenith + 0.05) * 1.2, 0.25) : vec3(1.0);
+  vColor = dwApplyFog(fxLitDust(tint, wp) * 1.35, wp, cameraPosition);
   vUv = vec2(position.x * 2.0, position.y + 0.5);
   vSeed = aSeed.w;
 }
@@ -73,12 +78,12 @@ varying float vSeed;
 varying vec3 vColor;
 void main() {
   float across = 1.0 - abs(vUv.x);
-  across *= across;
-  // Bright, sharp head; long fading tail.
+  // Bright, sharp head; long fading tail; a cooler edge so lines show over white cloud.
   float along = (1.0 - smoothstep(0.9, 1.0, vUv.y)) * pow(vUv.y, 1.6);
-  float a = across * along * vAlpha;
+  vec3 col = mix(vColor * vec3(0.7, 0.78, 0.93), vColor, smoothstep(0.3, 0.8, across));
+  float a = smoothstep(0.0, 0.6, across) * along * vAlpha;
   if (a < 0.004) discard;
-  gl_FragColor = vec4(vColor, a);
+  gl_FragColor = vec4(col, a);
 }
 `;
 

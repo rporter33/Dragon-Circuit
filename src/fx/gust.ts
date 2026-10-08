@@ -54,11 +54,18 @@ void main() {
   vec3 w = cross(tan, viewV);
   float wl = length(w);
   w = wl > 1e-4 ? w / wl : vec3(0.0, 1.0, 0.0);
-  p += w * position.x * (0.14 + 0.1 * aSeed.y);
+  // At least ~2.5 px wide; lines thinner than that widen and fade instead of aliasing away.
+  float width = 0.2 + 0.12 * aSeed.y;
+  float dist = length(p - cameraPosition);
+  float minW = 2.5 * dist / uPxScale;
+  float thin = min(1.0, width / minW);
+  p += w * position.x * max(width, minW);
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
   float life = sin(ph * 3.14159);
-  vAlpha = uAmount * pow(life, 1.4) * fxFogTransmittance(p);
-  vColor = dwApplyFog(fxLitDust(vec3(1.0), p) * 1.6, p, cameraPosition);
+  vAlpha = uAmount * pow(life, 1.4) * thin * fxFogTransmittance(p);
+  // A touch of sky blue so the lines still read against white cloud.
+  vec3 tint = mix(vec3(1.0), normalize(uSkyZenith + 0.05) * 1.2, 0.35);
+  vColor = dwApplyFog(fxLitDust(tint, p) * 1.5, p, cameraPosition);
   vUv = vec2(position.x * 2.0, u);
 }
 `;
@@ -70,9 +77,12 @@ varying vec3 vColor;
 void main() {
   float across = 1.0 - abs(vUv.x);
   float along = smoothstep(0.0, 0.5, vUv.y) * (1.0 - smoothstep(0.85, 1.0, vUv.y));
-  float a = pow(across, 1.5) * along * vAlpha;
+  // A brush stroke: bright core, cooler and darker edges, so it reads on white cloud and on
+  // blue sky alike.
+  vec3 col = mix(vColor * vec3(0.66, 0.75, 0.92), vColor, smoothstep(0.25, 0.75, across));
+  float a = smoothstep(0.0, 0.55, across) * along * vAlpha;
   if (a < 0.004) discard;
-  gl_FragColor = vec4(vColor, a);
+  gl_FragColor = vec4(col, a);
 }
 `;
 
@@ -140,6 +150,10 @@ export class LaunchGust {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 6;
     scene.add(this.mesh);
+  }
+
+  setPxScale(v: number): void {
+    this.mat.uniforms.uPxScale.value = v;
   }
 
   update(dt: number, cam: Vector3, strength = 1): void {

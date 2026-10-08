@@ -142,7 +142,7 @@ void main() {
   side = sl > 1e-4 ? side / sl : vec3(1.0, 0.0, 0.0);
   float dist = length(wp - cameraPosition);
   // Wider with distance (about 2.5 px at 1080p far away) so the column reads from across the sky.
-  float width = max(0.3, dist * 0.0028);
+  float width = max(0.3, 2.4 * dist / uPxScale);
   wp += side * position.x * width;
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
 
@@ -165,9 +165,11 @@ varying float vAlpha;
 varying vec3 vColor;
 void main() {
   float across = 1.0 - abs(vUv.x);
-  float a = across * across * vAlpha;
+  // Bright core, cooler darker edges: reads on cloud and sky alike.
+  vec3 col = mix(vColor * vec3(0.66, 0.75, 0.92), vColor, smoothstep(0.25, 0.75, across));
+  float a = smoothstep(0.0, 0.6, across) * vAlpha;
   if (a < 0.003) discard;
-  gl_FragColor = vec4(vColor * a, a);
+  gl_FragColor = vec4(col * a, a);
 }
 `;
 

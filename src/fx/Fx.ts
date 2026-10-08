@@ -120,7 +120,7 @@ export class Fx implements FxSystem {
       name: 'fx-speed-lines', count: 420, box: 56, lenTime: 0.13, width: 0.075, nearFade: 2.5, centerFade: 0.22, wisp: false, seed: 0x5eed,
     });
     this.wisps = new AirStreaks(scene, {
-      name: 'fx-cloud-wisps', count: 36, box: 260, lenTime: 0.32, width: 9, nearFade: 14, centerFade: 0.12, wisp: true, seed: 0x3157,
+      name: 'fx-cloud-wisps', count: 64, box: 240, lenTime: 0.32, width: 10, nearFade: 14, centerFade: 0.12, wisp: true, seed: 0x3157,
     });
     this.trails = new WingTrails(scene, 64);
     this.thermals = new ThermalMotes(scene, deps.layout.thermals);
@@ -172,9 +172,11 @@ export class Fx implements FxSystem {
     this.airVel.copy(f.velocity).sub(wind);
     const airspeed = flying ? f.airspeed : 0;
     this.speedLines.setPxScale(pxScale);
+    this.wisps.setPxScale(pxScale);
     this.speedLines.update(step, this.camPos, this.airVel, speedLineAmount(airspeed, flying) * (reduced ? 0.6 : 1));
-    this.wisps.update(step, this.camPos, this.airVel, wispAmount(airspeed, f.position.y, 0, flying) * 0.55);
+    this.wisps.update(step, this.camPos, this.airVel, wispAmount(airspeed, f.position.y, 0, flying) * 0.8);
     wyvern.getWingtips(this.tipL, this.tipR);
+    this.trails.setPxScale(pxScale);
     this.trails.update(step, this.tipL, this.tipR, trailIntensity(airspeed, f.gLoad, flying) * 0.55);
 
     // --- World: thermals, fireflies, leaves, launch gust --------------------------------------
@@ -193,6 +195,7 @@ export class Fx implements FxSystem {
       camera.getWorldDirection(this.fwd);
       this.drifters.update(step, this.camPos, this.fwd, wind, gust, pose.position, flying ? f.velocity : this.zero, near);
     }
+    this.gust?.setPxScale(pxScale);
     this.gust?.update(step, this.camPos);
 
     // --- Breath on cold Highmoor ---------------------------------------------------------------

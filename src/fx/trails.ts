@@ -47,10 +47,12 @@ void main() {
   float sl = length(side);
   side = sl > 1e-4 ? side / sl : b1;
   float w = uWidth * (0.45 + 2.4 * t);
-  wp += side * aData.x * w;
+  float minW = 2.0 * length(wp - cameraPosition) / uPxScale;
+  float thin = min(1.0, w / max(minW, 1e-4));
+  wp += side * aData.x * max(w, minW);
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
   // Fade in over the first few centimeters so the ribbon grows out of the tip, out with age.
-  float a = aData.z * smoothstep(0.0, 0.03, age) * pow(1.0 - t, 1.7);
+  float a = aData.z * smoothstep(0.0, 0.03, age) * pow(1.0 - t, 1.7) * thin;
   vAlpha = a * fxFogTransmittance(wp);
   vColor = dwApplyFog(fxLitDust(vec3(1.0), wp) * 1.2, wp, cameraPosition);
   vUv = vec2(aData.x, aData.y * 23.0);
@@ -229,6 +231,10 @@ export class WingTrails {
     this.left = new Ribbon(samples, this.mat, 0, 'fx-trail-left');
     this.right = new Ribbon(samples, this.mat, Math.PI, 'fx-trail-right');
     scene.add(this.left.mesh, this.right.mesh);
+  }
+
+  setPxScale(v: number): void {
+    this.mat.uniforms.uPxScale.value = v;
   }
 
   reset(): void {
