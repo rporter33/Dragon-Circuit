@@ -74,6 +74,9 @@ export interface AnimContext {
 const _v = new Vector3();
 const _v2 = new Vector3();
 const _v3 = new Vector3();
+const _v4 = new Vector3();
+const _v5 = new Vector3();
+const _q4 = new Quaternion();
 const _q = new Quaternion();
 const _q2 = new Quaternion();
 const _q3 = new Quaternion();
@@ -398,9 +401,9 @@ export class RiderAnimator {
       // Wave: both arms high, swaying together.
       if (this.waveW > 0.001) {
         const w = Math.sin(time * 2 * Math.PI * 1.9);
-        alpha = MathUtils.lerp(alpha, 2.55 - 0.15 * w * side, this.waveW);
-        beta = MathUtils.lerp(beta, 0.42 + 0.3 * w * side, this.waveW);
-        eps = MathUtils.lerp(eps, 0.35 + 0.15 * Math.abs(w), this.waveW);
+        alpha = MathUtils.lerp(alpha, 2.6 - 0.12 * w * side, this.waveW);
+        beta = MathUtils.lerp(beta, 0.36 + 0.2 * w * side, this.waveW);
+        eps = MathUtils.lerp(eps, 0.4 + 0.25 * Math.max(0, w * side), this.waveW);
         curl = MathUtils.lerp(curl, 0.05, this.waveW);
       }
       // Mount: reach up toward the saddle; dismount: arms out for balance.
@@ -622,9 +625,9 @@ export class RiderAnimator {
       const tM = this.layerHandWorld(M, i, chestW, ctx.anchor, _v2);
       const target = tF.lerp(tM, w);
       const pF = this.layerPoleWorld(F, i, chestW, ctx.anchor, _v3);
-      const pM = this.layerPoleWorld(M, i, chestW, ctx.anchor, new Vector3());
+      const pM = this.layerPoleWorld(M, i, chestW, ctx.anchor, _v4);
       const pole = pF.lerp(pM, w).normalize();
-      const root = new Vector3().setFromMatrixPosition(bones[up].matrixWorld);
+      const root = _v5.setFromMatrixPosition(bones[up].matrixWorld);
       solveTwoBone(root, target, pole, this.lens.upper, this.lens.fore, _ik);
       // Arms hinge the other way round from legs: the bind +X is −hinge.
       _q.setFromRotationMatrix(bones[cl].matrixWorld);
@@ -636,7 +639,7 @@ export class RiderAnimator {
       // Hand: foot layer is local; mount layer is an anchor-space orientation.
       const qF = F.handQ[i];
       const qM = _q.copy(M.handQ[i]).premultiply(_anchorQ);
-      qM.premultiply(q2.clone().invert());
+      qM.premultiply(_q4.copy(q2).invert());
       bones[ha].quaternion.slerpQuaternions(qF, qM, w);
       const curl = MathUtils.lerp(F.curl[i], M.curl[i], w);
       const thumb = MathUtils.lerp(F.thumb[i], M.thumb[i], w);

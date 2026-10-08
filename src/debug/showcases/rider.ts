@@ -1,4 +1,4 @@
-import { CapsuleGeometry, Euler, Mesh, Object3D, Vector3 } from 'three';
+import { CapsuleGeometry, Color, DirectionalLight, Euler, HemisphereLight, Mesh, Object3D, Vector3 } from 'three';
 import type { Showcase } from '../showcase';
 import type { Game } from '../../game/Game';
 import type { RiderAction, RiderLook, RiderPose } from '../../core/types';
@@ -20,6 +20,8 @@ import { PLAYER_TUNING as P } from '../../player/tuning';
  *             and replay the player state's own arcs.
  *   mounted:  mounted=1 on a stand-in saddle; lean= crouch= brace= pitch=deg (dive angle)
  *   air:      wind=x,z (m/s, world) on foot; defaults to the shared wind uniform
+ *   light:    tod= as usual; the baseline sky only moves the sun, so this showcase tints dusk and
+ *             night itself (like the dressing showcase) unless sky=native
  *   camera:   angle=deg (0 = in front) dist= height= camUp= turntable=1 focus=head
  *
  * Steps files can tweak parameters live: __riderShow.params.set('angle', '90').
@@ -51,6 +53,37 @@ const ACTIONS: [RiderAction, number | null][] = [
   ['mount', 0.42],
   ['dismount', 0.85],
 ];
+
+let lights: { sun: DirectionalLight | null; hemi: HemisphereLight | null } = { sun: null, hemi: null };
+const lightBase = { sun: 0, hemi: 0, sunColor: new Color(), hemiSky: new Color(), hemiGround: new Color() };
+const smoothE = (e0: number, e1: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+};
+
+/** Night / golden-hour stand-in for the baseline sky (a real sky overwrites these each frame). */
+function applySkyStandIn(game: Game): void {
+  const t = game.sky.timeOfDay;
+  const sunY = Math.sin((t - 0.25) * Math.PI * 2);
+  const n = smoothE(0.08, -0.18, sunY);
+  const dusk = smoothE(0.45, 0.05, sunY) * (1 - n);
+  const u = globalUniforms;
+  u.uNight.value = n;
+  if (lights.sun) {
+    lights.sun.intensity = lightBase.sun * (1 - n * 0.85);
+    lights.sun.color.copy(lightBase.sunColor).lerp(new Color('#ffb070'), dusk * 0.8).lerp(new Color('#9fb4ff'), n);
+  }
+  if (lights.hemi) {
+    lights.hemi.intensity = lightBase.hemi * (1 - n * 0.72);
+    lights.hemi.color.copy(lightBase.hemiSky).lerp(new Color('#ffcf9a'), dusk * 0.35).lerp(new Color('#2c3c6e'), n);
+    lights.hemi.groundColor.copy(lightBase.hemiGround).lerp(new Color('#1c1a24'), n);
+  }
+  u.uSunColor.value.set('#fff0dd').lerp(new Color('#ffb070'), dusk * 0.8).lerp(new Color('#8fa4e8'), n).multiplyScalar(1 - 0.6 * n);
+  u.uSkyZenith.value.set('#3d73c7').lerp(new Color('#3a5fa8'), dusk).lerp(new Color('#0b1430'), n);
+  u.uSkyHorizon.value.set('#bfd6eb').lerp(new Color('#f2b27a'), dusk).lerp(new Color('#24345c'), n);
+  u.uFogColor.value.set('#aec7e6').lerp(new Color('#c9a9a0'), dusk * 0.6).lerp(new Color('#1b2747'), n);
+  u.uFogSunColor.value.set('#ffd9a6').lerp(new Color('#ff9a55'), dusk).lerp(new Color('#2a3a66'), n);
+}
 
 function num(k: string, d: number): number {
   const v = params.get(k);
@@ -186,9 +219,24 @@ const rider: Showcase = {
     });
     // Park the real player out of the way.
     game.player.teleport(new Vector3(origin.x + 40, origin.y + 2, origin.z - 40), 0, 'onFoot');
+    lights = { sun: null, hemi: null };
+    game.scene.traverse((o) => {
+      if (o instanceof DirectionalLight && !lights.sun) lights.sun = o;
+      if (o instanceof HemisphereLight && !lights.hemi) lights.hemi = o;
+    });
+    if (lights.sun) {
+      lightBase.sun = lights.sun.intensity;
+      lightBase.sunColor.copy(lights.sun.color);
+    }
+    if (lights.hemi) {
+      lightBase.hemi = lights.hemi.intensity;
+      lightBase.hemiSky.copy(lights.hemi.color);
+      lightBase.hemiGround.copy(lights.hemi.groundColor);
+    }
   },
   update(game, dt) {
     time += dt;
+    if (params.get('sky') !== 'native') applySkyStandIn(game);
     const mounted = params.get('mounted') === '1';
     const center = new Vector3();
     for (const a of actors) {

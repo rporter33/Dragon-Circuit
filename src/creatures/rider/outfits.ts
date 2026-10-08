@@ -8,7 +8,7 @@ import { B, type RigDims } from './rig';
 import { sk, sk2 } from './meshKit';
 import { torsoPoint, torsoSkin, type BodyCtx, type OutfitStyle, type Side } from './body';
 import { mixSrgb, tone, type RiderPalette } from './palette';
-import { armPath, block, collar, legPath, skirtPanel, strap, stud, torsoBand, torsoPath, X, Y, Z, smooth } from './garments';
+import { armPath, block, collar, legPath, skirtPanel, strap, stud, torsoBand, torsoPanel, torsoPath, X, Y, Z, smooth } from './garments';
 
 const PI = Math.PI;
 const HALF = PI / 2;
@@ -182,17 +182,9 @@ function scout(look: RiderLook, pal: RiderPalette, d: RigDims): OutfitStyle {
   const wraps = mixSrgb(pal.cloth, pal.secondary, 0.2);
   return {
     torso: {
-      color: (y, th, p) => {
-        if (y < 0.93 * d.h) return pal.trousers;
-        if (y > vestBot && y < 1.395 * d.h) {
-          const side = Math.abs(Math.cos(th)) > 0.93;
-          const vneck = front(th) > 0 && Math.abs(p.x) < 0.012 + (y - 1.2 * d.h) * 0.45 && y > 1.2 * d.h;
-          if (!side && !vneck) return vest;
-        }
-        return pal.primary;
-      },
-      inflate: (y) => (y > vestBot && y < 1.395 * d.h ? 0.012 : 0.007),
-      bounds: [0.93 * d.h, vestBot, 1.395 * d.h],
+      color: (y) => (y < 0.93 * d.h ? pal.trousers : pal.primary),
+      inflate: () => 0.007,
+      bounds: [0.93 * d.h],
     },
     arm: {
       color: (s) => (s < sleeve ? pal.primary : s < bracer ? pal.skin : s < d.upperArm + d.foreArm - 0.02 ? pal.leather : pal.skin),
@@ -211,6 +203,15 @@ function scout(look: RiderLook, pal: RiderPalette, d: RigDims): OutfitStyle {
     hand: pal.skin,
     foot: { color: pal.leather, sole: pal.sole },
     extras(ctx) {
+      // Jerkin: two front panels parting in a V and one across the back, open at the arms.
+      const vTop = 1.4 * d.h;
+      const vestCol = (u: number, v: number, inner: boolean) => (inner ? tone(vest, 0.7) : v > 0.92 ? tone(vest, 0.8) : vest);
+      for (const s of [1, -1]) {
+        const inner = (v: number) => HALF - s * (0.1 + 0.55 * (1 - smooth(0, 0.55, v)));
+        const outer = () => HALF - s * 1.3;
+        torsoPanel(ctx, { th0: s > 0 ? outer : inner, th1: s > 0 ? inner : outer, yTop: vTop, yBot: vestBot, inflate: 0.008, thickness: 0.008, color: vestCol });
+      }
+      torsoPanel(ctx, { th0: () => -HALF - 1.22, th1: () => -HALF + 1.22, yTop: vTop + 0.01, yBot: vestBot, inflate: 0.008, thickness: 0.008, color: vestCol, cols: 9 });
       // Tunic skirt in four panels with a contrasting hem.
       const hem = (u: number, v: number) => (v > 0.84 ? pal.secondary : pal.primary);
       const panels: [number, number, number][] = [
@@ -384,12 +385,7 @@ function cartographer(look: RiderLook, pal: RiderPalette, d: RigDims): OutfitSty
   const bootTop = d.thigh + 0.2 * d.h;
   return {
     torso: {
-      color: (y, th, p) => {
-        if (y < 0.93 * d.h) return pal.trousers;
-        // Embroidered front opening.
-        if (front(th) > 0.85 && Math.abs(p.x) < 0.03) return trim;
-        return pal.primary;
-      },
+      color: (y) => (y < 0.93 * d.h ? pal.trousers : pal.primary),
       inflate: (y) => (y < 0.93 * d.h ? 0.004 : 0.014),
       bounds: [0.93 * d.h],
     },
@@ -416,6 +412,11 @@ function cartographer(look: RiderLook, pal: RiderPalette, d: RigDims): OutfitSty
       for (const [a, b, f] of panels) {
         skirtPanel(ctx, { th0: a, th1: b, yTop: 1.0 * d.h, yBot: 0.36 * d.h, inflate: 0.016, flare: 0.13, thickness: 0.009, follow: f, rows: 8, color: (u, v, inner) => (inner ? pal.primaryDark : embroidery(u, v)) });
       }
+      // Embroidered front opening.
+      strap(ctx, torsoPath(ctx, [
+        [1.43 * d.h, HALF],
+        [1.0 * d.h, HALF],
+      ], 0.014), 0.024, 0.003, trim);
       // Sash with hanging ends.
       torsoBand(ctx, 0.98 * d.h, 1.04 * d.h, 0.026, trim);
       for (const [o, len] of [

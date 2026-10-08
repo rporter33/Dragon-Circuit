@@ -120,6 +120,42 @@ export function torsoPath(ctx: BodyCtx, path: [number, number][], lift: number, 
   return out;
 }
 
+/**
+ * A thick panel hugging the torso (vests, breastplates, bibs). θ range may vary with height
+ * (th0/th1 are functions of v, 0 at the top) for shaped edges like a V-neck.
+ */
+export function torsoPanel(
+  ctx: BodyCtx,
+  o: {
+    th0: (v: number) => number;
+    th1: (v: number) => number;
+    yTop: number;
+    yBot: number;
+    inflate: number;
+    thickness: number;
+    cols?: number;
+    rows?: number;
+    color: (u: number, v: number, inner: boolean) => Color;
+  },
+): void {
+  ctx.b.sheet(
+    o.cols ?? 7,
+    o.rows ?? 6,
+    (u, v, p, n) => {
+      const y = o.yTop + (o.yBot - o.yTop) * v;
+      const th = o.th0(v) + (o.th1(v) - o.th0(v)) * u;
+      torsoPoint(ctx, y, th, o.inflate + o.thickness, p, n);
+    },
+    o.thickness,
+    (u, v) => {
+      const y = o.yTop + (o.yBot - o.yTop) * v;
+      const th = o.th0(v) + (o.th1(v) - o.th0(v)) * u;
+      return torsoSkin(ctx, y, torsoPoint(ctx, y, th, 0, new Vector3()));
+    },
+    o.color,
+  );
+}
+
 /** A small rounded stud/button sitting on a surface. */
 export function stud(ctx: BodyCtx, p: Vector3, n: Vector3, r: number, color: Color, skin: SkinSpec, flat = 0.45, glow = 0): void {
   const q = new Quaternion().setFromUnitVectors(Z, n.clone().normalize());

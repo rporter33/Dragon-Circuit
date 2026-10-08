@@ -368,10 +368,13 @@ export class Cloth {
       p[j + 2] += vz * h;
     }
     this.placeAnchors(anchorF);
+    // Collisions are the expensive part (every particle against every capsule), so resolve them
+    // twice per substep — midway and last — rather than on every constraint pass.
+    const mid = cfg.iterations >> 1;
     for (let it = 0; it < cfg.iterations; it++) {
       this.solveConstraints();
       this.solveTethers();
-      if (this.capsules.length) this.collide();
+      if (this.capsules.length && (it === mid || it === cfg.iterations - 1)) this.collide();
     }
   }
 
@@ -428,8 +431,28 @@ export class Cloth {
   private collide(): void {
     const p = this.pos;
     const rad = this.cfg.radius;
+    // Bounds of the cloth, to skip capsules nowhere near it.
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let z0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    let z1 = -Infinity;
+    for (let i = 0; i < this.n; i++) {
+      const j = i * 3;
+      if (p[j] < x0) x0 = p[j];
+      if (p[j] > x1) x1 = p[j];
+      if (p[j + 1] < y0) y0 = p[j + 1];
+      if (p[j + 1] > y1) y1 = p[j + 1];
+      if (p[j + 2] < z0) z0 = p[j + 2];
+      if (p[j + 2] > z1) z1 = p[j + 2];
+    }
     for (let ci = 0; ci < this.capsules.length; ci++) {
       const c = this.capsules[ci];
+      const m = c.r + rad;
+      if (Math.min(c.ax, c.bx) - m > x1 || Math.max(c.ax, c.bx) + m < x0) continue;
+      if (Math.min(c.ay, c.by) - m > y1 || Math.max(c.ay, c.by) + m < y0) continue;
+      if (Math.min(c.az, c.bz) - m > z1 || Math.max(c.az, c.bz) + m < z0) continue;
       const ex = c.bx - c.ax;
       const ey = c.by - c.ay;
       const ez = c.bz - c.az;
