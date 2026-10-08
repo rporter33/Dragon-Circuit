@@ -81,6 +81,11 @@ export interface InputFrame {
   lookIsRate: boolean;
   /** True while the player is actively steering the camera (mouse moved / right stick off-center). */
   lookActive: boolean;
+  /**
+   * Camera zoom request this frame in mouse-wheel notches, + = zoom in. Mouse wheel always;
+   * outside play (stable, menus) RT/LT also zoom at a steady rate. Optional: absent = 0.
+   */
+  zoom?: number;
   /** Held: jump / ascend on foot. */
   jumpHeld: boolean;
   pressed: InputPresses;

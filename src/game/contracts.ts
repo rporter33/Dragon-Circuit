@@ -145,6 +145,11 @@ export interface CameraSystem {
   snap(player: PlayerSystem): void;
   /** Debug: hold the camera at a fixed pose (null releases). */
   setOverride(pose: { position: Vector3; target: Vector3 } | null): void;
+  /**
+   * Stable screen: frame the wyvern, the rider, or both (default). The UI calls this as the
+   * player moves between wyvern and rider customization; the camera glides to the new subject.
+   */
+  setStableFocus?(subject: 'wyvern' | 'rider' | 'both'): void;
 }
 
 // ---------------------------------------------------------------------------------------------

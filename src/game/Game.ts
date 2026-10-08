@@ -9,6 +9,7 @@ import { Renderer } from '../render/renderer';
 import { QUALITY } from '../render/quality';
 import { globalUniforms } from '../render/uniforms';
 import { Input, emptyFrame } from '../input/Input';
+import { Haptics } from '../input/haptics';
 import { World } from '../world/World';
 import { Weather } from '../sky/Weather';
 import { Sky } from '../sky/Sky';
@@ -38,6 +39,7 @@ export class Game implements GameActions {
   readonly renderer: Renderer;
   readonly save = new LocalSaveStore();
   readonly input: Input;
+  readonly haptics: Haptics;
   readonly world: World;
   readonly weather: Weather;
   readonly sky: Sky;
@@ -78,7 +80,8 @@ export class Game implements GameActions {
       this.camera.updateProjectionMatrix();
     });
 
-    this.input = new Input(this.renderer.canvas, () => this.settings);
+    this.input = new Input(this.renderer.canvas, () => this.settings, this.events);
+    this.haptics = new Haptics(this.events, this.input, () => this.settings);
     this.world = new World(this.scene, quality);
     this.weather = new Weather(this.scene, this.world.layout, this.events, quality);
     this.sky = new Sky(this.scene, this.renderer, quality);
@@ -89,7 +92,7 @@ export class Game implements GameActions {
       breed: this.save.data.wyvern.breed,
       settings: () => this.settings,
     });
-    this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings);
+    this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings, this.events);
     this.wyvern = new Wyvern(this.save.data.wyvern);
     this.rider = new Rider(this.save.data.rider);
     this.scene.add(this.wyvern.group, this.rider.group);
@@ -151,6 +154,7 @@ export class Game implements GameActions {
   /** Advance the game by dt seconds (sim + presentation) and, unless told not to, render. */
   frame(dt: number, render = true): void {
     const input = this.input.poll(dt);
+    this.haptics.update(dt);
     const simulate = (this.screen === 'play' || this.screen === 'title') && !this.debug.freeze;
 
     if (simulate) {
@@ -181,7 +185,7 @@ export class Game implements GameActions {
     this.world.update(dt, this.camera, focus);
     this.wyvern.update(dt, this.player.wyvernPose);
     this.rider.update(dt, this.player.riderPose, this.player.riderPose.mounted ? this.wyvern.saddle : null);
-    this.cameraRig.update(dt, this.screen === 'play' ? input : this.idleInput, this.player);
+    this.cameraRig.update(dt, this.screen === 'play' || this.screen === 'stable' ? input : this.idleInput, this.player);
     this.races.update(dt, this.camera, this.player);
     this.collectibles.update(dt, this.camera, this.player);
     this.fx.update(dt, this.camera, this.player, this.wyvern);
@@ -286,7 +290,10 @@ export class Game implements GameActions {
 
   private handlePlayInput(): void {
     const p = this.input.frame.pressed;
-    if (p.pause) this.pause();
+    if (p.pause) {
+      this.pause();
+      this.input.consume(); // the press that opened the menu must not also close it this frame
+    }
     if (p.restart && this.races.activeId) this.restartRace();
     // The prompt decides what interact does here (mounting wins over the stable door).
     if (p.interact && this.prompt?.action === 'stable') this.openStable();
@@ -322,9 +329,6 @@ export class Game implements GameActions {
   }
 
   private wireEvents(): void {
-    this.events.on('terrainHit', ({ impulse }) => {
-      this.cameraRig.shake(Math.min(1, impulse / 25));
-      this.input.rumble(Math.min(1, impulse / 20), 0.4, 200);
-    });
+    // Camera shake and controller rumble subscribe to the bus themselves (CameraRig, Haptics).
   }
 }
