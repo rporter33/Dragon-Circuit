@@ -109,7 +109,7 @@ export class Game implements GameActions {
       settings: () => this.settings,
       layout: this.world.layout,
     });
-    this.audio = new AudioSystem(this.events, () => this.settings);
+    this.audio = new AudioSystem(this.events, () => this.settings, { waterfalls: () => this.dressing.water.plansList });
     this.audio.applySettings(settings);
     this.ui = new Ui({ root: uiRoot, actions: this, events: this.events });
 
