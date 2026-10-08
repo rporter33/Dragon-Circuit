@@ -1,7 +1,7 @@
 // Assembles one rider look into a skinned mesh: body + outfit + hair + headgear + neckwear, all in
 // one geometry (one draw call) on a fresh rig. Moving cloth is set up separately (cloth specs).
 
-import { MeshToonMaterial, SkinnedMesh, type BufferGeometry } from 'three';
+import { Color, MeshToonMaterial, SkinnedMesh, type BufferAttribute, type BufferGeometry } from 'three';
 import type { RiderLook } from '../../core/types';
 import { applyPainterly, toonRamp } from '../../render/painterly';
 import { createRig, rigDims, type Rig } from './rig';
@@ -11,7 +11,7 @@ import { outfitStyle } from './outfits';
 import { buildHair } from './hair';
 import { buildHeadgear, coversCrown } from './headgear';
 import { buildNeckwear } from './accessories';
-import { riderPalette, type RiderPalette } from './palette';
+import { evalRecipe, riderPalette, type ColorRecipe, type RiderPalette } from './palette';
 
 export interface RiderModel {
   rig: Rig;
@@ -19,6 +19,8 @@ export interface RiderModel {
   geometry: BufferGeometry;
   ctx: BodyCtx;
   palette: RiderPalette;
+  /** Per vertex: how its color derives from the look (null = a constant color). */
+  recipes: (ColorRecipe | null)[];
 }
 
 let bodyMaterial: MeshToonMaterial | null = null;
@@ -70,5 +72,28 @@ export function buildRiderModel(look: RiderLook): RiderModel {
   mesh.receiveShadow = true;
   // Poses swing limbs far outside the bind-pose bounds; it's one small mesh, so skip culling.
   mesh.frustumCulled = false;
-  return { rig, mesh, geometry, ctx, palette: pal };
+  return { rig, mesh, geometry, ctx, palette: pal, recipes: b.recipes };
+}
+
+/**
+ * Recolor a built model for a look with the same shape (riderShapeKey) but new colors: rewrites
+ * the vertex colors from their recipes, in place. ~1 ms instead of a ~20–40 ms rebuild.
+ */
+export function recolorRiderModel(model: RiderModel, look: RiderLook): void {
+  const memo = new Map<ColorRecipe, Color>();
+  const attr = model.geometry.getAttribute('color') as BufferAttribute;
+  const arr = attr.array as Float32Array;
+  const rs = model.recipes;
+  for (let i = 0; i < rs.length; i++) {
+    const r = rs[i];
+    if (!r) continue;
+    const c = evalRecipe(r, look, memo);
+    arr[i * 3] = c.r;
+    arr[i * 3 + 1] = c.g;
+    arr[i * 3 + 2] = c.b;
+  }
+  attr.needsUpdate = true;
+  model.palette = riderPalette(look);
+  model.ctx.pal = model.palette;
+  model.ctx.look = look;
 }

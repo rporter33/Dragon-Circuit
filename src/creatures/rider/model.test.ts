@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { cosmeticsFor, DEFAULT_RIDER } from '../../cosmetics/catalog';
 import type { RiderLook } from '../../core/types';
-import { buildRiderModel } from './model';
+import { buildRiderModel, recolorRiderModel } from './model';
 import { allClothSpecs } from './accessories';
+import { Rider } from './Rider';
+import { mulberry32 } from '../../core/rng';
+import type { MeshToonMaterial } from 'three';
 import { BONE_NAMES } from './rig';
 
 function finite(arr: ArrayLike<number>): boolean {
@@ -72,6 +75,55 @@ describe('rider model', () => {
     const ms = performance.now() - t0;
     m.geometry.dispose();
     expect(ms).toBeLessThan(400);
+  });
+
+  it('recolors in place exactly as a full rebuild would (RIDER-01)', { timeout: 60000 }, () => {
+    const rnd = mulberry32(7);
+    const hex = () =>
+      '#' +
+      Math.floor(rnd() * 0xffffff)
+        .toString(16)
+        .padStart(6, '0');
+    const slots = ['skin', 'hairColor', 'outfitPrimary', 'outfitSecondary', 'scarfColor', 'capeColor'] as const;
+    for (const base of looks()) {
+      const recolored: RiderLook = { ...base };
+      for (const s of slots) recolored[s] = hex();
+      const m = buildRiderModel(base);
+      recolorRiderModel(m, recolored);
+      const fresh = buildRiderModel(recolored);
+      const a = m.geometry.getAttribute('color').array;
+      const b = fresh.geometry.getAttribute('color').array;
+      expect(a.length).toBe(b.length);
+      let worst = 0;
+      for (let i = 0; i < a.length; i++) worst = Math.max(worst, Math.abs(a[i] - b[i]));
+      expect(worst, `${base.outfit}/${base.hair}/${base.headgear}/${base.scarf}/${base.cape}`).toBeLessThan(1e-5);
+      m.geometry.dispose();
+      fresh.geometry.dispose();
+    }
+  });
+
+  it('retints cloth and skips the rebuild for a color-only change', () => {
+    const base: RiderLook = { ...DEFAULT_RIDER, cape: 'full', scarf: 'twin', outfit: 'courier', hair: 'long', headgear: 'none' };
+    const next: RiderLook = { ...base, scarfColor: '#11aa33', capeColor: '#3344ee', outfitPrimary: '#aa2266', hairColor: '#ddcc11' };
+    const r = new Rider(base);
+    const geo = (r.group.children[0] as unknown as { geometry: unknown }).geometry;
+    const t0 = performance.now();
+    r.setLook(next);
+    const ms = performance.now() - t0;
+    // Same geometry object: retinted, not rebuilt.
+    expect((r.group.children[0] as unknown as { geometry: unknown }).geometry).toBe(geo);
+    expect(ms).toBeLessThan(20);
+    const fresh = new Rider(next);
+    const tints = (x: Rider) =>
+      x.group.children
+        .filter((c) => (c as { isMesh?: boolean }).isMesh && !(c as { isSkinnedMesh?: boolean }).isSkinnedMesh)
+        .map((c) => {
+          const m = (c as unknown as { material: MeshToonMaterial }).material;
+          return [m.color.getHex(), (m.userData.trim as { value: { getHex(): number } }).value.getHex()];
+        });
+    expect(tints(r)).toEqual(tints(fresh));
+    r.dispose();
+    fresh.dispose();
   });
 
   it('is about 1.75 m tall for the medium build', () => {

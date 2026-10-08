@@ -13,7 +13,8 @@ import type { EventBus } from '../../core/events';
 import type { RiderRenderable } from '../../game/contracts';
 import type { QualityProfile } from '../../render/quality';
 import { PLAYER_TUNING } from '../../player/tuning';
-import { buildRiderModel, type RiderModel } from './model';
+import { buildRiderModel, recolorRiderModel, type RiderModel } from './model';
+import { riderShapeKey } from './palette';
 import { RiderAnimator, type AnimContext } from './animator';
 import { ClothRig, type ClothLod } from './clothRig';
 import { allClothSpecs, type ColliderName } from './accessories';
@@ -158,7 +159,14 @@ export class Rider implements RiderRenderable {
   }
 
   setLook(look: RiderLook): void {
+    const sameShape = riderShapeKey(look) === riderShapeKey(this.look);
     this.look = { ...look };
+    if (sameShape) {
+      // Colors only (every swatch click in the Stable): retint in place, no rebuild.
+      recolorRiderModel(this.model, this.look);
+      this.cloth.recolor(this.look);
+      return;
+    }
     const old = this.model;
     this.group.remove(old.mesh);
     old.geometry.dispose();

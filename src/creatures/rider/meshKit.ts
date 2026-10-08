@@ -4,6 +4,7 @@
 // smoothed per part so separate pieces keep crisp silhouettes where they overlap.
 
 import { BufferAttribute, BufferGeometry, Color, Quaternion, Vector3 } from 'three';
+import { mixLinear, recipeOf, scaleLinear, type ColorRecipe } from './palette';
 
 /** Up to four [bone, weight] pairs; weights are normalized on write. */
 export type SkinSpec = readonly number[];
@@ -52,6 +53,8 @@ export class SkinBuilder {
   private SI: number[] = [];
   private SW: number[] = [];
   private I: number[] = [];
+  /** Per vertex: how its color derives from the look (null = constant), for in-place recolors. */
+  readonly recipes: (ColorRecipe | null)[] = [];
   private partV = 0;
   private partI = 0;
 
@@ -101,6 +104,7 @@ export class SkinBuilder {
     this.P.push(p.x, p.y, p.z);
     this.N.push(0, 1, 0);
     this.C.push(color.r, color.g, color.b);
+    this.recipes.push(recipeOf(color) ?? null);
     this.G.push(glow);
     let sum = 0;
     for (let k = 1; k < skin.length; k += 2) sum += skin[k];
@@ -357,10 +361,10 @@ export function col(hex: string): Color {
 
 /** Mix two colors into a new one. */
 export function mixCol(a: Color, b: Color | string, t: number): Color {
-  return a.clone().lerp(typeof b === 'string' ? new Color(b) : b, t);
+  return mixLinear(a, typeof b === 'string' ? new Color(b) : b, t);
 }
 
 /** Scale a color's brightness (in linear space) into a new one. */
 export function shade(a: Color, k: number): Color {
-  return a.clone().multiplyScalar(k);
+  return scaleLinear(a, k);
 }

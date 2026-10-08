@@ -16,8 +16,10 @@ import {
   type Group,
 } from 'three';
 import { applyPainterly, toonRamp } from '../../render/painterly';
+import type { RiderLook } from '../../core/types';
 import { Cloth, type Capsule } from './cloth';
 import type { ClothPattern, ClothSpec, ColliderName } from './accessories';
+import { evalRecipe, recipeOf, type ColorRecipe } from './palette';
 
 const PATTERN_ID: Record<ClothPattern, number> = { plain: 0, tattered: 1, feather: 2, hair: 3, scarf: 4, tail: 5, braid: 6, coat: 7 };
 
@@ -88,6 +90,8 @@ vec3 dwPattern(vec3 base, vec2 uv, bool front) {
 export function clothMaterial(pattern: ClothPattern, color: Color, trim: Color): MeshToonMaterial {
   const m = new MeshToonMaterial({ color, side: DoubleSide, gradientMap: toonRamp() });
   const trimU = { value: trim.clone() };
+  // Kept on the material so a color-only look change can retint it in place.
+  m.userData.trim = trimU;
   applyPainterly(m, {
     rim: 0.9,
     onBeforeCompile: (shader) => {
@@ -135,6 +139,9 @@ interface Piece {
   flip: boolean;
   /** Visual subdivisions per particle span (quality dependent). */
   sub: number;
+  /** How the piece's color and trim derive from the look (undefined = constant). */
+  colorRecipe?: ColorRecipe;
+  trimRecipe?: ColorRecipe;
 }
 
 export interface ClothLod {
@@ -250,7 +257,36 @@ export class ClothRig {
     this.parent.add(mesh);
     const capsules = spec.colliders.map((c) => colliderSets[c]).filter(Boolean);
     cloth.setColliders(capsules);
-    return { spec, cloth, mesh, geo, pos, nrm, vu, vv, pinOffset, pinBone, carryBone, targets: new Float64Array(n * 3), capsules, flip, sub };
+    return {
+      spec,
+      cloth,
+      mesh,
+      geo,
+      pos,
+      nrm,
+      vu,
+      vv,
+      pinOffset,
+      pinBone,
+      carryBone,
+      targets: new Float64Array(n * 3),
+      capsules,
+      flip,
+      sub,
+      colorRecipe: recipeOf(spec.render.color),
+      trimRecipe: recipeOf(spec.render.trim),
+    };
+  }
+
+  /** Retint every piece for a look with the same shape (colors only), in place. */
+  recolor(look: RiderLook): void {
+    const memo = new Map<ColorRecipe, Color>();
+    for (const pc of this.pieces) {
+      const m = pc.mesh.material as MeshToonMaterial;
+      if (pc.colorRecipe) m.color.copy(evalRecipe(pc.colorRecipe, look, memo));
+      const trimU = m.userData.trim as { value: Color } | undefined;
+      if (pc.trimRecipe && trimU) trimU.value.copy(evalRecipe(pc.trimRecipe, look, memo));
+    }
   }
 
   /** Put every particle back on its rest shape, carried by the current bone poses. */
