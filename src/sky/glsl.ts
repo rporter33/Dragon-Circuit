@@ -1,3 +1,5 @@
+import { SEA_MACRO_TILE } from './cloudTextures';
+
 // GLSL shared by the sky's shaders: cheap hash noise, the painterly light ramp, and the cloud
 // shading model used by both the cloud sea and the sky dome's far-field sea (so the two meet at
 // the horizon without a seam).
@@ -106,5 +108,19 @@ vec3 dwFlashGlow(vec3 p) {
   if (uFlash <= 0.001) return vec3(0.0);
   float d = length(p.xz - uFlashPos.xz);
   return vec3(0.75, 0.8, 1.0) * uFlash * (1.6 * exp(-d / 700.0) + 0.12 * exp(-d / 3500.0));
+}
+`;
+
+/**
+ * The cloud sea too far away for its billows to resolve: flat-lit tops whose brightness follows
+ * the big swell. The marched sea fades into this with distance and the dome's far field draws
+ * exactly this, so the two meet at the far plane without a seam at any draw distance.
+ * Needs CLOUD_SHADE_GLSL plus uSeaTex, uScrollMacro and uSeaMean01.
+ */
+export const FAR_SEA_GLSL = /* glsl */ `
+vec3 dwFarSea(vec3 hit, vec3 rd) {
+  float swell = textureLod(uSeaTex, hit.xz / ${SEA_MACRO_TILE.toFixed(1)} + uScrollMacro, 2.0).g;
+  float h01 = mix(uSeaMean01 * 0.8, min(1.0, uSeaMean01 * 1.25), swell);
+  return dwCloudShade(vec3(0.0, 1.0, 0.0), h01, 0.0, 0.88, rd);
 }
 `;

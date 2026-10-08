@@ -22,7 +22,7 @@ import { globalUniforms } from '../render/uniforms';
 import { LAYOUT, type WorldLayout } from '../world/layout';
 import { clamp01, smoothstep } from '../core/math';
 import { LATITUDE, keyLightDirection, moonDirection, nightAmount, shadowStrength, sunDirection } from './sunPath';
-import { applyWeather, createPalette, samplePalette, type SkyPalette } from './palette';
+import { applyWeather, createPalette, samplePalette, type PaletteWeather, type SkyPalette } from './palette';
 import { SkyDome } from './SkyDome';
 import { CloudSea, MAX_SHADOWERS, SEA_BASE, SEA_TOP } from './CloudSea';
 import { CloudBanks } from './CloudBanks';
@@ -97,6 +97,7 @@ export class Sky implements SkySystem {
   private occluderScore: Float32Array;
   private staticOccluders: number;
   private fallbackDrift = new Vector3();
+  private paletteWeather: PaletteWeather = { ...NEUTRAL_WEATHER };
 
   constructor(scene: Scene, renderer: Renderer, quality: QualityProfile, weather?: Weather) {
     this.scene = scene;
@@ -120,10 +121,10 @@ export class Sky implements SkySystem {
     const field = generateSeaField(SEA_TEX_SIZE);
     this.seaField = field;
     this.seaMean01 = field.mean01;
-    this.dome = new SkyDome(scene, this.shared);
-    this.dome.uniforms.uSeaMean01.value = field.mean01;
-    this.dome.uniforms.uSeaY.value = SEA_BASE + field.mean01 * SEA_RANGE;
     this.sea = new CloudSea(scene, seaTexture(field), SEA_TEX_SIZE, this.shared, CLOUD_LEVELS[2][0]);
+    this.sea.farField.uSeaMean01.value = field.mean01;
+    this.dome = new SkyDome(scene, { ...this.shared, ...this.sea.farField });
+    this.dome.uniforms.uSeaY.value = SEA_BASE + field.mean01 * SEA_RANGE;
 
     // Occluders: islands and spires are static; banks are appended per refresh.
     const statics = this.layout.islands.length + this.layout.spires.length;
@@ -215,7 +216,14 @@ export class Sky implements SkySystem {
     // --- Palette --------------------------------------------------------------------------
     const pal = samplePalette(this.timeOfDay, this.palette);
     const clearKey = pal.keyI;
-    applyWeather(pal, w ? { overcast: w.overcast, mist: w.mist, rain: w.rain, fog: w.params.fog } : NEUTRAL_WEATHER);
+    const pw = this.paletteWeather;
+    if (w) {
+      pw.overcast = w.overcast;
+      pw.mist = w.mist;
+      pw.rain = w.rain;
+      pw.fog = w.params.fog;
+    }
+    applyWeather(pal, w ? pw : NEUTRAL_WEATHER);
 
     // --- Shared uniforms --------------------------------------------------------------------
     const u = globalUniforms;

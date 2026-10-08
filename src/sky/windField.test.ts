@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { LAYOUT, type IslandDef, type WorldLayout } from '../world/layout';
 import { BOUNDARY_PUSH, THERMAL_CORE, THERMAL_EDGE, WindField } from './windField';
+import { BREEDS } from '../flight/breeds';
+import { SIM_DT, launch, neutralInput, stillAir } from '../flight/telemetry';
 
 /** A lonely island and a lonely thermal far apart, so each effect can be measured on its own. */
 function testLayout(): WorldLayout {
@@ -192,5 +194,39 @@ describe('determinism and gusts', () => {
     const f = calmField();
     const out = f.windAt(new Vector3(-900, 200, 1500), new Vector3());
     expect(out.toArray()).toEqual([8, 0, 0]);
+  });
+});
+
+describe('flying the field', () => {
+  /** A galewing gliding hands-off along +Z for `seconds` through the field; returns height change. */
+  function glide(strength: number, seconds = 8): number {
+    const layout = testLayout();
+    layout.islands = [];
+    // A broad 5 m/s column around the glide path (launch is at the origin heading +Z).
+    layout.thermals = [{ id: 0, x: 0, z: 90, radius: 400, strength, baseY: 0, topY: 6000 }];
+    const field = new WindField(layout);
+    field.state.wind.set(0, 0, 4);
+    field.state.gust = 0.3;
+    field.state.thermal = 1;
+    const m = launch(BREEDS.galewing, 22);
+    const env = { windAt: (p: Vector3, out: Vector3) => field.windAt(p, out), terrain: stillAir().terrain };
+    const input = neutralInput();
+    const y0 = m.state.position.y;
+    for (let i = 0; i < seconds / SIM_DT; i++) {
+      field.state.time += SIM_DT;
+      field.state.drift.z += 4 * SIM_DT;
+      m.step(SIM_DT, input, env);
+    }
+    // Stayed inside the column's full-strength core the whole way.
+    expect(Math.hypot(m.state.position.x, m.state.position.z - 90)).toBeLessThan(400 * THERMAL_CORE);
+    return m.state.position.y - y0;
+  }
+
+  it('a 5 m/s thermal carries a galewing upward', () => {
+    expect(glide(5)).toBeGreaterThan(15);
+  });
+
+  it('without it the same glide sinks', () => {
+    expect(glide(0)).toBeLessThan(-5);
   });
 });

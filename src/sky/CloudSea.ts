@@ -23,7 +23,7 @@ import {
 } from 'three';
 import { FOG_PARS_GLSL } from '../render/painterly';
 import { globalUniforms } from '../render/uniforms';
-import { CLOUD_SHADE_GLSL, NOISE_GLSL, RAMP_GLSL } from './glsl';
+import { CLOUD_SHADE_GLSL, FAR_SEA_GLSL, NOISE_GLSL, RAMP_GLSL } from './glsl';
 import { MACRO_DRIFT, SEA_BILLOW_WEIGHT, SEA_MACRO_TILE, SEA_RANGE, SEA_TILE } from './cloudTextures';
 
 /**
@@ -61,10 +61,12 @@ uniform float uSeaTop;
 uniform float uPixelAngle;
 uniform float uTexSize;
 uniform float uMaxDist;
+uniform float uSeaMean01;
 uniform vec4 uShadowers[${MAX_SHADOWERS}];
 uniform int uShadowerCount;
 uniform float uShadowerStrength;
 varying vec3 vDir;
+${FAR_SEA_GLSL}
 
 const float TILE_MAIN = ${SEA_TILE.toFixed(1)};
 const float TILE_MACRO = ${SEA_MACRO_TILE.toFixed(1)};
@@ -196,6 +198,8 @@ void main() {
   float cavity = (bHere - bAround) * 2.2 * (1.0 - smoothstep(1.0, 4.0, lodM));
 
   vec3 col = dwCloudShade(n, h01, cavity, sh, rd);
+  // Toward the far plane detail gives way to the far-field look the dome continues.
+  col = mix(col, dwFarSea(hit, rd), smoothstep(uMaxDist * 0.5, uMaxDist * 0.98, tHit));
   col += dwFlashGlow(hit) * (0.4 + 0.6 * h01);
   col = dwApplyFog(col, hit, ro);
 
@@ -217,6 +221,11 @@ export class CloudSea {
   readonly mesh: Mesh;
   readonly material: ShaderMaterial;
   readonly shadowers: Vector4[];
+  /** Uniforms the dome's far field shares with the sea. */
+  get farField(): { uSeaTex: { value: Texture }; uScrollMacro: { value: Vector2 }; uSeaMean01: { value: number } } {
+    return { uSeaTex: this.uniforms.uSeaTex, uScrollMacro: this.uniforms.uScrollMacro, uSeaMean01: this.uniforms.uSeaMean01 };
+  }
+
   private uniforms: {
     uSeaTex: { value: Texture };
     uScrollMain: { value: Vector2 };
@@ -225,6 +234,7 @@ export class CloudSea {
     uSeaBase: { value: number };
     uSeaTop: { value: number };
     uMaxDist: { value: number };
+    uSeaMean01: { value: number };
     uPixelAngle: { value: number };
     uTexSize: { value: number };
     uShadowers: { value: Vector4[] };
@@ -242,6 +252,7 @@ export class CloudSea {
       uSeaBase: { value: SEA_BASE },
       uSeaTop: { value: SEA_TOP },
       uMaxDist: { value: 6000 },
+      uSeaMean01: { value: 0.5 },
       uPixelAngle: { value: 0.001 },
       uTexSize: { value: texSize },
       uShadowers: { value: this.shadowers },

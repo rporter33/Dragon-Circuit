@@ -16,10 +16,11 @@ import {
   Vector2,
   Vector3,
   type Scene,
+  type Texture,
 } from 'three';
 import { FOG_PARS_GLSL } from '../render/painterly';
 import { globalUniforms } from '../render/uniforms';
-import { CLOUD_SHADE_GLSL, NOISE_GLSL, RAMP_GLSL } from './glsl';
+import { CLOUD_SHADE_GLSL, FAR_SEA_GLSL, NOISE_GLSL, RAMP_GLSL } from './glsl';
 
 const VERTEX = /* glsl */ `
 varying vec3 vDir;
@@ -53,6 +54,9 @@ uniform vec2 uWindDir;
 uniform mat3 uStarRot;
 uniform float uSeaY;
 uniform float uSeaMean01;
+uniform sampler2D uSeaTex;
+uniform vec2 uScrollMacro;
+${FAR_SEA_GLSL}
 uniform vec3 uFlashDir;
 varying vec3 vDir;
 
@@ -203,7 +207,7 @@ void main() {
     float t = (uSeaY - cameraPosition.y) / d.y;
     if (t > 0.0) {
       vec3 hit = cameraPosition + d * min(t, 1e6);
-      col = dwCloudShade(vec3(0.0, 1.0, 0.0), uSeaMean01, 0.0, 1.0, d) + dwFlashGlow(hit);
+      col = dwFarSea(hit, d) + dwFlashGlow(hit);
       col = dwApplyFog(col, hit, cameraPosition);
     } else {
       col = mix(uFogColor, uCloudShade, 0.4);
@@ -233,6 +237,8 @@ export interface DomeUniforms {
   uStarRot: { value: Matrix3 };
   uSeaY: { value: number };
   uSeaMean01: { value: number };
+  uSeaTex: { value: Texture };
+  uScrollMacro: { value: Vector2 };
   uFlashDir: { value: Vector3 };
   uCloudLit: { value: Color };
   uCloudShade: { value: Color };
@@ -246,7 +252,10 @@ export class SkyDome {
   readonly uniforms: DomeUniforms;
 
   /** Cloud uniforms are shared with the cloud sea so both shade identically. */
-  constructor(scene: Scene, shared: Pick<DomeUniforms, 'uCloudLit' | 'uCloudShade' | 'uFlashPos' | 'uFlash' | 'uCloudDirect'>) {
+  constructor(
+    scene: Scene,
+    shared: Pick<DomeUniforms, 'uCloudLit' | 'uCloudShade' | 'uFlashPos' | 'uFlash' | 'uCloudDirect' | 'uSeaTex' | 'uScrollMacro' | 'uSeaMean01'>,
+  ) {
     this.uniforms = {
       uHorizonSun: { value: new Color() },
       uSunDisk: { value: new Color() },
@@ -263,7 +272,6 @@ export class SkyDome {
       uWindDir: { value: new Vector2(1, 0) },
       uStarRot: { value: new Matrix3() },
       uSeaY: { value: 0 },
-      uSeaMean01: { value: 0.5 },
       uFlashDir: { value: new Vector3(1, 0, 0) },
       ...shared,
     };
