@@ -27,6 +27,7 @@ import { SkyDome } from './SkyDome';
 import { CloudSea, MAX_SHADOWERS, SEA_BASE, SEA_TOP, type SeaQuality } from './CloudSea';
 import { CloudBanks } from './CloudBanks';
 import { CloudBankField, buildBanks } from './cloudBankField';
+import { BoundaryWall } from './BoundaryWall';
 import { SEA_RANGE, generateSeaField, puffAtlas, seaHeight01, seaTexture, type SeaField } from './cloudTextures';
 import type { Weather } from './Weather';
 import { SHADOW_RANGE, SHADOW_UP, installShadowFade } from './shadowFade';
@@ -54,6 +55,9 @@ export const CLOUD_LEVELS: { sea: SeaQuality; banks: number; puffs: number }[] =
   { sea: { steps: 14, secant: 3, shadowSteps: 2, detail: true, shadowers: 10, half: true }, banks: 26, puffs: 13 },
   { sea: { steps: 24, secant: 3, shadowSteps: 4, detail: true, shadowers: MAX_SHADOWERS, half: false }, banks: 38, puffs: 16 },
 ];
+
+/** The storm wall stands this far beyond the boundary radius (m), past where the headwind stops a flyer. */
+const WALL_OFFSET = 480;
 
 const NEUTRAL_WEATHER = { overcast: 0, mist: 0, rain: 0, fog: 1 };
 const UP = new Vector3(0, 1, 0);
@@ -90,6 +94,8 @@ export class Sky implements SkySystem {
   private sea: CloudSea;
   private banks: CloudBanks | null = null;
   private bankField: CloudBankField;
+  /** The storm at the world's edge. */
+  private wall: BoundaryWall;
   private seaField: SeaField;
   private seaMean01: number;
   private shared = {
@@ -158,6 +164,7 @@ export class Sky implements SkySystem {
     }
 
     this.bankField = new CloudBankField(this.layout, []);
+    this.wall = new BoundaryWall(scene, this.layout.boundaryRadius + WALL_OFFSET, this.shared);
     this.setQuality(quality);
     this.setTimeOfDay(this.timeOfDay);
   }
@@ -290,6 +297,7 @@ export class Sky implements SkySystem {
     const cover = w ? w.cloudCover : 0.32;
     this.bankField.update(drift, this.time, cover, dt);
     this.banks?.update(camera);
+    this.wall.update(dt, camera);
     this.refreshShadowers(dt, camera);
     const seaShadows = smoothstep(0.04, 0.14, this.keyDirection.y) * (1 - 0.7 * overcast);
     this.sea.update(camera, drift, this.shadowerCount, seaShadows, this.renderer.gl.domElement.height);
