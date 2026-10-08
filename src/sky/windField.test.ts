@@ -1,0 +1,196 @@
+import { describe, expect, it } from 'vitest';
+import { Vector3 } from 'three';
+import { LAYOUT, type IslandDef, type WorldLayout } from '../world/layout';
+import { BOUNDARY_PUSH, THERMAL_CORE, THERMAL_EDGE, WindField } from './windField';
+
+/** A lonely island and a lonely thermal far apart, so each effect can be measured on its own. */
+function testLayout(): WorldLayout {
+  const island: IslandDef = {
+    id: 0, kind: 'meadow', x: 0, y: 300, z: 0, radius: 100, outline: 0.15, hills: 8, depth: 120,
+    lip: 9, flatCenter: 0.2, seed: 1, trees: 0, grass: 1, waterfalls: 0,
+  };
+  return {
+    islands: [island],
+    spires: [],
+    arches: [],
+    thermals: [{ id: 0, x: 1500, z: 0, radius: 60, strength: 10, baseY: 0, topY: 800 }],
+    landmarks: [],
+    spawn: { position: [0, 0, 0], yaw: 0 },
+    wyvernSpawn: { position: [0, 0, 0], yaw: 0 },
+    stable: { x: 0, z: 0, yaw: 0, interactRadius: 10 },
+    boundaryRadius: 2900,
+    cloudFloor: 25,
+  };
+}
+
+function calmField(layout = testLayout()): WindField {
+  const f = new WindField(layout);
+  f.state.wind.set(8, 0, 0); // blowing toward +X: the island's west face is windward
+  f.state.gust = 0;
+  f.state.thermal = 1;
+  return f;
+}
+
+describe('thermals', () => {
+  const f = calmField();
+  const t = testLayout().thermals[0];
+  const at = (dx: number, y = 300) => f.thermalAt(new Vector3(t.x + dx, y, t.z));
+
+  it('blows at full strength in the core', () => {
+    expect(at(0)).toBeCloseTo(t.strength, 5);
+    expect(at(t.radius * THERMAL_CORE * 0.95)).toBeCloseTo(t.strength, 5);
+  });
+
+  it('softens toward the edge', () => {
+    const edge = at(t.radius * 0.85);
+    expect(edge).toBeGreaterThan(0.5);
+    expect(edge).toBeLessThan(t.strength * 0.9);
+    // Monotonic falloff from core to edge.
+    let prev = Infinity;
+    for (let d = 0; d <= t.radius * THERMAL_EDGE; d += 3) {
+      const v = at(d);
+      expect(v).toBeLessThanOrEqual(prev + 1e-9);
+      prev = v;
+    }
+  });
+
+  it('does nothing outside the column or above its top', () => {
+    expect(at(t.radius * THERMAL_EDGE + 1)).toBe(0);
+    expect(at(t.radius * 3)).toBe(0);
+    expect(at(0, t.topY + 1)).toBe(0);
+    expect(at(0, t.baseY + 5)).toBeLessThan(t.strength * 0.1);
+    expect(at(0, t.topY - 2)).toBeLessThan(t.strength * 0.1);
+  });
+
+  it('scales with the weather', () => {
+    const g = calmField();
+    g.state.thermal = 0.6;
+    expect(g.thermalAt(new Vector3(t.x, 300, t.z))).toBeCloseTo(t.strength * 0.6, 5);
+  });
+
+  it('shows up in windAt as an updraft', () => {
+    const out = f.windAt(new Vector3(t.x, 300, t.z), new Vector3());
+    expect(out.y).toBeCloseTo(t.strength, 3);
+    expect(out.x).toBeCloseTo(8, 5);
+  });
+});
+
+describe('ridge lift', () => {
+  const f = calmField();
+  const isl = testLayout().islands[0];
+
+  it('rises on the windward side and sinks on the lee side', () => {
+    const windward = f.ridgeAt(new Vector3(isl.x - isl.radius - 10, isl.y + 10, isl.z));
+    const leeward = f.ridgeAt(new Vector3(isl.x + isl.radius + 10, isl.y + 10, isl.z));
+    expect(windward).toBeGreaterThan(1.5);
+    expect(leeward).toBeLessThan(0);
+    // The lee sink is gentler than the windward lift.
+    expect(Math.abs(leeward)).toBeLessThan(windward);
+  });
+
+  it('is zero across the wind (flanks) and far from the island', () => {
+    expect(Math.abs(f.ridgeAt(new Vector3(isl.x, isl.y + 10, isl.z + isl.radius + 10)))).toBeLessThan(1e-6);
+    expect(f.ridgeAt(new Vector3(isl.x - isl.radius - 400, isl.y, isl.z))).toBe(0);
+    expect(f.ridgeAt(new Vector3(isl.x - isl.radius - 10, isl.y + 600, isl.z))).toBe(0);
+  });
+
+  it('flips when the wind turns around', () => {
+    const g = calmField();
+    g.state.wind.set(-8, 0, 0);
+    expect(g.ridgeAt(new Vector3(isl.x + isl.radius + 10, isl.y + 10, isl.z))).toBeGreaterThan(1.5);
+    expect(g.ridgeAt(new Vector3(isl.x - isl.radius - 10, isl.y + 10, isl.z))).toBeLessThan(0);
+  });
+
+  it('grows with wind speed', () => {
+    const g = calmField();
+    const p = new Vector3(isl.x - isl.radius - 10, isl.y + 10, isl.z);
+    const slow = g.ridgeAt(p);
+    g.state.wind.set(16, 0, 0);
+    expect(g.ridgeAt(p)).toBeCloseTo(slow * 2, 5);
+  });
+});
+
+describe('boundary', () => {
+  const f = calmField();
+  f.state.wind.set(0, 0, 0);
+  const b = testLayout().boundaryRadius;
+
+  it('leaves the archipelago alone', () => {
+    const out = f.windAt(new Vector3(b * 0.5, 300, b * 0.5), new Vector3());
+    expect(out.length()).toBeLessThan(1e-9);
+  });
+
+  it('pushes back toward the center beyond the boundary, in every direction', () => {
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 6) {
+      const p = new Vector3(Math.cos(a) * (b + 200), 400, Math.sin(a) * (b + 200));
+      const out = f.windAt(p, new Vector3());
+      const inward = -(out.x * p.x + out.z * p.z) / Math.hypot(p.x, p.z);
+      expect(inward).toBeGreaterThan(BOUNDARY_PUSH * 0.5);
+      // Purely radial: no sideways component.
+      expect(Math.abs(out.x * p.z - out.z * p.x) / Math.hypot(p.x, p.z)).toBeLessThan(1e-6);
+    }
+  });
+
+  it('builds smoothly with distance', () => {
+    let prev = -1;
+    for (let r = b - 100; r < b + 500; r += 20) {
+      const out = f.windAt(new Vector3(r, 300, 0), new Vector3());
+      const inward = -out.x;
+      expect(inward).toBeGreaterThanOrEqual(prev - 1e-9);
+      expect(inward - prev).toBeLessThan(5);
+      prev = inward;
+    }
+    expect(prev).toBeCloseTo(BOUNDARY_PUSH, 0);
+  });
+});
+
+describe('determinism and gusts', () => {
+  it('returns the same air for the same state and point', () => {
+    const a = new WindField(LAYOUT);
+    const b = new WindField(LAYOUT);
+    for (const f of [a, b]) {
+      f.state.wind.set(7, 0, -3);
+      f.state.gust = 0.7;
+      f.state.time = 123.4;
+      f.state.drift.set(860, 0, -370);
+    }
+    const p = new Vector3(260, 330, -40);
+    const va = a.windAt(p, new Vector3());
+    const vb = b.windAt(p, new Vector3());
+    const va2 = a.windAt(p, new Vector3());
+    expect(va.toArray()).toEqual(vb.toArray());
+    expect(va2.toArray()).toEqual(va.toArray());
+  });
+
+  it('gusts vary in space and time around the prevailing wind', () => {
+    const f = new WindField(testLayout());
+    f.state.wind.set(9, 0, 0);
+    f.state.gust = 0.8;
+    const p = new Vector3(-1200, 500, 900);
+    const out = new Vector3();
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    const n = 400;
+    for (let i = 0; i < n; i++) {
+      f.state.time = i * 1.7;
+      f.state.drift.set(i * 15, 0, 0);
+      f.windAt(p, out);
+      min = Math.min(min, out.x);
+      max = Math.max(max, out.x);
+      sum += out.x;
+      expect(Number.isFinite(out.x) && Number.isFinite(out.y) && Number.isFinite(out.z)).toBe(true);
+    }
+    expect(max - min).toBeGreaterThan(3);
+    // Gusts ride on the prevailing wind; they never reverse it.
+    expect(min).toBeGreaterThan(0);
+    expect(sum / n).toBeGreaterThan(6);
+    expect(sum / n).toBeLessThan(13);
+  });
+
+  it('is calm-free of gusts when gustiness is zero', () => {
+    const f = calmField();
+    const out = f.windAt(new Vector3(-900, 200, 1500), new Vector3());
+    expect(out.toArray()).toEqual([8, 0, 0]);
+  });
+});
