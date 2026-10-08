@@ -261,6 +261,11 @@ export interface RaceSystem {
   fixedUpdate(dt: number, player: PlayerSystem): void;
   update(dt: number, camera: PerspectiveCamera, player: PlayerSystem): void;
   setShowGhost(on: boolean): void;
+  /**
+   * Optional: forget everything remembered about past runs after the save was erased (bests, the
+   * in-memory best ghost) and stand down any race. Game.resetProgress calls it.
+   */
+  resetProgress?(): void;
 }
 
 export interface SaveData {
@@ -279,6 +284,11 @@ export interface SaveData {
   playTime: number;
   /** Whether the first-flight tutorial prompts have been dismissed. */
   tutorialDone: boolean;
+  /**
+   * Optional: ids of the onboarding tips already shown or learned (the UI's tutor; see
+   * ui/tutor.ts). tutorialDone turns true once every first-flight tip is in here.
+   */
+  tips?: string[];
 }
 
 export interface GhostRecording {
@@ -364,8 +374,16 @@ export interface GameActions {
   beginRace(raceId: string): void;
   restartRace(): void;
   quitRace(): void;
+  /** Keep this look: applies it, stores it in the save and persists. */
   setWyvernLook(look: WyvernLook): void;
   setRiderLook(look: RiderLook): void;
+  /**
+   * Optional: show a look without keeping it (Stable picks before Save): the models and the flight
+   * breed change, the save does not. Commit with setWyvernLook / setRiderLook, or preview the
+   * saved look again to put it back.
+   */
+  previewWyvernLook?(look: WyvernLook): void;
+  previewRiderLook?(look: RiderLook): void;
   applySettings(s: Settings): void;
   resetProgress(): void;
   /** Optional: leave play (abandoning any race) and return to the title screen. */
@@ -387,7 +405,12 @@ export interface GameView {
   prompt: { action: PromptAction; text: string } | null;
 }
 
-export type PromptAction = 'flap' | 'flare' | 'tuck' | 'interact' | 'mount' | 'dismount' | 'jump' | 'restart' | 'stable';
+/**
+ * What the prompt's glyph shows. Most are buttons (drawn from the control scheme for the active
+ * device). 'rest' is advice with no button to press (winded: glide or land to recover); the HUD
+ * draws the wing emblem for it. Any action without a scheme binding is drawn that way.
+ */
+export type PromptAction = 'flap' | 'flare' | 'tuck' | 'interact' | 'mount' | 'dismount' | 'jump' | 'restart' | 'stable' | 'rest';
 
 export interface UiSystem {
   readonly screen: GameScreen;
