@@ -26,6 +26,9 @@ export function guessQuality(): Settings['quality'] {
     if (!gl) return 'low';
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     const name = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)).toLowerCase() : '';
+    // Give the probe context back now rather than whenever GC gets to it (browsers cap live
+    // WebGL contexts, and this one would otherwise sit next to the game's for a while).
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
     if (/swiftshader|llvmpipe|software/.test(name)) return 'low';
     if (/intel|uhd|iris|mali|adreno|powervr|apple m1\b/.test(name)) return 'medium';
     return 'high';
