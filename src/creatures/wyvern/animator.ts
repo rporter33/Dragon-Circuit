@@ -567,21 +567,23 @@ export class WyvernAnimator {
 
   private applyWingFK(side: number, p: WingPose): void {
     const w = this.rig.idx.wings[side];
-    const set = (bone: number, el: number, sw: number, tw: number) => {
-      _e.set(tw, sw, el, 'ZYX');
-      _q.setFromEuler(_e);
-      if (side === 1) mirrorQuat(_q, _q);
-      this.local[bone].copy(_q);
-      this.fk(bone);
-    };
-    set(w.humerus, p[W.humEl], p[W.humSw], p[W.humTw]);
-    set(w.forearm, p[W.foreEl], p[W.foreSw], p[W.foreTw]);
-    set(w.hand, p[W.handEl], p[W.handSw], p[W.handTw]);
-    set(w.claw, p[W.clawEl], p[W.clawSw], 0);
+    this.wingJoint(side, w.humerus, p[W.humEl], p[W.humSw], p[W.humTw]);
+    this.wingJoint(side, w.forearm, p[W.foreEl], p[W.foreSw], p[W.foreTw]);
+    this.wingJoint(side, w.hand, p[W.handEl], p[W.handSw], p[W.handTw]);
+    this.wingJoint(side, w.claw, p[W.clawEl], p[W.clawSw], 0);
     for (let f = 0; f < 3; f++) {
-      set(w.fingers[f][0], p[W.f0El + f * 3], p[W.f0Sw + f * 3], p[W.f0Tw + f * 3]);
-      set(w.fingers[f][1], p[W.f0bEl + f * 2], p[W.f0bSw + f * 2], 0);
+      this.wingJoint(side, w.fingers[f][0], p[W.f0El + f * 3], p[W.f0Sw + f * 3], p[W.f0Tw + f * 3]);
+      this.wingJoint(side, w.fingers[f][1], p[W.f0bEl + f * 2], p[W.f0bSw + f * 2], 0);
     }
+  }
+
+  /** One wing joint from channels (left convention, mirrored for the right wing). */
+  private wingJoint(side: number, bone: number, el: number, sw: number, tw: number): void {
+    _e.set(tw, sw, el, 'ZYX');
+    _q.setFromEuler(_e);
+    if (side === 1) mirrorQuat(_q, _q);
+    this.local[bone].copy(_q);
+    this.fk(bone);
   }
 
   /**

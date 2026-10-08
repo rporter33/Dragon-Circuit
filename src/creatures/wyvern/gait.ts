@@ -34,13 +34,22 @@ export function gaitTiming(t: number, out: GaitTiming): GaitTiming {
   return out;
 }
 
-/** Where in its own cycle a foot is: [inSwing, progress 0..1 within stance or swing]. */
-export function footPhase(phase: number, offset: number, duty: number): { swing: boolean; t: number } {
+export interface FootPhase {
+  swing: boolean;
+  /** Progress 0..1 within the stance or the swing. */
+  t: number;
+}
+
+/** Where in its own cycle a foot is. Writes into `out` (allocation-free). */
+export function footPhase(phase: number, offset: number, duty: number, out: FootPhase = { swing: false, t: 0 }): FootPhase {
   let p = (phase + offset) % 1;
   if (p < 0) p += 1;
-  if (p < duty) return { swing: false, t: p / duty };
-  return { swing: true, t: (p - duty) / (1 - duty) };
+  out.swing = p >= duty;
+  out.t = out.swing ? (p - duty) / (1 - duty) : p / duty;
+  return out;
 }
+
+const _ph: FootPhase = { swing: false, t: 0 };
 
 export interface GaitContext {
   dt: number;
@@ -145,7 +154,7 @@ export class Gait {
       foot.target.y = ctx.groundAt(foot.target.x, foot.target.z, foot.target.y + sh);
 
       if (ctx.moving) {
-        const ph = footPhase(this.phase, T.offsets[i], T.duty);
+        const ph = footPhase(this.phase, T.offsets[i], T.duty, _ph);
         if (ph.swing && !foot.swinging) {
           foot.swinging = true;
           foot.stepTime = 0;

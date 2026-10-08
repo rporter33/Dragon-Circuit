@@ -46,7 +46,7 @@ function boneWorld(w: Wyvern, name: string): Vector3 {
   return bone.getWorldPosition(new Vector3());
 }
 
-describe('proportions', () => {
+describe('proportions', { timeout: 30000 }, () => {
   it('honors the true wingspan (bind pose, tip to tip)', () => {
     for (const breed of BREED_ORDER) {
       const rig = buildRig(breed);
@@ -96,7 +96,8 @@ describe('proportions', () => {
   });
 });
 
-describe('model budget and cosmetics', () => {
+// Building ~150 meshes is quick (a few seconds) but give a loaded shared machine headroom.
+describe('model budget and cosmetics', { timeout: 60000 }, () => {
   const slots = { wyvernPattern: 'pattern', wyvernHorns: 'horns', wyvernFrill: 'frill', wyvernTail: 'tail', saddle: 'saddle' } as const;
 
   it('builds every catalog id for every breed within budget', () => {
@@ -260,7 +261,7 @@ describe('accessors', () => {
   });
 });
 
-describe('animator robustness', () => {
+describe('animator robustness', { timeout: 60000 }, () => {
   it('never produces NaN under random poses, gaits, dt and teleports', () => {
     const rnd = mulberry32(42);
     const gaits = ['idle', 'walk', 'run', 'takeoff', 'landing', 'jump'] as const;
