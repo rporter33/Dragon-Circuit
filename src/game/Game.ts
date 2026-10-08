@@ -96,7 +96,7 @@ export class Game implements GameActions {
       settings: () => this.settings,
     });
     this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings, this.events);
-    this.wyvern = new Wyvern(this.save.data.wyvern);
+    this.wyvern = new Wyvern(this.save.data.wyvern, { terrain: this.world.terrain });
     this.rider = new Rider(this.save.data.rider);
     this.scene.add(this.wyvern.group, this.rider.group);
     this.races = new Races();
