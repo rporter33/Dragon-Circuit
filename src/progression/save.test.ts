@@ -1,0 +1,179 @@
+import { describe, expect, it } from 'vitest';
+import { DEFAULT_RIDER, DEFAULT_WYVERN } from '../cosmetics/catalog';
+import { DEFAULT_SETTINGS } from '../game/settings';
+import type { GhostRecording } from '../game/contracts';
+import { GHOST_STRIDE, LEGACY_SAVE_KEY, LocalSaveStore, MemoryGhostStore, SAVE_KEY, defaultSave, migrateSave, validGhost, type KeyValueStorage } from './save';
+import { featherId } from './relics';
+
+class MapStorage implements KeyValueStorage {
+  map = new Map<string, string>();
+  writes = 0;
+  getItem(k: string) {
+    return this.map.get(k) ?? null;
+  }
+  setItem(k: string, v: string) {
+    this.writes++;
+    this.map.set(k, v);
+  }
+  removeItem(k: string) {
+    this.map.delete(k);
+  }
+}
+
+function ghost(raceId = 'roost-loop', n = 10): GhostRecording {
+  const samples = new Float32Array(n * GHOST_STRIDE);
+  for (let i = 0; i < samples.length; i++) samples[i] = i * 0.5;
+  return { raceId, breed: 'harrier', look: { ...DEFAULT_WYVERN }, rider: { ...DEFAULT_RIDER }, timeMs: 1234, rate: 30, samples, splits: [100, 200] };
+}
+
+describe('save migration and sanitizing', () => {
+  it('garbage in, default save out', () => {
+    for (const junk of [null, undefined, 42, 'x', [], [1, 2]]) expect(migrateSave(junk)).toEqual(defaultSave());
+  });
+
+  it('a current save round-trips unchanged', () => {
+    const s = defaultSave();
+    s.collected.push(featherId(0), 'relic-ember');
+    s.unlocked.push('stripes');
+    s.races['roost-loop'] = { bestMs: 61234, medal: 'silver', breed: 'skimmer', runs: 4 };
+    s.discovered.push('roost', 'eye');
+    s.playTime = 321.5;
+    s.tutorialDone = true;
+    s.settings.fov = 70;
+    s.wyvern.horns = 'ram';
+    expect(migrateSave(JSON.parse(JSON.stringify(s)))).toEqual(s);
+  });
+
+  it('migrates a v0 (unversioned) document', () => {
+    const v0 = {
+      wyvern: { breed: 'galewing', primary: '#112233' },
+      found: ['feather-03', 'relic-mane', 'feather-99'],
+      races: { 'cascade-run': { best: 70500, medal: 'gold' }, broken: { best: 'x' } },
+      settings: { fov: 75, quality: 'potato' },
+    };
+    const s = migrateSave(v0);
+    expect(s.version).toBe(1);
+    expect(s.collected).toEqual(['feather-03', 'relic-mane']);
+    expect(s.races['cascade-run']).toEqual({ bestMs: 70500, medal: 'gold', breed: 'harrier', runs: 1 });
+    expect(s.races.broken).toBeUndefined();
+    expect(s.wyvern.breed).toBe('galewing');
+    expect(s.wyvern.primary).toBe('#112233');
+    expect(s.wyvern.horns).toBe(DEFAULT_WYVERN.horns);
+    expect(s.settings.fov).toBe(75);
+    expect(s.settings.quality).toBe(DEFAULT_SETTINGS.quality);
+    expect(s.discovered).toEqual([]);
+  });
+
+  it('repairs bad fields without losing good ones', () => {
+    const s = migrateSave({
+      version: 1,
+      wyvern: { breed: 'dragon', horns: 'not-a-horn', pattern: 'ember', primary: 'red' },
+      rider: { hair: 'braids', build: 'huge', scarf: 'long' },
+      unlocked: ['ember', 'bogus', 'ember', 7],
+      collected: ['feather-01', 'feather-01', 'relic-nope'],
+      races: { a: { bestMs: -5, medal: 'gold' }, b: { bestMs: 5000, medal: 'platinum', runs: 2.7, breed: 'ironback' } },
+      settings: { showGhost: 'yes', lookSensitivity: 99, fov: Infinity },
+      playTime: -3,
+    });
+    expect(s.wyvern.breed).toBe('harrier');
+    expect(s.wyvern.horns).toBe(DEFAULT_WYVERN.horns);
+    expect(s.wyvern.pattern).toBe('ember');
+    expect(s.wyvern.primary).toBe(DEFAULT_WYVERN.primary);
+    expect(s.rider.hair).toBe('braids');
+    expect(s.rider.build).toBe(DEFAULT_RIDER.build);
+    expect(s.unlocked).toEqual(['ember']);
+    expect(s.collected).toEqual(['feather-01']);
+    expect(s.races.a).toBeUndefined();
+    expect(s.races.b).toEqual({ bestMs: 5000, medal: 'none', breed: 'ironback', runs: 2 });
+    expect(s.settings.showGhost).toBe(true);
+    expect(s.settings.lookSensitivity).toBe(2);
+    expect(s.settings.fov).toBe(DEFAULT_SETTINGS.fov);
+    expect(s.playTime).toBe(0);
+  });
+});
+
+describe('LocalSaveStore', () => {
+  it('persists, reloads and resets (keeping settings)', () => {
+    const storage = new MapStorage();
+    const a = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() });
+    a.data.collected.push('feather-07');
+    a.data.races['lantern-dash'] = { bestMs: 90000, medal: 'bronze', breed: 'harrier', runs: 1 };
+    a.data.settings.invertPitch = true;
+    a.flush();
+    const b = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() });
+    expect(b.data.collected).toEqual(['feather-07']);
+    expect(b.medalCount('bronze')).toBe(1);
+    expect(b.medalCount('silver')).toBe(0);
+    b.reset();
+    const c = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() });
+    expect(c.data.collected).toEqual([]);
+    expect(c.data.races).toEqual({});
+    expect(c.data.settings.invertPitch).toBe(true);
+  });
+
+  it('debounces save() into one write', async () => {
+    const storage = new MapStorage();
+    const s = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore(), debounceMs: 5 });
+    s.save();
+    s.save();
+    s.save();
+    expect(storage.writes).toBe(0);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(storage.writes).toBe(1);
+  });
+
+  it('migrates the legacy key once', () => {
+    const storage = new MapStorage();
+    storage.setItem(LEGACY_SAVE_KEY, JSON.stringify({ found: ['relic-charts'] }));
+    const s = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() });
+    expect(s.data.collected).toEqual(['relic-charts']);
+    expect(storage.getItem(LEGACY_SAVE_KEY)).toBeNull();
+    expect(JSON.parse(storage.getItem(SAVE_KEY)!).version).toBe(1);
+  });
+
+  it('survives corrupt JSON and missing storage', () => {
+    const storage = new MapStorage();
+    storage.setItem(SAVE_KEY, '{"version":1,"collected":[');
+    expect(new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() }).data).toEqual(defaultSave());
+    const none = new LocalSaveStore({ storage: null, ghosts: new MemoryGhostStore() });
+    none.data.collected.push('feather-01');
+    expect(() => none.flush()).not.toThrow();
+  });
+
+  it('isUnlocked honours defaults, records and slots', () => {
+    const s = new LocalSaveStore({ storage: null, ghosts: new MemoryGhostStore() });
+    expect(s.isUnlocked('plain')).toBe(true);
+    expect(s.isUnlocked('stripes')).toBe(false);
+    expect(s.isUnlocked('nonexistent')).toBe(false);
+    // 'long' is a feather-locked hair style and a default scarf.
+    expect(s.isUnlocked('long', 'riderScarf')).toBe(true);
+    expect(s.isUnlocked('long', 'riderHair')).toBe(false);
+    s.data.unlocked.push('stripes', 'long');
+    expect(s.isUnlocked('stripes')).toBe(true);
+    expect(s.isUnlocked('long', 'riderHair')).toBe(true);
+  });
+
+  it('stores ghosts and clears them on reset', async () => {
+    const s = new LocalSaveStore({ storage: new MapStorage(), ghosts: new MemoryGhostStore() });
+    expect(await s.getGhost('roost-loop')).toBeNull();
+    await s.putGhost(ghost());
+    const g = await s.getGhost('roost-loop');
+    expect(g?.samples.length).toBe(10 * GHOST_STRIDE);
+    s.reset();
+    await Promise.resolve();
+    expect(await s.getGhost('roost-loop')).toBeNull();
+  });
+});
+
+describe('ghost validation', () => {
+  it('accepts well-formed recordings (also from plain arrays) and rejects broken ones', () => {
+    const g = ghost();
+    expect(validGhost(g)?.samples).toEqual(g.samples);
+    expect(validGhost({ ...g, samples: Array.from(g.samples) })?.samples).toBeInstanceOf(Float32Array);
+    expect(validGhost({ ...g, samples: g.samples.subarray(0, 15) })).toBeNull();
+    expect(validGhost({ ...g, breed: 'dragon' })).toBeNull();
+    expect(validGhost({ ...g, timeMs: 0 })).toBeNull();
+    expect(validGhost({ ...g, splits: ['x'] })?.splits).toBeUndefined();
+    expect(validGhost(null)).toBeNull();
+  });
+});
