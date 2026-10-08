@@ -188,7 +188,9 @@ export class Game implements GameActions {
     this.world.update(dt, this.camera, focus);
     this.wyvern.update(dt, this.player.wyvernPose);
     this.rider.update(dt, this.player.riderPose, this.player.riderPose.mounted ? this.wyvern.saddle : null);
-    this.cameraRig.update(dt, this.screen === 'play' || this.screen === 'stable' ? input : this.idleInput, this.player);
+    // Photo mode (opened from the pause menu) flies the camera while the world holds still.
+    const cameraInput = this.screen === 'play' || this.screen === 'stable' || this.cameraRig.mode === 'photo';
+    this.cameraRig.update(dt, cameraInput ? input : this.idleInput, this.player);
     this.dressing.update(dt, this.camera, focus);
     this.races.update(dt, this.camera, this.player);
     this.collectibles.update(dt, this.camera, this.player);
@@ -275,6 +277,12 @@ export class Game implements GameActions {
     this.races.setShowGhost(s.showGhost);
     this.save.save();
     this.events.emit('settingsChanged', { settings: s });
+  }
+
+  quitToTitle(): void {
+    if (this.races.activeId) this.races.abort('quit');
+    this.placeAtSpawn();
+    this.setScreen('title');
   }
 
   resetProgress(): void {

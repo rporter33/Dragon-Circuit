@@ -1,0 +1,245 @@
+// The race layer of the HUD: "fly through the gate", the countdown, the timer with ring count,
+// a split delta that flashes green (ahead of your best) or red (behind) at each ring, an arrow
+// at the screen edge toward the next ring, and the alarm when a ring is missed.
+
+import { Vector3 } from 'three';
+import type { GameEventBus } from '../core/events';
+import type { GameEvents } from '../core/types';
+import type { GameView, RaceDef } from '../game/contracts';
+import { LiveClass, LiveStyle, LiveText, div, fromHtml, h } from './dom';
+import { formatDelta, formatTime, titleCase } from './format';
+import { ICONS, RULE } from './icons';
+
+export interface RaceHudCtx {
+  events: GameEventBus;
+  reducedMotion(): boolean;
+  /** Announce something in the HUD's toast stack. */
+  toast(text: string, sub?: string): void;
+}
+
+const tmp = new Vector3();
+
+export class RaceHud {
+  readonly root: HTMLElement;
+  private ctx: RaceHudCtx;
+
+  private cluster: HTMLElement;
+  private clusterOn: LiveClass;
+  private rings: LiveText;
+  private ringsTotal: LiveText;
+  private time: LiveText;
+  private best: LiveText;
+  private delta: HTMLElement;
+  private deltaLeft = 0;
+
+  private gate: HTMLElement;
+  private gateName: HTMLElement;
+  private gateOn: LiveClass;
+
+  private count: HTMLElement;
+  private countLeft = 0;
+
+  private edge: HTMLElement;
+  private edgeOn: LiveClass;
+  private edgeMissed: LiveClass;
+  private edgePos: LiveStyle;
+  private missed: HTMLElement;
+  private missedOn: LiveClass;
+  private missedLeft = 0;
+
+  /** The race the HUD is showing (from events; the race system may be idle again by now). */
+  private raceId: string | null = null;
+  private armed = false;
+  private finishedLeft = 0;
+  private ringIndex = 0;
+  private ringTotal = 0;
+  private finalMs = 0;
+
+  constructor(ctx: RaceHudCtx) {
+    this.ctx = ctx;
+    const ringsV = h('b', { text: '0' });
+    const ringsT = h('span', { text: '/0' });
+    const timeV = h('div', { class: 'dw-race-time', text: '0:00.00' });
+    const bestV = h('div', { class: 'dw-race-best' });
+    this.delta = div('dw-race-delta');
+    this.cluster = div(
+      'dw-race',
+      div('dw-race-row', div('dw-race-rings', fromHtml(ICONS.race), ringsV, ringsT), timeV),
+      bestV,
+      this.delta,
+    );
+    this.rings = new LiveText(ringsV);
+    this.ringsTotal = new LiveText(ringsT);
+    this.time = new LiveText(timeV);
+    this.best = new LiveText(bestV);
+    this.clusterOn = new LiveClass(this.cluster, 'is-on');
+
+    this.gateName = h('div', { class: 'dw-banner-name' });
+    this.gate = div(
+      'dw-banner dw-gate',
+      h('div', { class: 'dw-banner-kicker', text: 'RACE READY' }),
+      this.gateName,
+      fromHtml(RULE),
+      h('div', { class: 'dw-banner-sub', text: 'Fly through the gate to start' }),
+    );
+    this.gateOn = new LiveClass(this.gate, 'is-on');
+
+    this.count = div('dw-countdown');
+
+    this.edge = div('dw-edge', div('dw-edge-arrow', fromHtml(ICONS.arrow)));
+    this.edgeOn = new LiveClass(this.edge, 'is-on');
+    this.edgeMissed = new LiveClass(this.edge, 'is-missed');
+    this.edgePos = new LiveStyle(this.edge, 'transform');
+    this.missed = div('dw-missed', h('span', { text: 'Missed a ring — turn back' }));
+    this.missedOn = new LiveClass(this.missed, 'is-on');
+
+    this.root = div('dw-layer dw-racehud', this.cluster, this.gate, this.count, this.missed, this.edge);
+    this.subscribe(ctx.events);
+  }
+
+  private subscribe(ev: GameEventBus): void {
+    ev.on('raceArmed', (e: GameEvents['raceArmed']) => {
+      this.raceId = e.raceId;
+      this.armed = true;
+      this.finishedLeft = 0;
+      this.ringIndex = 0;
+      this.ringTotal = 0;
+    });
+    ev.on('raceCountdown', (e: GameEvents['raceCountdown']) => {
+      this.raceId = e.raceId;
+      this.armed = false;
+      this.showCount(String(e.count), false);
+    });
+    ev.on('raceStart', (e: GameEvents['raceStart']) => {
+      this.raceId = e.raceId;
+      this.armed = false;
+      this.finishedLeft = 0;
+      this.ringIndex = 0;
+      this.showCount('Go!', true);
+    });
+    ev.on('ringPassed', (e: GameEvents['ringPassed']) => {
+      this.ringIndex = e.index + 1;
+      this.ringTotal = e.total;
+      this.missedLeft = 0;
+      if (e.deltaMs !== null) this.flashDelta(e.deltaMs);
+    });
+    ev.on('ringMissed', () => {
+      this.missedLeft = 4;
+    });
+    ev.on('raceFinish', (e: GameEvents['raceFinish']) => {
+      this.finalMs = e.timeMs;
+      this.finishedLeft = 2;
+      this.missedLeft = 0;
+      this.showCount('Finish', true);
+    });
+    ev.on('raceAbort', (e: GameEvents['raceAbort']) => {
+      const wasRunning = this.raceId !== null;
+      this.armed = false;
+      this.finishedLeft = 0;
+      this.missedLeft = 0;
+      if (e.reason !== 'restart') this.raceId = null;
+      if (wasRunning && (e.reason === 'left-course' || e.reason === 'respawn')) {
+        this.ctx.toast('Race abandoned', e.reason === 'left-course' ? 'You strayed too far from the course' : 'You fell into the clouds');
+      }
+    });
+  }
+
+  private showCount(text: string, go: boolean): void {
+    const c = this.count;
+    c.textContent = text;
+    c.classList.remove('is-tick', 'is-go');
+    void c.offsetWidth; // restart the animation
+    c.classList.add(go ? 'is-go' : 'is-tick');
+    c.style.opacity = this.ctx.reducedMotion() ? '1' : '';
+    this.countLeft = go ? 1.1 : 0.95;
+  }
+
+  private flashDelta(ms: number): void {
+    const d = this.delta;
+    d.textContent = formatDelta(ms);
+    d.classList.remove('is-flash', 'is-ahead', 'is-behind');
+    void d.offsetWidth;
+    d.classList.add('is-flash', ms <= 0 ? 'is-ahead' : 'is-behind');
+    d.style.opacity = this.ctx.reducedMotion() ? '1' : '';
+    this.deltaLeft = 2.4;
+  }
+
+  /** The race the HUD is following, if any (for the results card). */
+  get currentRace(): string | null {
+    return this.raceId;
+  }
+
+  update(dt: number, view: GameView, hudVisible: boolean): void {
+    const races = view.races;
+    const def: RaceDef | undefined = this.raceId ? races.defs.find((d) => d.id === this.raceId) : undefined;
+
+    // Timers for the one-shot pieces (CSS animates them; with reduced motion we hide them here).
+    if (this.countLeft > 0) {
+      this.countLeft -= dt;
+      if (this.countLeft <= 0) {
+        this.count.classList.remove('is-tick', 'is-go');
+        this.count.style.opacity = '';
+      }
+    }
+    if (this.deltaLeft > 0) {
+      this.deltaLeft -= dt;
+      if (this.deltaLeft <= 0) {
+        this.delta.classList.remove('is-flash');
+        this.delta.style.opacity = '';
+      }
+    }
+    if (this.finishedLeft > 0) this.finishedLeft -= dt;
+    if (this.missedLeft > 0) this.missedLeft -= dt;
+
+    const running = races.activeId !== null && (races.state === 'countdown' || races.state === 'running');
+    const showCluster = hudVisible && (running || this.finishedLeft > 0);
+    this.clusterOn.set(showCluster);
+    if (showCluster) {
+      const total = def ? def.rings.length : this.ringTotal;
+      const passed = running ? Math.min(races.nextRingIndex, total) : total;
+      this.rings.set(Math.max(passed, running ? 0 : this.ringIndex));
+      this.ringsTotal.set(`/${total}`);
+      this.time.set(formatTime(running ? races.elapsedMs : this.finalMs));
+      this.best.set(races.bestMs !== null ? `Best ${formatTime(races.bestMs)}` : 'No best time yet');
+    }
+
+    this.gateOn.set(hudVisible && this.armed && races.state !== 'running');
+    if (this.armed) this.gateName.textContent = def?.name ?? titleCase(this.raceId ?? '');
+
+    this.missedOn.set(hudVisible && running && this.missedLeft > 0);
+    this.updateEdge(view, hudVisible && running);
+  }
+
+  /** Arrow on an ellipse near the screen edge, pointing at the next ring when it is off-screen. */
+  private updateEdge(view: GameView, active: boolean): void {
+    const wp = active ? view.races.waypoint(tmp) : null;
+    if (!wp) {
+      this.edgeOn.set(false);
+      return;
+    }
+    const cam = view.camera.camera;
+    wp.project(cam);
+    let x = wp.x;
+    let y = wp.y;
+    const behind = wp.z > 1;
+    if (behind) {
+      x = -x;
+      y = -y;
+    }
+    const onScreen = !behind && Math.abs(x) < 0.82 && Math.abs(y) < 0.78;
+    const missed = this.missedLeft > 0;
+    this.edgeOn.set(!onScreen || missed);
+    this.edgeMissed.set(missed);
+    if (onScreen && !missed) return;
+    const W = typeof innerWidth === 'number' ? innerWidth : 1280;
+    const H = typeof innerHeight === 'number' ? innerHeight : 720;
+    // Angle in screen pixels (so the ellipse is not squashed by the aspect ratio).
+    const a = Math.atan2(y * H, x * W);
+    const rx = W * 0.4;
+    const ry = H * 0.36;
+    const px = Math.round(Math.cos(a) * rx);
+    const py = Math.round(-Math.sin(a) * ry);
+    const rot = Math.round(90 - (a * 180) / Math.PI);
+    this.edgePos.set(`translate(${px}px,${py}px) rotate(${rot}deg)`);
+  }
+}
