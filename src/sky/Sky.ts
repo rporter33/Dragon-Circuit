@@ -24,7 +24,7 @@ import { clamp01, smoothstep } from '../core/math';
 import { LATITUDE, keyLightDirection, moonDirection, nightAmount, shadowStrength, sunDirection } from './sunPath';
 import { applyWeather, createPalette, samplePalette, type PaletteWeather, type SkyPalette } from './palette';
 import { SkyDome } from './SkyDome';
-import { CloudSea, MAX_SHADOWERS, SEA_BASE, SEA_TOP } from './CloudSea';
+import { CloudSea, MAX_SHADOWERS, SEA_BASE, SEA_TOP, type SeaQuality } from './CloudSea';
 import { CloudBanks } from './CloudBanks';
 import { CloudBankField, buildBanks } from './cloudBankField';
 import { SEA_RANGE, generateSeaField, puffAtlas, seaHeight01, seaTexture, type SeaField } from './cloudTextures';
@@ -36,11 +36,15 @@ const KEY_SCALE = 2.7;
 const SHADOW_DISTANCE = 700;
 const SEA_TEX_SIZE = 512;
 
-/** Cloud work per quality.clouds level: [sea march steps, sea shadow steps, banks, puffs per bank]. */
-const CLOUD_LEVELS: [number, number, number, number][] = [
-  [10, 2, 14, 9],
-  [16, 3, 26, 13],
-  [24, 4, 38, 16],
+/**
+ * Cloud work per quality.clouds level: the sea's per-pixel work and the cumulus banks. Low and
+ * medium march the sea at half resolution (a quarter of the pixels); low also drops the fine
+ * detail normal, the cavity term and the self-shadow march.
+ */
+export const CLOUD_LEVELS: { sea: SeaQuality; banks: number; puffs: number }[] = [
+  { sea: { steps: 8, secant: 2, shadowSteps: 0, detail: false, shadowers: 4, half: true }, banks: 14, puffs: 9 },
+  { sea: { steps: 14, secant: 3, shadowSteps: 2, detail: true, shadowers: 10, half: true }, banks: 26, puffs: 13 },
+  { sea: { steps: 24, secant: 3, shadowSteps: 4, detail: true, shadowers: MAX_SHADOWERS, half: false }, banks: 38, puffs: 16 },
 ];
 
 const NEUTRAL_WEATHER = { overcast: 0, mist: 0, rain: 0, fog: 1 };
@@ -121,7 +125,7 @@ export class Sky implements SkySystem {
     const field = generateSeaField(SEA_TEX_SIZE);
     this.seaField = field;
     this.seaMean01 = field.mean01;
-    this.sea = new CloudSea(scene, seaTexture(field), SEA_TEX_SIZE, this.shared, CLOUD_LEVELS[2][0]);
+    this.sea = new CloudSea(scene, seaTexture(field), SEA_TEX_SIZE, this.shared, CLOUD_LEVELS[2].sea);
     this.sea.farField.uSeaMean01.value = field.mean01;
     this.dome = new SkyDome(scene, { ...this.shared, ...this.sea.farField });
     this.dome.uniforms.uSeaY.value = SEA_BASE + field.mean01 * SEA_RANGE;
@@ -129,7 +133,7 @@ export class Sky implements SkySystem {
     // Occluders: islands and spires are static; banks are appended per refresh.
     const statics = this.layout.islands.length + this.layout.spires.length;
     this.staticOccluders = statics;
-    const maxBanks = CLOUD_LEVELS[CLOUD_LEVELS.length - 1][2];
+    const maxBanks = CLOUD_LEVELS[CLOUD_LEVELS.length - 1].banks;
     this.occluders = new Float32Array((statics + maxBanks) * 4);
     this.occluderScore = new Float32Array(statics + maxBanks);
     let k = 0;
@@ -175,8 +179,8 @@ export class Sky implements SkySystem {
     const level = Math.max(0, Math.min(CLOUD_LEVELS.length - 1, Math.round(q.clouds)));
     if (level !== this.cloudLevel) {
       this.cloudLevel = level;
-      const [steps, shadowSteps, bankCount, puffs] = CLOUD_LEVELS[level];
-      this.sea.setSteps(steps, shadowSteps);
+      const { sea, banks: bankCount, puffs } = CLOUD_LEVELS[level];
+      this.sea.setQuality(sea);
       if (this.banks) {
         this.scene.remove(this.banks.mesh);
         this.banks.dispose();
@@ -362,7 +366,7 @@ export class Sky implements SkySystem {
     // Partial selection of the best MAX_SHADOWERS (small n, no allocation).
     const out = this.sea.shadowers;
     let count = 0;
-    const taken = MAX_SHADOWERS;
+    const taken = Math.min(MAX_SHADOWERS, this.sea.quality.shadowers);
     for (let s = 0; s < taken; s++) {
       let best = -1;
       let bestScore = 4500;
