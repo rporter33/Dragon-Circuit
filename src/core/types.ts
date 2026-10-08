@@ -1,0 +1,423 @@
+// Shared contracts between modules. Everything a system needs to know about another system goes
+// through a type in this file, so modules can be built and tested independently.
+//
+// Units: meters, seconds, radians. World axes: +Y up, the cloud sea at y = 0.
+//
+// Body frame (wyvern, rider, anything that flies or walks): forward = +Z, up = +Y, left = +X, so
+// the RIGHT wing points along -X. This matches Three.js's Object3D.lookAt for non-camera objects
+// (it aims +Z at the target). Cameras look down -Z; the camera rig handles that difference.
+// Body-frame angular velocity follows the right-hand rule about those axes:
+//   +x pitches the nose DOWN, +y yaws the nose LEFT, +z rolls the right wing DOWN (banks right).
+
+import type { Quaternion, Vector3 } from 'three';
+
+// ---------------------------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------------------------
+
+export type InputDevice = 'gamepad' | 'keyboard';
+
+/** Continuous flight controls after deadzones, curves and invert settings are applied. */
+export interface FlightInput {
+  /** -1..1, +1 = nose up (already respects the invert-pitch setting). */
+  pitch: number;
+  /** -1..1, +1 = bank right. */
+  roll: number;
+  /** -1..1, +1 = yaw right (rudder). */
+  yaw: number;
+  /** Held: beat the wings. Each beat costs stamina. 0..1 so a trigger can modulate strength. */
+  flap: number;
+  /** Held: fold the wings into a dive. 0..1. */
+  tuck: number;
+  /** Held: pitch the wings up as an air brake; also how you land. 0..1. */
+  flare: number;
+}
+
+/** On-foot controls; move is camera-relative (x right, y forward), magnitude 0..1. */
+export interface FootInput {
+  moveX: number;
+  moveY: number;
+  sprint: boolean;
+}
+
+/** Edge-triggered buttons: true only on the frame the button went down. */
+export interface InputPresses {
+  /** A / Space / Enter in menus. On foot: jump. */
+  confirm: boolean;
+  /** B / Escape-in-menus. */
+  back: boolean;
+  /** Interact / mount / dismount (Y / F). */
+  interact: boolean;
+  /** Pause menu (Start / Esc). */
+  pause: boolean;
+  /** Restart current race (View/Back / R). */
+  restart: boolean;
+  /** Jump on foot (A / Space). Same physical button as confirm during play. */
+  jump: boolean;
+  /** Menu navigation, also repeats while held. */
+  navUp: boolean;
+  navDown: boolean;
+  navLeft: boolean;
+  navRight: boolean;
+  /** Tab switching in menus (LB / RB, Q / E). */
+  tabPrev: boolean;
+  tabNext: boolean;
+  /** Recenter camera behind the wyvern (R3 / C). */
+  recenter: boolean;
+  /** Toggle photo mode / hide HUD (D-pad up / H). */
+  toggleHud: boolean;
+}
+
+export interface InputFrame {
+  device: InputDevice;
+  flight: FlightInput;
+  foot: FootInput;
+  /**
+   * Camera look. For a stick: a rate in -1..1 per axis. For a mouse: accumulated pixels since
+   * last frame (scaled by sensitivity). `lookIsRate` says which.
+   */
+  lookX: number;
+  lookY: number;
+  lookIsRate: boolean;
+  /** True while the player is actively steering the camera (mouse moved / right stick off-center). */
+  lookActive: boolean;
+  /** Held: jump / ascend on foot. */
+  jumpHeld: boolean;
+  pressed: InputPresses;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Wyvern breeds and flight
+// ---------------------------------------------------------------------------------------------
+
+export type BreedId = 'harrier' | 'skimmer' | 'galewing' | 'ironback';
+
+/**
+ * Physical description of a breed. The flight model derives everything from these numbers so
+ * breeds differ in feel, not by multipliers bolted on afterwards.
+ */
+export interface BreedStats {
+  id: BreedId;
+  name: string;
+  tagline: string;
+  description: string;
+  /** kg, wyvern + rider. */
+  mass: number;
+  /** m², fully spread. */
+  wingArea: number;
+  /** m tip to tip; also drives the model's proportions. */
+  wingspan: number;
+  /** Lift slope per radian of angle of attack. */
+  liftSlope: number;
+  /** Max lift coefficient before the wing stalls. */
+  clMax: number;
+  /** Critical angle of attack (radians) where the stall begins. */
+  stallAngle: number;
+  /** Zero-lift (parasitic) drag coefficient, wings spread. */
+  cd0: number;
+  /** Induced drag factor 1/(π·e·AR). */
+  inducedK: number;
+  /** Newtons of forward thrust a full downstroke produces at peak. */
+  flapThrust: number;
+  /** Newtons of extra lift a full downstroke produces at peak. */
+  flapLift: number;
+  /** Wingbeats per second while flapping. */
+  flapRate: number;
+  /** Stamina seconds of continuous flapping from full. */
+  staminaSeconds: number;
+  /** Stamina regained per second while not flapping (fraction of max). */
+  staminaRegen: number;
+  /** Body-axis angular acceleration authority, rad/s² at reference airspeed. */
+  rollAuthority: number;
+  pitchAuthority: number;
+  yawAuthority: number;
+  /** Angular damping (1/s). Higher = settles faster, feels "planted". */
+  angularDamping: number;
+  /** Max sustainable bank rate (rad/s). */
+  maxRollRate: number;
+  /** Walking/running speed on the ground (m/s). */
+  groundSpeed: number;
+  /** 0..1 display ratings for the stable UI (derived but hand-tuned for readability). */
+  ratings: { speed: number; agility: number; glide: number; power: number; stamina: number };
+}
+
+/** Full physical state of a flying body. Owned by the flight model. */
+export interface FlightState {
+  position: Vector3;
+  velocity: Vector3;
+  orientation: Quaternion;
+  /** Body-frame angular velocity, rad/s (see the axis note at the top of this file). */
+  angularVelocity: Vector3;
+  /** 0..1 */
+  stamina: number;
+  /** True while the stamina meter is exhausted and refilling; flaps are refused. */
+  winded: boolean;
+  /** 0..1 position within the current wingbeat; 0 = wings high, 0.5 = bottom of downstroke. */
+  flapPhase: number;
+  /** 0..1 how strong the current beat is (0 when gliding). Smoothed for animation. */
+  flapStrength: number;
+  /** 0..1 effective spread: 1 full, ~0.25 tucked. */
+  wingSpread: number;
+  /** 0..1 smoothed flare amount. */
+  flare: number;
+  /** 0..1 how deep into a stall. */
+  stall: number;
+  /** Derived each step for HUD/audio/fx. */
+  airspeed: number;
+  angleOfAttack: number;
+  /** Load factor in g. */
+  gLoad: number;
+  /** Seconds since the last terrain contact while flying. */
+  timeSinceContact: number;
+}
+
+/** What the flight model needs from the world. */
+export interface FlightEnvironment {
+  /** Air velocity at a point (wind + gusts + thermals + ridge lift), m/s. Writes into `out`. */
+  windAt(p: Vector3, out: Vector3): Vector3;
+  terrain: TerrainQuery;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Terrain
+// ---------------------------------------------------------------------------------------------
+
+export type SurfaceKind = 'grass' | 'rock' | 'dirt' | 'stone' | 'sand' | 'wood';
+
+export interface GroundHit {
+  /** Surface height at (x, z). */
+  y: number;
+  normal: Vector3;
+  islandId: number;
+  surface: SurfaceKind;
+}
+
+export interface RayHit {
+  point: Vector3;
+  normal: Vector3;
+  distance: number;
+}
+
+export interface TerrainQuery {
+  /**
+   * The walkable surface directly below (x, z): the highest island top that is at or below
+   * `fromY + 2`. Null over open sky.
+   */
+  groundAt(x: number, z: number, fromY: number): GroundHit | null;
+  /**
+   * Push a sphere out of any solid it overlaps. Returns true on contact and writes the
+   * correction vector (add it to the center) and the contact normal.
+   */
+  collideSphere(center: Vector3, radius: number, outPush: Vector3, outNormal: Vector3): boolean;
+  /** Conservative distance to the nearest solid surface (never overestimates by much). */
+  distance(p: Vector3): number;
+  /** Sphere-traced ray against all solids. */
+  raycast(origin: Vector3, dir: Vector3, maxDist: number): RayHit | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Player and creature poses (what renderers read each frame)
+// ---------------------------------------------------------------------------------------------
+
+export type PlayerMode =
+  | 'flying' // in the air on the wyvern
+  | 'landed' // mounted, wyvern standing/walking on an island
+  | 'onFoot' // rider dismounted and walking; wyvern idles nearby
+  | 'mounting' // short transition, rider climbing on
+  | 'dismounting' // short transition, rider hopping off
+  | 'falling' // rider fell off an island; wyvern swooping in to catch
+  | 'respawning'; // fade out/in after dropping into the cloud sea
+
+export type WyvernGait = 'idle' | 'walk' | 'run' | 'takeoff' | 'landing' | 'jump';
+
+/** Everything the wyvern renderer needs to pose and animate the model. Interpolated for render. */
+export interface WyvernPose {
+  position: Vector3;
+  orientation: Quaternion;
+  velocity: Vector3;
+  airborne: boolean;
+  airspeed: number;
+  /** Body-frame angular velocity, for secondary motion (tail swing, neck lead). */
+  angularVelocity: Vector3;
+  wingSpread: number;
+  flapPhase: number;
+  flapStrength: number;
+  flare: number;
+  stall: number;
+  /** 0..1 how winded; drives heavy breathing / labored flaps. */
+  fatigue: number;
+  gait: WyvernGait;
+  /** m/s along the ground when not airborne. */
+  groundSpeed: number;
+  /** Seconds since mode/gait changed, for one-shot animations (takeoff leap, landing crouch). */
+  gaitTime: number;
+  /** Where the head wants to look (world space), e.g. toward the camera's view or next ring. */
+  lookTarget: Vector3;
+}
+
+export type RiderAction =
+  | 'mounted'
+  | 'idle'
+  | 'walk'
+  | 'run'
+  | 'jump'
+  | 'fall'
+  | 'land'
+  | 'mount'
+  | 'dismount'
+  | 'wave';
+
+export interface RiderPose {
+  /** When mounted, the rider renderer attaches to the wyvern's saddle and ignores position. */
+  mounted: boolean;
+  position: Vector3;
+  /** Facing yaw (radians) on foot. */
+  yaw: number;
+  velocity: Vector3;
+  action: RiderAction;
+  actionTime: number;
+  /** -1..1 lean into turns while mounted (from bank and roll rate). */
+  lean: number;
+  /** 0..1 crouch: tucked into a dive. */
+  crouch: number;
+  /** 0..1 brace: leaning back on a flare / hard landing. */
+  brace: number;
+  /** Relative wind velocity at the rider (world), drives cape/scarf cloth. */
+  airflow: Vector3;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Cosmetics
+// ---------------------------------------------------------------------------------------------
+
+export type CosmeticSlot =
+  | 'wyvernPattern'
+  | 'wyvernHorns'
+  | 'wyvernFrill'
+  | 'wyvernTail'
+  | 'saddle'
+  | 'riderHair'
+  | 'riderOutfit'
+  | 'riderHeadgear'
+  | 'riderScarf'
+  | 'riderCape';
+
+export interface WyvernLook {
+  breed: BreedId;
+  /** Hex colors "#rrggbb". Colors are always free. */
+  primary: string;
+  secondary: string;
+  belly: string;
+  membrane: string;
+  eyes: string;
+  pattern: string;
+  horns: string;
+  frill: string;
+  tail: string;
+  saddle: string;
+  saddleColor: string;
+}
+
+export interface RiderLook {
+  build: 'slight' | 'medium' | 'broad';
+  skin: string;
+  hair: string;
+  hairColor: string;
+  outfit: string;
+  outfitPrimary: string;
+  outfitSecondary: string;
+  headgear: string;
+  scarf: string;
+  scarfColor: string;
+  cape: string;
+  capeColor: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Races and progression
+// ---------------------------------------------------------------------------------------------
+
+export type Medal = 'none' | 'bronze' | 'silver' | 'gold';
+export type RaceKind = 'rings' | 'sprint';
+
+export interface RaceRecord {
+  bestMs: number;
+  medal: Medal;
+  /** Breed used for the best run (the ghost flies as that breed). */
+  breed: BreedId;
+  runs: number;
+}
+
+export type QualityLevel = 'low' | 'medium' | 'high' | 'ultra';
+
+export interface Settings {
+  quality: QualityLevel;
+  /** 0.5..1 render scale on top of devicePixelRatio cap. */
+  resolutionScale: number;
+  invertPitch: boolean;
+  /** 0.25..2 */
+  lookSensitivity: number;
+  /** Base vertical FOV in degrees. */
+  fov: number;
+  masterVolume: number;
+  musicVolume: number;
+  sfxVolume: number;
+  /** Disables camera shake, speed blur and FOV kicks. */
+  reducedMotion: boolean;
+  rumble: boolean;
+  showControlHints: boolean;
+  /** 'cycle' runs the day; anything else locks the sky to that hour. */
+  timeOfDay: 'cycle' | 'dawn' | 'day' | 'dusk' | 'night';
+  /** Real minutes per in-game day when cycling. */
+  dayLengthMinutes: number;
+  /** Hold-to-flap (true) vs tap-per-beat (false). */
+  holdToFlap: boolean;
+  showGhost: boolean;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------------------------
+
+export type WeatherKind = 'clear' | 'breezy' | 'overcast' | 'mist' | 'rain';
+
+export interface GameEvents {
+  /** Fired at the bottom of each downstroke. strength 0..1. */
+  flap: { strength: number; position: Vector3 };
+  flapRefused: {};
+  stallStart: {};
+  stallEnd: {};
+  /** Wings folded into a dive / unfolded. */
+  tuckStart: {};
+  tuckEnd: {};
+  /** Hit terrain while flying. impulse in m/s of velocity lost. */
+  terrainHit: { impulse: number; point: Vector3; normal: Vector3 };
+  touchdown: { impact: number; position: Vector3; surface: SurfaceKind };
+  takeoff: { position: Vector3 };
+  footstep: { position: Vector3; surface: SurfaceKind; heavy: boolean };
+  mount: {};
+  dismount: {};
+  /** Rider walked off an edge; the wyvern dives to catch them. */
+  fellOff: { position: Vector3 };
+  caught: {};
+  respawn: { position: Vector3 };
+  modeChange: { from: PlayerMode; to: PlayerMode };
+
+  raceArmed: { raceId: string };
+  raceCountdown: { raceId: string; count: number };
+  raceStart: { raceId: string };
+  ringPassed: { raceId: string; index: number; total: number; splitMs: number; deltaMs: number | null; position: Vector3 };
+  ringMissed: { raceId: string; index: number };
+  raceFinish: { raceId: string; timeMs: number; medal: Medal; newBest: boolean; previousBestMs: number | null };
+  raceAbort: { raceId: string; reason: 'quit' | 'restart' | 'respawn' | 'left-course' };
+
+  collect: { id: string; kind: 'feather' | 'relic'; name: string; position: Vector3; total: number; ofTotal: number };
+  unlock: { cosmeticId: string; name: string; slot: CosmeticSlot };
+  discover: { landmarkId: string; name: string };
+
+  weatherChange: { from: WeatherKind; to: WeatherKind };
+  lookChanged: {};
+  settingsChanged: { settings: Settings };
+  toast: { text: string; sub?: string; icon?: 'feather' | 'relic' | 'unlock' | 'race' | 'info' };
+  uiSound: { kind: 'move' | 'select' | 'back' | 'locked' | 'tab' };
+}

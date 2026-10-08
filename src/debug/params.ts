@@ -1,0 +1,57 @@
+// URL parameters for development, screenshots and automated checks. None of these are needed
+// to play; they make the game scriptable from a headless browser.
+//
+//   ?play=1                 skip the title screen
+//   ?tod=0.3                lock time of day (0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk)
+//   ?weather=rain           clear | breezy | overcast | mist | rain
+//   ?quality=low            low | medium | high | ultra
+//   ?at=x,y,z&yaw=deg&mode=flying&speed=30   place the player
+//   ?cam=x,y,z&look=x,y,z   pin the camera
+//   ?freeze=1               pause the simulation (presentation still updates)
+//   ?manual=1               no rAF loop: drive frames with window.__dw.advance(seconds)
+
+import type { QualityLevel, WeatherKind } from '../core/types';
+
+export interface DebugParams {
+  play: boolean;
+  tod?: number;
+  weather?: WeatherKind;
+  quality?: QualityLevel;
+  at?: [number, number, number];
+  yaw?: number;
+  mode?: 'flying' | 'landed' | 'onFoot';
+  speed?: number;
+  cam?: [number, number, number];
+  look?: [number, number, number];
+  freeze: boolean;
+  manual: boolean;
+  /** Free-form string for module-specific showcases (e.g. view=wyvern). */
+  view?: string;
+}
+
+function vec3(v: string | null): [number, number, number] | undefined {
+  if (!v) return undefined;
+  const parts = v.split(',').map(Number);
+  return parts.length === 3 && parts.every(Number.isFinite) ? (parts as [number, number, number]) : undefined;
+}
+
+export function readDebugParams(search = typeof location !== 'undefined' ? location.search : ''): DebugParams {
+  const q = new URLSearchParams(search);
+  const num = (k: string) => (q.has(k) && Number.isFinite(Number(q.get(k))) ? Number(q.get(k)) : undefined);
+  const yawDeg = num('yaw');
+  return {
+    play: q.get('play') === '1',
+    tod: num('tod'),
+    weather: (q.get('weather') as WeatherKind) ?? undefined,
+    quality: (q.get('quality') as QualityLevel) ?? undefined,
+    at: vec3(q.get('at')),
+    yaw: yawDeg !== undefined ? (yawDeg * Math.PI) / 180 : undefined,
+    mode: (q.get('mode') as DebugParams['mode']) ?? undefined,
+    speed: num('speed'),
+    cam: vec3(q.get('cam')),
+    look: vec3(q.get('look')),
+    freeze: q.get('freeze') === '1',
+    manual: q.get('manual') === '1',
+    view: q.get('view') ?? undefined,
+  };
+}

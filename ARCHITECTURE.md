@@ -1,0 +1,49 @@
+# Driftwing — architecture
+
+## Shape
+
+```
+src/core/        pure helpers and the shared contracts (types.ts) — no three.js scene code
+src/game/        Game.ts builds and wires every system; contracts.ts defines their interfaces
+src/render/      renderer + post chain, quality presets, shared uniforms, the painterly material patch
+src/world/       layout (the archipelago as data), analytic island/spire/arch shapes, terrain queries,
+                 island meshing; world/dressing/ holds vegetation, water and structures
+src/sky/         sky dome, day/night lighting, clouds and cloud sea; weather and the wind field
+src/flight/      breeds and the flight model (pure, unit-tested)
+src/player/      the player state machine: flying, landed, on foot, falling, respawning
+src/camera/      camera rig
+src/input/       gamepad + keyboard/mouse → InputFrame; the control scheme as data
+src/creatures/   procedural wyvern and rider models and animation
+src/race/        courses, rings, timing, medals, ghosts
+src/progression/ save data, collectibles, unlocks
+src/cosmetics/   the cosmetic catalog (what exists and how it unlocks)
+src/ui/          HTML overlay: title, HUD, menus, the stable
+src/audio/       procedural WebAudio
+src/fx/          particles, trails and screen effects
+src/debug/       URL params, window.__dw automation handle, showcases
+```
+
+## Rules
+
+- **One world model.** Islands, spires and arches are analytic shapes (`world/islandShape.ts`).
+  Collision, landing, walking, ring validation, collectible placement and meshing all evaluate
+  the same functions, so what you see is what you hit.
+- **Fixed-step simulation.** Physics runs at 120 Hz (`Game.FIXED_DT`); presentation interpolates
+  with `alpha`. The flight model is deterministic for a given input stream.
+- **Systems talk through contracts and events.** `game/contracts.ts` defines every system's
+  interface; `core/types.ts` defines shared data and the event map. Presentation (audio, fx,
+  HUD, rumble) reacts to events; gameplay never imports presentation.
+- **Body frame:** forward +Z, up +Y, left +X (right wing along −X). See `core/types.ts`.
+- **Painterly look:** lit materials go through `render/painterly.ts` (`toonMaterial`,
+  `applyPainterly`) for the soft toon ramp, rim light and the shared height fog. Custom shaders
+  include `FOG_PARS_GLSL` and apply `dwApplyFog`. Shared lighting/fog/wind/time uniforms live in
+  `render/uniforms.ts`; the sky writes them, everyone reads them.
+- **Everything is procedural.** No downloaded models, textures or fonts at runtime; the build is
+  self-contained and works offline.
+
+## Automation
+
+`?manual=1` stops the render loop so a headless browser can drive time with
+`window.__dw.advance(seconds)` and capture with `scripts/shot.mjs`. `?view=<name>` runs a
+showcase from `src/debug/showcases/` (any module can add one). See `src/debug/params.ts` for
+the other URL switches.
