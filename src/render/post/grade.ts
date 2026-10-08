@@ -42,6 +42,8 @@ export function gradeUniforms() {
     uDither: { value: 1 },
     /** 1 = FXAA on the scene (quality levels without MSAA). */
     uFxaa: { value: 0 },
+    /** Saturation boost weighted toward muted colors (0 = off). */
+    uVibrance: { value: 0 },
   };
 }
 
@@ -51,7 +53,7 @@ const FRAG = /* glsl */ `
 uniform sampler2D tDiffuse;
 uniform sampler2D tBloom;
 uniform float uTime, uExposure, uSaturation, uContrast, uVignette, uSpeedBlur, uFade, uFlash, uCloudVeil;
-uniform float uBloomStrength, uSharpen, uDither, uFxaa;
+uniform float uBloomStrength, uSharpen, uDither, uFxaa, uVibrance;
 uniform vec2 uTexel;
 uniform vec3 uLift, uGain, uFadeColor, uFlashColor, uCloudColor;
 varying vec2 vUv;
@@ -176,6 +178,11 @@ void main() {
   col *= uExposure;
   float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
   col = mix(vec3(luma), col, uSaturation);
+  if (uVibrance != 0.0) {
+    float cMax = max(col.r, max(col.g, col.b));
+    float cSat = (cMax - min(col.r, min(col.g, col.b))) / max(cMax, 1e-4);
+    col = max(mix(vec3(luma), col, 1.0 + uVibrance * (1.0 - cSat)), 0.0);
+  }
   // Contrast around mid-grey, applied in linear HDR before tone mapping.
   col = max(col, 0.0);
   col = (col - 0.18) * uContrast + 0.18;

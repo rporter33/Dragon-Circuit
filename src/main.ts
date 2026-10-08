@@ -67,6 +67,8 @@ async function start(): Promise<void> {
     if (!game.debug.manual || params.get('warmup') === '1') {
       if (handle) handle.ready = false;
       bootStatus('Lighting the lanterns…');
+      // Let the splash repaint with the new line before the main thread is busy again.
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
       warmup = await game.renderer.prepare(game.scene, game.camera);
       if (handle) handle.ready = true;
     }
