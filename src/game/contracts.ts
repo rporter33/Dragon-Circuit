@@ -66,6 +66,17 @@ export interface WeatherSystem extends Pick<FlightEnvironment, 'windAt'> {
   readonly cloudCover: number;
   set(kind: WeatherKind, immediate?: boolean): void;
   update(dt: number, camera: PerspectiveCamera, focus: Vector3): void;
+  /**
+   * Optional: rising air at the focus from thermals and ridge lift (m/s, + up), smoothed a
+   * little, for a HUD vario or an audio cue. 0 when absent.
+   */
+  readonly lift?: number;
+  /**
+   * Optional: 0..1 how close the focus is to (and into) the storm at the world's edge that turns
+   * flyers back: 0 inside the archipelago, rising over the last ~250 m before the boundary radius,
+   * 1 well into it. For a one-time "the winds turn you back" notice.
+   */
+  readonly boundary?: number;
 }
 
 export interface SkySystem {

@@ -45,6 +45,23 @@ export const LEE_GAIN = 0.35;
 export const BOUNDARY_PUSH = 34;
 const BOUNDARY_RAMP_IN = 60;
 const BOUNDARY_RAMP_OUT = 380;
+/**
+ * Vertical buffeting in the boundary storm at full strength (m/s): the headwind alone is an
+ * invisible treadmill; the storm should feel like weather you want to turn away from.
+ */
+export const BOUNDARY_BUFFET = 4;
+/** How far inside the boundary its storm starts to show (streaks, the haze wall fading in). */
+export const BOUNDARY_WARN = 250;
+
+/** 0..1 how hard the boundary storm pushes at horizontal radius r. */
+export function boundaryPush01(r: number, boundaryRadius: number): number {
+  return smoothstep(boundaryRadius - BOUNDARY_RAMP_IN, boundaryRadius + BOUNDARY_RAMP_OUT, r);
+}
+
+/** 0..1 how close to (and into) the boundary storm a point at horizontal radius r is, for cues. */
+export function boundaryApproach01(r: number, boundaryRadius: number): number {
+  return smoothstep(boundaryRadius - BOUNDARY_WARN, boundaryRadius + BOUNDARY_RAMP_OUT * 0.5, r);
+}
 
 const GUST_SCALE = 1 / 230;
 const CELL = 400;
@@ -183,14 +200,19 @@ export class WindField {
     return lift;
   }
 
-  /** Adds the headwind that turns flyers back beyond the boundary radius. */
+  /**
+   * Adds the boundary storm: a headwind that turns flyers back beyond the boundary radius, with
+   * vertical buffeting that grows with it.
+   */
   addBoundary(p: Vector3, out: Vector3): Vector3 {
     const r = Math.hypot(p.x, p.z);
     const b = this.layout.boundaryRadius;
     if (r < b - BOUNDARY_RAMP_IN || r < 1e-3) return out;
-    const k = BOUNDARY_PUSH * smoothstep(b - BOUNDARY_RAMP_IN, b + BOUNDARY_RAMP_OUT, r);
+    const amount = boundaryPush01(r, b);
+    const k = BOUNDARY_PUSH * amount;
     out.x -= (p.x / r) * k;
     out.z -= (p.z / r) * k;
+    out.y += this.noise(p.x / 70 + 91.3, this.state.time * 0.55, p.z / 70 - 17.9) * BOUNDARY_BUFFET * amount;
     return out;
   }
 }

@@ -130,42 +130,56 @@ vec3 moon(vec3 d, inout vec3 col) {
   float cm = dot(d, uMoonDir);
   if (cm < 0.0) return vec3(0.0);
   float ang = acos(clamp(cm, -1.0, 1.0));
-  float aa = fwidth(ang) * 1.5 + 1e-5;
-  float disk = smoothstep(MOON_R + aa, MOON_R - aa, ang);
-  vec3 right = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)) + vec3(1e-5, 0.0, 0.0));
-  vec3 up = cross(right, uMoonDir);
-  vec2 mp = vec2(dot(d, right), dot(d, up)) / MOON_R;
-  float maria = dwFbm3(mp * 1.6 + vec2(3.1, 7.4));
-  float limb = sqrt(max(0.0, 1.0 - dot(mp, mp)));
-  vec3 face = vec3(0.92, 0.95, 1.0) * mix(0.62, 1.0, smoothstep(0.36, 0.6, maria)) * (0.7 + 0.3 * limb);
-  // Seen in daylight the moon is a pale wash; at night it is the brightest thing in the sky, but
-  // kept below the bloom threshold's blow-out so its face still reads.
-  col = mix(col, face * mix(0.42, 0.62, uMoonLight), disk * mix(0.25, 1.0, uMoonLight));
+  // The face (and its noise) only where the disk is: most of the sky pays for the glow alone.
+  if (ang < MOON_R * 1.6) {
+    float aa = fwidth(ang) * 1.5 + 1e-5;
+    float disk = smoothstep(MOON_R + aa, MOON_R - aa, ang);
+    vec3 right = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)) + vec3(1e-5, 0.0, 0.0));
+    vec3 up = cross(right, uMoonDir);
+    vec2 mp = vec2(dot(d, right), dot(d, up)) / MOON_R;
+    float maria = dwFbm3(mp * 1.6 + vec2(3.1, 7.4));
+    float limb = sqrt(max(0.0, 1.0 - dot(mp, mp)));
+    vec3 face = vec3(0.92, 0.95, 1.0) * mix(0.62, 1.0, smoothstep(0.36, 0.6, maria)) * (0.7 + 0.3 * limb);
+    // Seen in daylight the moon is a pale wash; at night it is the brightest thing in the sky,
+    // but kept below the bloom threshold's blow-out so its face still reads.
+    col = mix(col, face * mix(0.42, 0.62, uMoonLight), disk * mix(0.25, 1.0, uMoonLight));
+  }
   vec3 glow = vec3(0.55, 0.65, 1.0) * (pow(cm, 2500.0) * 0.25 + pow(cm, 60.0) * 0.1 + pow(cm, 6.0) * 0.05);
   return glow * uMoonLight;
 }
 
 vec4 highClouds(vec3 d) {
   if (d.y <= 0.0) return vec4(0.0);
-  vec2 p = d.xz / (d.y + 0.12);
+  // The +0.35 keeps the projection from crushing fibres into a vanishing point on the horizon
+  // (they read as searchlight beams at night).
+  vec2 p = d.xz / (d.y + 0.35);
   vec2 w = uWindDir;
   vec2 q = vec2(dot(p, w), dot(p, vec2(-w.y, w.x)));
   // Cirrus: patches of fine fibres combed along the wind, with gentle bends.
-  vec2 cq = q * vec2(0.8, 2.4) + vec2(uCloudOffset.x * 1.6, 0.0);
+  vec2 cq = q * vec2(0.96, 2.9) + vec2(uCloudOffset.x * 1.6, 0.0);
   cq.y += 0.45 * dwVnoise(cq * vec2(0.35, 0.5) + 3.0);
   float n = dwFbm5(cq * 0.7);
   float fibre = dwFbm3(vec2(cq.x * 0.9, cq.y * 6.5) + 11.0);
   float sheet = smoothstep(0.5 - 0.22 * uCirrus, 0.78 - 0.12 * uCirrus, n);
-  float wisp = sheet * mix(0.35, 1.0, smoothstep(0.3, 0.75, fibre)) * (0.22 + 0.68 * uCirrus);
+  // Break the fibres into separate patches so no streak runs unbroken across the sky.
+  float patches = smoothstep(0.3, 0.62, dwVnoise(q * 1.3 + vec2(7.0, 2.0)));
+  float wisp = sheet * patches * mix(0.35, 1.0, smoothstep(0.3, 0.75, fibre)) * (0.22 + 0.68 * uCirrus);
+  // At night the wisps are barely there: a faint veil, not pale rays on a dark sky.
+  wisp *= 1.0 - 0.75 * uStars;
   // Overcast deck: broad billows that close up as cover rises.
-  vec2 dq = q * 0.55 + vec2(uCloudOffset.x * 0.5, 4.0);
-  float m = dwFbm5(dq);
-  float cover = smoothstep(1.02 - uDeck, 1.25 - uDeck * 0.95, m + 0.12 * n) * smoothstep(0.0, 0.25, uDeck);
+  float cover = 0.0;
+  float m = 0.0;
+  if (uDeck > 0.001) {
+    vec2 dq = q * 0.55 + vec2(uCloudOffset.x * 0.5, 4.0);
+    m = dwFbm5(dq);
+    cover = smoothstep(1.02 - uDeck, 1.25 - uDeck * 0.95, m + 0.12 * n) * smoothstep(0.0, 0.25, uDeck);
+  }
   // Wisps thin out toward the horizon; a closed deck runs right down to it.
-  float a = max(wisp * 0.8 * smoothstep(0.0, 0.2, d.y), cover * smoothstep(-0.02, 0.08, d.y));
+  float a = max(wisp * 0.8 * smoothstep(0.04, 0.3, d.y), cover * smoothstep(-0.02, 0.08, d.y));
   float cs = max(dot(d, uTrueSunDir), 0.0);
   float sunUp = smoothstep(-0.25, 0.02, uTrueSunDir.y);
   vec3 lit = mix(uCloudShade, uCloudLit, 0.55 + 0.45 * smoothstep(0.4, 0.9, n));
+  lit = mix(lit, uCloudShade * 1.15, 0.6 * uStars);
   // Wisps near the sun catch its fire; at twilight they stay lit after the ground goes dark.
   lit += uHorizonSun * (pow(cs, 5.0) * 0.9 + 0.25 * (1.0 - d.y)) * uGlow * sunUp;
   // The deck's underside is darker where it is thickest.
@@ -190,7 +204,8 @@ void main() {
   if (d.y >= 0.0) {
     col = skyGradient(d);
     vec4 hc = highClouds(d);
-    col += stars(d) * uStars * (1.0 - hc.a);
+    // Stars only cost anything once they are out.
+    if (uStars > 0.003) col += stars(d) * uStars * (1.0 - hc.a);
     vec3 moonGlow = moon(d, col);
     col = mix(col, hc.rgb, hc.a);
     col += moonGlow * (1.0 - 0.7 * hc.a);
@@ -287,7 +302,9 @@ export class SkyDome {
     this.mesh = new Mesh(new SphereGeometry(1, 64, 32), material);
     this.mesh.name = 'skyDome';
     this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = -10;
+    // Drawn after every opaque object: the dome sits on the far plane, so wherever an island or
+    // the cloud sea already covers the pixel the depth test rejects it before it is shaded.
+    this.mesh.renderOrder = 100;
     scene.add(this.mesh);
   }
 }

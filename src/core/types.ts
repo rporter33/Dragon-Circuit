@@ -500,6 +500,14 @@ export interface GameEvents {
 
   weatherChange: { from: WeatherKind; to: WeatherKind };
   /**
+   * The player's wyvern rode into a thermal's rising air (stronger than ~2 m/s) / out of it again
+   * (hysteresis, so circling the edge doesn't chatter). Presentation only: a vario pulse, a rising
+   * chime. `id` is the layout thermal; `lift` is the vertical air speed there (m/s). Fired whatever
+   * the player mode; listeners that only care in flight check the mode.
+   */
+  thermalEnter: { id: number; lift: number; position: Vector3 };
+  thermalExit: { id: number };
+  /**
    * Distant lightning in a storm (presentation only: thunder, a rumble). Strikes land kilometres
    * away; `distance` is from the camera in m (thunder should lag it at ~340 m/s).
    */
