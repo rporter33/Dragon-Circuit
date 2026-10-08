@@ -29,11 +29,19 @@ import { CloudBanks } from './CloudBanks';
 import { CloudBankField, buildBanks } from './cloudBankField';
 import { SEA_RANGE, generateSeaField, puffAtlas, seaHeight01, seaTexture, type SeaField } from './cloudTextures';
 import type { Weather } from './Weather';
+import { SHADOW_RANGE, SHADOW_UP, installShadowFade } from './shadowFade';
+
+// The key light's shadows fade at the shadow box's border and with occluder distance; the chunk
+// must be patched before any lit material compiles, so it happens as soon as the sky is loaded.
+installShadowFade();
 
 /** Directional light intensity at noon (palette keyI = 1). */
 const KEY_SCALE = 2.7;
-/** How far up the light direction the shadow camera sits (m). */
-const SHADOW_DISTANCE = 700;
+/**
+ * How far ahead of the focus, along the camera's view on the ground plane, the shadow box is
+ * centered (fraction of its half-extent): the map covers what is on screen, not what's behind.
+ */
+const SHADOW_AHEAD = 0.3;
 const SEA_TEX_SIZE = 512;
 
 /**
@@ -53,6 +61,7 @@ const UP = new Vector3(0, 1, 0);
 const POLE = new Vector3(0, Math.sin(LATITUDE), Math.cos(LATITUDE)).normalize();
 
 const tmpRight = new Vector3();
+const tmpAhead = new Vector3();
 const tmpUp = new Vector3();
 const tmpV = new Vector3();
 const tmpM4 = new Matrix4();
@@ -113,8 +122,10 @@ export class Sky implements SkySystem {
     this.sun = new DirectionalLight(0xfff0dd, KEY_SCALE);
     this.sun.name = 'keyLight';
     const sc = this.sun.shadow.camera;
-    sc.near = 1;
-    sc.far = SHADOW_DISTANCE * 2;
+    // Casters up to SHADOW_UP toward the light, receivers SHADOW_DOWN below the focus: islands
+    // hanging far overhead are outside the box (culled from the shadow pass, no shadow on the hub).
+    sc.near = 0;
+    sc.far = SHADOW_RANGE;
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.5;
     scene.add(this.sun, this.sun.target);
@@ -249,7 +260,7 @@ export class Sky implements SkySystem {
     this.hemi.color.copy(pal.hemiSky);
     this.hemi.groundColor.copy(pal.hemiGround);
     this.hemi.intensity = pal.hemiI + flash * 0.9;
-    this.followShadow(focus);
+    this.followShadow(focus, camera);
     const overcast = w ? w.overcast : 0;
     this.sun.shadow.intensity = shadowStrength(this.sunDirection, this.moonDirection) * (1 - 0.78 * overcast) * (1 - 0.3 * this.night);
     this.sun.shadow.radius = 2 + 3 * this.night + 3 * overcast;
@@ -286,21 +297,31 @@ export class Sky implements SkySystem {
 
   // --- Internals ----------------------------------------------------------------------------
 
-  /** Center the shadow camera on the focus, snapped to whole shadow-map texels (no shimmer). */
-  private followShadow(focus: Vector3): void {
+  /**
+   * Center the shadow camera on the focus (nudged ahead along the view), snapped to whole
+   * shadow-map texels so shadows never shimmer.
+   */
+  private followShadow(focus: Vector3, camera: PerspectiveCamera): void {
     const L = this.keyDirection;
-    const texel = (2 * this.quality.shadowExtent) / this.quality.shadowMapSize;
+    const e = this.quality.shadowExtent;
+    const texel = (2 * e) / this.quality.shadowMapSize;
+    camera.getWorldDirection(tmpAhead);
+    tmpAhead.y = 0;
+    const len = tmpAhead.length();
+    if (len > 1e-3) tmpAhead.multiplyScalar((e * SHADOW_AHEAD) / len);
+    else tmpAhead.set(0, 0, 0);
+    tmpAhead.add(focus);
     // The same basis three builds for the shadow camera with lookAt (eye = target + L·d).
     tmpRight.crossVectors(UP, L);
     if (tmpRight.lengthSq() < 1e-8) tmpRight.set(1, 0, 0);
     tmpRight.normalize();
     tmpUp.crossVectors(L, tmpRight);
-    const fx = Math.round(focus.dot(tmpRight) / texel) * texel;
-    const fy = Math.round(focus.dot(tmpUp) / texel) * texel;
+    const fx = Math.round(tmpAhead.dot(tmpRight) / texel) * texel;
+    const fy = Math.round(tmpAhead.dot(tmpUp) / texel) * texel;
     const fz = focus.dot(L);
     tmpV.copy(tmpRight).multiplyScalar(fx).addScaledVector(tmpUp, fy).addScaledVector(L, fz);
     this.sun.target.position.copy(tmpV);
-    this.sun.position.copy(tmpV).addScaledVector(L, SHADOW_DISTANCE);
+    this.sun.position.copy(tmpV).addScaledVector(L, SHADOW_UP);
     this.sun.target.updateMatrixWorld();
   }
 
