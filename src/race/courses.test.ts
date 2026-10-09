@@ -211,20 +211,15 @@ describe('flying the courses with the autopilot (real flight model, thermals, te
     }, SLOW);
   }
 
-  it('every breed can finish every ring course (and the light breeds the sprints)', () => {
+  it('every breed can finish every course, sprints included (the ironback climbs in thermals now)', () => {
     const breeds: BreedId[] = ['skimmer', 'galewing', 'ironback'];
-    let finished = 0;
-    let total = 0;
+    const missed: string[] = [];
     for (const c of COURSES) {
       for (const b of breeds) {
-        if (c.kind === 'sprint' && b === 'ironback') continue; // heavy: it can't circle tight enough to climb
-        total++;
         const r = fly(c.id, b);
-        if (r.finished) finished++;
-        else console.warn(`${b} did not finish ${c.id} (stuck at ring ${r.stuckAt})`);
+        if (!r.finished) missed.push(`${b} on ${c.id} (stuck at ring ${r.stuckAt})`);
       }
     }
-    // The autopilot isn't perfect with every breed in every corner; all but one or two runs finish.
-    expect(finished).toBeGreaterThanOrEqual(total - 2);
-  }, SLOW * 2);
+    expect(missed).toEqual([]);
+  }, SLOW * 3);
 });

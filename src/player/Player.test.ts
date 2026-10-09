@@ -673,6 +673,9 @@ describe('prompts', () => {
     expect(computePrompt(r.player, LAYOUT)).toEqual({ action: 'flap', text: 'Take off (hold to climb)' });
     r.run(2);
     expect(computePrompt(r.player, LAYOUT)?.action).toBe('dismount');
+    // Mid-race, getting off says what it costs (PLAY-12), and the prompt object stays constant.
+    expect(computePrompt(r.player, LAYOUT, true)?.text).toBe('Dismount (ends the race)');
+    expect(computePrompt(r.player, LAYOUT, true)).toBe(computePrompt(r.player, LAYOUT, true));
     const g = groundAt(0, -60);
     r.player.teleport(new Vector3(0, g.y + 18, -60), 0, 'flying', 20);
     r.run(1);

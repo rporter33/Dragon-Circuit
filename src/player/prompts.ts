@@ -38,11 +38,12 @@ const FLARE_NOW: Prompt = { action: 'flare', text: 'Flare now' };
 const SLOW_FOR_LANDING: Prompt = { action: 'flare', text: 'Slow down for landing' };
 const OPEN_STABLE: Prompt = { action: 'stable', text: 'Open the Stable' };
 const DISMOUNT: Prompt = { action: 'dismount', text: 'Dismount' };
+const DISMOUNT_RACING: Prompt = { action: 'dismount', text: 'Dismount (ends the race)' };
 const TAKE_OFF: Prompt = { action: 'flap', text: 'Take off (hold to climb)' };
 const MOUNT: Prompt = { action: 'mount', text: 'Mount' };
 const CALL_WYVERN: Prompt = { action: 'interact', text: 'Call your wyvern' };
 
-export function computePrompt(player: Player, _layout?: WorldLayout): Readonly<Prompt> | null {
+export function computePrompt(player: Player, _layout?: WorldLayout, racing = false): Readonly<Prompt> | null {
   const home = player.home;
   switch (player.mode) {
     case 'flying': {
@@ -62,7 +63,7 @@ export function computePrompt(player: Player, _layout?: WorldLayout): Readonly<P
     case 'landed':
       if (home.nearStable(player.riderPosition)) return OPEN_STABLE;
       // Moving (or just landed): taking off is the likely next move; standing still, getting off.
-      if (player.groundStillTime > 1.2) return DISMOUNT;
+      if (player.groundStillTime > 1.2) return racing ? DISMOUNT_RACING : DISMOUNT;
       return TAKE_OFF;
     case 'onFoot':
       if (player.canMount) return MOUNT;

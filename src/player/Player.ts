@@ -82,8 +82,8 @@ const SUN_WARMED_TOAST = { text: 'Sun-warmed — your wyvern spreads its wings t
 const RESTED_TOAST = { text: 'Rested — your wyvern stretches and settles', sub: 'Its stamina lasts longer for a while', icon: 'info' } as const;
 
 /** Seat (where the rider's hips rest) in body space, as a fraction of standHeight. */
-const SEAT_UP = 0.5;
-const SEAT_FWD = 0.35;
+const SEAT_UP = 0.37;
+const SEAT_FWD = 0.08;
 
 export class Player implements PlayerSystem {
   mode: PlayerMode = 'flying';

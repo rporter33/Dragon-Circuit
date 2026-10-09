@@ -260,7 +260,7 @@ export class Game implements GameActions {
     this.renderer.grade.uCloudVeil.value = this.sky.cloudVeilAt(this.camera.position);
     this.renderer.grade.uFade.value = Math.max(this.player.fade, this.uiFade, this.cameraRig.fade);
 
-    this.prompt = this.screen === 'play' ? computePrompt(this.player, this.world.layout) : null;
+    this.prompt = this.screen === 'play' ? computePrompt(this.player, this.world.layout, this.races.state === 'running') : null;
     // On foot, an interactable in reach wins over mounting (you walked up to it) but not the Stable.
     this.activeInteractable =
       this.screen === 'play' && this.player.mode === 'onFoot' && this.prompt?.action !== 'stable' ? this.interactables.nearest(this.player.riderPosition) : null;
