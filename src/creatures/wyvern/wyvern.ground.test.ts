@@ -204,7 +204,7 @@ describe('the tail: a heavy reptile counterweight (C1)', { timeout: 120000 }, ()
   });
 
   it('settles at rest: the tail sinks to the ground in a sideways S, and holds still', () => {
-    for (const breed of ['harrier', 'ironback'] as const) {
+    for (const breed of BREED_ORDER) {
       const sh = BREEDS[breed].standHeight;
       const w = new Wyvern(look(breed));
       const pose = standing(breed);

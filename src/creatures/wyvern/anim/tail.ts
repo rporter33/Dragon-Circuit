@@ -24,6 +24,13 @@ const TAIL_FLARE = [-14, -6, -2, 2, 4, 5, 5, 4, 3, 2];
 const TAIL_HOVER = [-18, -8, -3, 0, 2, 3, 3, 2, 1, 0];
 /** At rest: the tail sinks from the hips and lies out along the ground... */
 const TAIL_REST = [-4, -7, -8, -7, -5, -2, 3, 6, 6, 4];
+/**
+ * ...drawn for a tail 2.5 times as long as its base is high (REST_REACH = base height / length).
+ * A tail shorter for its hips droops more steeply to reach the ground: the curve is scaled by
+ * (height / length) / REST_REACH, at most REST_DROOP_MAX (8° × 1.75 = 14°, inside the 15° joint).
+ */
+const REST_REACH = 0.4;
+const REST_DROOP_MAX = 1.75;
 /** ...in a sideways S (yaw, degrees per joint, × the side chosen for this rest). */
 const TAIL_REST_S = [3, 6, 8, 6, 0, -7, -11, -12, -10, -6];
 
@@ -77,6 +84,8 @@ export class TailLayer {
   private tailInit = false;
   /** The last sub-step's length (s), for the time-corrected verlet. */
   private hPrev = 1 / 120;
+  /** How much steeper than TAIL_REST this tail droops at rest (see REST_REACH). */
+  private readonly restDroop: number;
 
   constructor(a: WyvernAnimator) {
     this.a = a;
@@ -108,6 +117,11 @@ export class TailLayer {
       this.devYaw[i] = 14 * cone * DEG;
       this.stiff[i] = lerp(0.5, 0.26 + 0.14 * heft, s);
     }
+    // The tail base's height above the ground standing, against the tail's length.
+    let len = 0;
+    for (let i = 0; i < n; i++) len += this.tailLen[i];
+    const baseH = rig.props.standHeight + B[T[0]].pos.y;
+    this.restDroop = clamp(baseH / len / REST_REACH, 1, REST_DROOP_MAX);
     const maxBend = lerp(20, 15, smoothstep(0.1, 0.3, heft)) * DEG;
     this.cosMax = Math.cos(maxBend);
     this.sinMax = Math.sin(maxBend);
@@ -173,7 +187,7 @@ export class TailLayer {
       let p = lerp(TAIL_FLIGHT[i], TAIL_GROUND[i], groundW);
       p = lerp(p, TAIL_FLARE[i], flareW);
       p = lerp(p, TAIL_HOVER[i], hover);
-      p = lerp(p, TAIL_REST[i], restW);
+      p = lerp(p, TAIL_REST[i] * this.restDroop, restW);
       p *= (1 - tuck * 0.7) * (1 - 0.75 * stretch);
       // On the ground the tail balances the head and neck: it lifts as the head goes down and
       // swings the other way when the head turns; the stretch holds it straight out.
