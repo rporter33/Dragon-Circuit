@@ -230,13 +230,13 @@ export class Forest {
   private materialFor(kind: 'foliage' | 'glow' | 'rock' | 'card'): Material {
     switch (kind) {
       case 'foliage':
-        return dressMaterial({ sway: 'tree' });
+        return dressMaterial({ sway: 'tree', instanced: true });
       case 'glow':
-        return dressMaterial({ sway: 'tree', glow: true, glowDay: 0.06, glowNight: 1.9 });
+        return dressMaterial({ sway: 'tree', glow: true, glowDay: 0.06, glowNight: 1.9, instanced: true });
       case 'rock':
-        return dressMaterial({});
+        return dressMaterial({ instanced: true });
       case 'card':
-        return dressMaterial({ sway: 'tree', doubleSide: true, keepNormals: true });
+        return dressMaterial({ sway: 'tree', doubleSide: true, keepNormals: true, instanced: true });
     }
   }
 
