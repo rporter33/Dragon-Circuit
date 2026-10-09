@@ -13,6 +13,10 @@ import { aimRotation, solveTwoBone } from './ik';
 import { Gait, footPhase, type GaitContext } from './gait';
 import { beat, boneWorld, gliding, look, standing } from './wyvern.testkit';
 import { PEN_PAIRS, type Penetration, wyvernPenetration } from './collision';
+import { GroundWalker, standingOrientation } from '../../player/ground';
+import { PLAYER_TUNING as P } from '../../player/tuning';
+import { gaitProfile } from '../../core/gait';
+import { DEG } from '../../core/math';
 
 const _p = new Vector3();
 const _q = new Vector3();
@@ -351,6 +355,173 @@ describe('pure helpers', () => {
     expect(swings).toBeGreaterThan(20);
     expect(footPhase(0.1, 0, 0.6).swing).toBe(false);
     expect(footPhase(0.7, 0, 0.6).swing).toBe(true);
+  });
+});
+
+/**
+ * A wyvern walking on the gameplay walker's gait clock over `ground` (height and normal at x, z):
+ * the walker (player/ground.ts) runs its footstep clock and the model follows WyvernPose.gaitPhase,
+ * as in the game. `speedAt(frame)` is the target speed, reached at the walker's acceleration.
+ * `each` sees every frame after the model's update; footstep contacts come with where the model said
+ * the foot would come down (footLanding, read before the update, as the game's footsteps are).
+ */
+function walkOn(
+  breed: BreedId,
+  ground: (x: number, z: number, n: Vector3) => number,
+  yaw: number,
+  frames: number,
+  speedAt: (i: number) => number,
+  each: (w: Wyvern, i: number, walker: GroundWalker, steps: { foot: number; at: Vector3 }[]) => void,
+) {
+  const b = BREEDS[breed];
+  const terrain = {
+    groundAt: (x: number, z: number, _y: number, out?: GroundHit) => {
+      const h = out ?? { y: 0, normal: new Vector3(), islandId: 1, surface: 'grass' as const };
+      h.y = ground(x, z, h.normal);
+      return h;
+    },
+  };
+  const w = new Wyvern(look(breed), { terrain });
+  const walker = new GroundWalker();
+  walker.yaw = yaw;
+  walker.position.set(0, ground(0, 0, new Vector3()) + b.standHeight, 0);
+  const n = new Vector3();
+  const pose = standing(breed);
+  for (let i = 0; i < frames; i++) {
+    const v = speedAt(i);
+    walker.speed = v > walker.speed ? Math.min(v, walker.speed + P.wyvernAccel / 60) : Math.max(v, walker.speed - P.wyvernBrake / 60);
+    walker.position.x += (Math.sin(yaw) * walker.speed) / 60;
+    walker.position.z += (Math.cos(yaw) * walker.speed) / 60;
+    walker.groundY = ground(walker.position.x, walker.position.z, n);
+    walker.normal.copy(n);
+    walker.position.y = walker.groundY + b.standHeight;
+    walker.velocity.set(Math.sin(yaw) * walker.speed, 0, Math.cos(yaw) * walker.speed);
+    const c = walker.gaitStep(1 / 60, b, true);
+    const steps: { foot: number; at: Vector3 }[] = [];
+    for (let k = 0; k < 4; k++) if (c & (1 << k)) steps.push({ foot: k, at: w.footLanding(k, new Vector3()) });
+    pose.position.copy(walker.position);
+    standingOrientation(yaw, walker.normal, gaitProfile(breed).slopeTilt, 0, pose.orientation);
+    pose.velocity.copy(walker.velocity);
+    pose.groundY = walker.groundY;
+    pose.gait = walker.speed > 0.3 ? 'walk' : 'idle';
+    pose.groundSpeed = walker.speed;
+    pose.gaitPhase = walker.gaitPhase;
+    pose.lookTarget.set(walker.position.x + Math.sin(yaw) * 40, walker.position.y + 1, walker.position.z + Math.cos(yaw) * 40);
+    w.update(1 / 60, pose);
+    each(w, i, walker, steps);
+  }
+  w.dispose();
+}
+
+const FLAT = (_x: number, _z: number, n: Vector3) => {
+  n.set(0, 1, 0);
+  return 10;
+};
+
+describe('ground gait truth (C4)', { timeout: 300000 }, () => {
+  it('walks in the lateral sequence (LH, LF, RH, RF) on the walker\'s clock, each footstep within 0.1 m of where its foot comes down', () => {
+    const pos = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+    const wt: number[] = [0, 0, 0, 0];
+    for (const breed of BREED_ORDER) {
+      const b = BREEDS[breed];
+      // The keyboard walk, and a brisk walk (short of where the walk starts blending into the run).
+      for (const walk of [P.keyboardWalk, Math.min(P.walkFraction * 0.9, (0.65 * gaitProfile(breed).runSpeed) / b.groundSpeed)]) {
+        const order: number[] = [];
+        const heard: (Vector3 | null)[] = [null, null, null, null];
+        let worst = 0;
+        let landed = 0;
+        walkOn(breed, FLAT, 0.3, 420, (i) => (i < 30 ? 0 : walk * b.groundSpeed), (w, _i, _walker, steps) => {
+          for (const s of steps) {
+            order.push(s.foot);
+            heard[s.foot] = s.at;
+          }
+          w.footContacts(pos, wt);
+          for (let k = 0; k < 4; k++) {
+            if (heard[k] === null || wt[k] < 1) continue;
+            worst = Math.max(worst, heard[k]!.distanceTo(pos[k]));
+            heard[k] = null;
+            landed++;
+          }
+        });
+        const tag = `${breed} at ${walk} of groundSpeed`;
+        expect(landed, tag).toBeGreaterThan(12);
+        expect(worst, tag).toBeLessThan(0.1);
+        // After the first few, the touchdowns go LH, LF, RH, RF round and round (foot order LH 0,
+        // RH 1, LF 2, RF 3).
+        const seq = [0, 2, 1, 3];
+        const tail = order.slice(4);
+        const k0 = seq.indexOf(tail[0]);
+        tail.forEach((f, j) => expect(f, `${tag}: touchdown ${j}`).toBe(seq[(k0 + j) % 4]));
+      }
+    }
+  });
+
+  it('rolls the trunk over the feet that are down: the swinging side\'s hip and shoulder hike', () => {
+    for (const breed of BREED_ORDER) {
+      let hips = 0;
+      let shoulders = 0;
+      walkOn(breed, FLAT, 0, 360, (i) => (i < 30 ? 0 : P.keyboardWalk * BREEDS[breed].groundSpeed), (w, i) => {
+        if (i < 150) return;
+        const feet = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+        const down = [0, 0, 0, 0];
+        w.footContacts(feet, down);
+        // + when the left foot is lifted (less of it down) than the right.
+        const hindLift = down[1] - down[0];
+        const foreLift = down[3] - down[2];
+        hips += hindLift * (boneWorld(w, 'thighL').y - boneWorld(w, 'thighR').y);
+        shoulders += foreLift * (boneWorld(w, 'humerusL').y - boneWorld(w, 'humerusR').y);
+      });
+      expect(hips, breed).toBeGreaterThan(0.05);
+      expect(shoulders, breed).toBeGreaterThan(0.02);
+    }
+  });
+
+  it('keeps every planted foot on the ground: slopes up to the walk limit, up, down and across, and steps', () => {
+    const DEGS = Math.acos(P.maxSlopeY) / DEG;
+    const grounds: [string, (x: number, z: number, n: Vector3) => number][] = [
+      [`${Math.round(DEGS)}° slope`, (_x, z, n) => {
+        const t = Math.tan(DEGS * DEG);
+        n.set(0, 1, -t).normalize();
+        return 10 + z * t;
+      }],
+      ['20° slope', (_x, z, n) => {
+        const t = Math.tan(20 * DEG);
+        n.set(0, 1, -t).normalize();
+        return 10 + z * t;
+      }],
+      ['0.3 m step', (_x, z, n) => {
+        n.set(0, 1, 0);
+        return z > 2 ? 9.7 : 10;
+      }],
+    ];
+    const pos = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+    const wt: number[] = [0, 0, 0, 0];
+    for (const breed of BREED_ORDER) {
+      const b = BREEDS[breed];
+      for (const [name, ground] of grounds) {
+        for (const yaw of [0, Math.PI, Math.PI / 2]) {
+          let worst = 0;
+          // Each foot's own bone (the ball of the foot, the wrist) sits a fixed way off the spot the
+          // gait planted it on (the sole, the claws), as when standing there: never hung in the air.
+          const stand = [Infinity, Infinity, Infinity, Infinity];
+          const was = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+          walkOn(breed, ground, yaw, 300, (i) => (i < 90 ? 0 : P.keyboardWalk * b.groundSpeed), (w, i) => {
+            w.footContacts(pos, wt);
+            for (let k = 0; k < 4; k++) {
+              // (Planted: down, and where it was last frame.)
+              const planted = wt[k] === 1 && pos[k].distanceTo(was[k]) < 1e-9;
+              was[k].copy(pos[k]);
+              if (!planted || i < 60) continue;
+              const rise = boneWorld(w, ['toesL', 'toesR', 'clawL', 'clawR'][k]).distanceTo(pos[k]);
+              if (i < 90) stand[k] = Math.min(stand[k], rise);
+              else worst = Math.max(worst, rise - stand[k]);
+            }
+          });
+          // (At most a frame or two, at the walk limit, before a foot out of reach lifts early.)
+          expect(worst, `${breed} on a ${name}, yaw ${Math.round((yaw * 180) / Math.PI)}°`).toBeLessThan(0.03 * b.standHeight);
+        }
+      }
+    }
   });
 });
 

@@ -431,8 +431,7 @@ export class LifeLayer {
     const neckN = I.neck.length;
     const bankComp = -f.bank * airW;
     const chestLift = f.chestLift;
-    const moving = f.moving;
-    const gaitSway = f.gaitSway;
+    const gaitNeckYaw = f.gaitNeckYaw;
     // Greeting a rider at its shoulder, the neck curls round toward them (but stops short: the
     // head turns the rest of the way on its own, so the snout ends a little way off their face).
     const greet = f.greet;
@@ -458,7 +457,7 @@ export class LifeLayer {
       pitch += breath * breathAmp * 0.2 * (1 - airW);
       const e = this.neckAng;
       e[0] = pitch;
-      e[1] = neckYaw * NECK_YAW_SHARE[i] + (moving ? -gaitSway * 0.4 : 0);
+      e[1] = neckYaw * NECK_YAW_SHARE[i] + gaitNeckYaw;
       e[2] = bankComp * 0.06;
       a.setEulerAt(I.neck[i], e, 0);
     }

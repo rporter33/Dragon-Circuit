@@ -1,9 +1,11 @@
 // Ground layer of the wyvern animator: wing-walking on the hind feet and the folded wrists.
 //
-//   gait           feet planted in world space by gait.ts (phase driven by distance travelled,
+//   gait           feet planted in world space by gait.ts (on the gameplay walker's gait clock,
 //                  corrective steps while standing), and the landing brace
-//   groundTrunk    the gait's bob, sway, pitch and roll, the landing settle (dip) and the takeoff
-//                  crouch
+//   groundTrunk    the trunk driven by the feet (the pendulum's rise and fall, the roll over the
+//                  stance feet, the spine's sway from where the feet are, a dip at each footfall),
+//                  the body lowered to its lowest feet on uneven ground, the landing settle (dip)
+//                  and the takeoff crouch
 //   touchdown      plant the feet where they are and kick the settle spring
 //   groundWingPose the FK wing pose on the ground: folded, the settle and shuffle, raised for the
 //                  takeoff, spread to bask
@@ -22,9 +24,10 @@ import { SIDE_SIGN, innerTrailRoot, type RigDef } from '../rig';
 import { Bouncy, aimRotation, solveTwoBoneAt } from '../ik';
 import { armScale } from '../parts/wings';
 import { Gait, type GaitContext } from '../gait';
+import { gaitProfile, runBlendAt, type GaitProfile } from '../../../core/gait';
 import { FLAP_STYLES, WING_CHANNELS, blendPose, flapPose, type WingPose } from '../wingPoses';
 import type { WyvernAnimator } from '../animator';
-import { BASK, FOLDED, KNEEL, SETTLE, STAND_ROOT_PITCH } from './groundPoses';
+import { BASK, FOLDED, KNEEL, SETTLE } from './groundPoses';
 import { FWD, LEFT, UP, bump, type AnimFrame } from './frame';
 
 /**
@@ -56,6 +59,7 @@ const _tv2 = new Vector3();
 const _tv3 = new Vector3();
 const _tv4 = new Vector3();
 const _qr = new Quaternion();
+const _gn = new Vector3();
 const _qa = new Float64Array(4);
 
 /**
@@ -128,6 +132,8 @@ export class GroundLayer {
   private readonly rig: RigDef;
   private readonly terrain?: GroundTerrain;
   readonly gait: Gait;
+  /** The breed's gait (core/gait.ts): its timing, the trunk's gains, the slope tilt. */
+  readonly profile: GaitProfile;
   /** Where each foot is now (world): hind feet under the ball of the foot, fore at the claw. */
   readonly footWorld: Vector3[] = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
   private readonly gaitCtx: GaitContext;
@@ -145,6 +151,23 @@ export class GroundLayer {
   private readonly toeAng = new Float64Array(3);
   /** Two-bone lengths for solveTwoBoneAt: humerus, forearm, thigh, shin. */
   private readonly lens: Float64Array;
+  /** The feet that came down this frame (bit i: foot i; see Gait.contacts). */
+  private footfalls = 0;
+  /** 0..1 how much the gait's trunk terms are on (eases in and out as the gait starts and stops). */
+  private moveW = 0;
+  /**
+   * The uneven-ground drop at the hind end and at the fore end (m, eased: a foot planting on a
+   * step doesn't jolt the body), and how much lower each limb's root needed to be in the last IK
+   * for its planted foot to stay in reach (LH, RH, LF, RF; m, negative when it reached with room).
+   */
+  private readonly dropH = new Bouncy(14, 1);
+  private readonly dropF = new Bouncy(14, 1);
+  private readonly need = new Float64Array([-1, -1, -1, -1]);
+  /** The hind and fore rest spots' distance apart (m, body frame z): the uneven-ground pitch's lever. */
+  private readonly footSpan: number;
+  /** ...and the fore rest spots' z (body frame). */
+  private readonly foreZ: number;
+
   /** Reused terrain query result. */
   private readonly hit: GroundHit = { y: 0, normal: new Vector3(), islandId: -1, surface: 'grass' };
   /**
@@ -301,12 +324,15 @@ export class GroundLayer {
     const restFore = (side: number) => new Vector3((this.elbowAt.x - FOLD.wristIn * sh) * SIDE_SIGN[side], -sh, P.shoulder[2] + FOLD.wristFwd * P.arm.forearm);
     this.gait = new Gait([restHind(0), restHind(1), restFore(0), restFore(1)]);
     this.foreRest = [restFore(0), restFore(1)];
+    this.profile = gaitProfile(rig.props.breed);
+    this.footSpan = Math.max(0.5 * sh, restFore(0).z - restHind(0).z);
+    this.foreZ = restFore(0).z;
     {
       // The kneel's depth: the torso's lowest point under the kneel's pitch, down to a clearance.
       const plan = rig.plan;
       const s0 = plan.keyS[plan.marks.neckBase];
       const s1 = plan.keyS[plan.marks.tailBase];
-      const pa = STAND_ROOT_PITCH + KNEEL.pitch;
+      const pa = this.profile.standPitch + KNEEL.pitch;
       let low = 0;
       for (let k = 0; k <= 40; k++) {
         const st = plan.station(s0 + ((s1 - s0) * k) / 40);
@@ -318,11 +344,15 @@ export class GroundLayer {
     this.gaitCtx = {
       dt: 0,
       toWorld: (m, out) => out.copy(m).applyQuaternion(a.qW).add(a.posW),
-      groundAt: (x, z, y) => this.groundHeight(x, z, y),
+      groundAt: (x, z, y, n) => this.groundHeight(x, z, y, n),
+      fallbackY: 0.5,
       velocity: new Vector3(),
       yawRate: 0,
       standHeight: sh,
       runBlend: 0,
+      overreach: 0,
+      profile: this.profile,
+      phase: undefined,
       moving: false,
       groundKey: 0.5,
     };
@@ -331,16 +361,26 @@ export class GroundLayer {
   /** After a teleport: the settle starts from rest (the gait re-plants in gait()). */
   reset(): void {
     this.dip.reset();
+    this.dropH.reset();
+    this.dropF.reset();
+    this.need.fill(-1);
   }
 
-  private groundHeight(x: number, z: number, y: number): number {
-    const fallback = this.a.groundRef;
-    if (this.terrain) {
-      const g = this.terrain.groundAt(x, z, y, this.hit);
-      // Ignore ground far from the body's own (decks over the void, cliff bottoms).
-      if (g && Math.abs(g.y - fallback) < 1.6) return g.y;
+  /**
+   * The ground a foot can stand on under (x, z): its height, the normal written into `n`; NaN when
+   * there is none within reach of the body's own ground (a deck over the void, a cliff's foot, the
+   * top of a wall), so the gait steps back onto ground that is.
+   */
+  private groundHeight(x: number, z: number, y: number, n: Vector3): number {
+    const ref = this.a.groundRef;
+    if (!this.terrain) {
+      n.set(0, 1, 0);
+      return ref;
     }
-    return fallback;
+    const g = this.terrain.groundAt(x, z, y, this.hit);
+    if (!g || Math.abs(g.y - ref) > 0.8 * this.f.sh) return NaN;
+    n.copy(g.normal);
+    return g.y;
   }
 
   /**
@@ -369,17 +409,24 @@ export class GroundLayer {
       c.yawRate = f.om.y;
       c.standHeight = f.sh;
       c.groundKey = this.a.groundRef;
+      c.fallbackY = this.a.groundRef;
       const gs = Math.sqrt(c.velocity.x * c.velocity.x + c.velocity.z * c.velocity.z);
-      const runSpeed = this.rig.props.breed === 'galewing' ? 5 : 5.5;
-      c.runBlend = smoothstep(runSpeed * 0.7, runSpeed * 1.25, gs);
+      c.runBlend = runBlendAt(this.profile, gs);
       c.moving = !f.takeoffCrouch && (gs > 0.35 || Math.abs(f.om.y) > 0.35);
+      // One clock: the feet follow the walker's, so each comes down on its footstep.
+      c.phase = pose.gaitPhase;
       // The kneel brings the forefeet forward along the ground (the rider's side a little wider),
       // stepping as a pair.
       this.kneelRest();
       c.foreTogether = f.kneel > 0.02;
+      // Feet the last IK couldn't reach (beyond what the body's drop already gave them), in the
+      // walk (the bound's hind feet leave the ground at full stretch: that is its push-off).
+      const nd = this.need;
+      const over = c.runBlend < 0.5 ? 0.01 * f.sh : Infinity;
+      c.overreach = (nd[0] > over ? 1 : 0) | (nd[1] > over ? 2 : 0) | (nd[2] > over ? 4 : 0) | (nd[3] > over ? 8 : 0);
       if (f.teleport) this.gait.reset(c);
-      this.gait.update(c);
-    }
+      this.footfalls = this.gait.update(c);
+    } else this.footfalls = 0;
     f.runBlend = this.gaitCtx.runBlend;
     f.gaitPhase = this.gait.phase;
     f.moving = this.gaitCtx.moving && !airborne;
@@ -405,18 +452,75 @@ export class GroundLayer {
     }
   }
 
-  /** The gait's bob, sway, pitch and roll, the landing dip, the takeoff crouch. */
+  /**
+   * The trunk, driven by the feet (a monitor lizard's walk): it rises over each hind foot at
+   * mid-stance and sinks between them (an inverted pendulum), rolls over the feet that are down
+   * (the swinging side's hip and shoulder hike to lift the leg) and shifts toward the side with
+   * more of them down, bends its spine sideways with where the feet are (concave on the side whose
+   * fore and hind feet are closest) while the neck turns back against it, and dips at each
+   * footfall. On uneven ground it lowers to its lowest feet. Then the landing dip and the takeoff
+   * crouch.
+   */
   groundTrunk(): void {
     const f = this.f;
+    const a = this.a;
     const { moving, runBlend, gaitPhase, heft, sh } = f;
-    f.gaitBob = moving ? -(0.025 + 0.01 * heft) * sh * (1 + 2 * runBlend) * (0.5 - 0.5 * Math.cos(gaitPhase * Math.PI * 4)) : 0;
+    const P = this.profile;
+    const gait = this.gait;
+    const feet = gait.feet;
+    this.moveW += ((moving ? 1 : 0) - this.moveW) * clamp01(f.dt * 4);
+    const mw = this.moveW * f.groundW;
+    // Support (1 planted … 0 mid-swing) per foot: LH, RH, LF, RF.
+    const sLH = 1 - feet[0].airborne;
+    const sRH = 1 - feet[1].airborne;
+    const sLF = 1 - feet[2].airborne;
+    const sRF = 1 - feet[3].airborne;
+    f.pelvisRoll = P.pelvisRoll * (sRH - sLH) * f.groundW;
+    f.chestRoll = P.chestRoll * (sRF - sLF) * f.groundW;
+    f.gaitShift = 0.02 * sh * clamp(sLH + sLF - sRH - sRF, -1, 1) * f.groundW;
+    // The pendulum: highest with one hind foot at mid-stance, lowest in the hind double support.
+    const st = gait.stance;
+    const pend = Math.max(st[0] >= 0 ? Math.sin(Math.PI * st[0]) : 0, st[1] >= 0 ? Math.sin(Math.PI * st[1]) : 0);
+    f.gaitBob = mw * sh * (-0.01 + 0.022 * pend);
+    // Footfalls: a hind foot takes the weight with a dip, a fore foot with less.
+    const ff = this.footfalls;
+    if (ff !== 0 && f.groundW > 0.5) {
+      const k = 0.25 + 0.35 * heft;
+      if (ff & 1) this.dip.velocity -= k;
+      if (ff & 2) this.dip.velocity -= k;
+      if (ff & 4) this.dip.velocity -= 0.6 * k;
+      if (ff & 8) this.dip.velocity -= 0.6 * k;
+    }
     const dipV = this.dip.step(0, f.dt);
     f.dipV = dipV;
-    f.gaitSway = moving ? 0.05 * (1 - runBlend * 0.5) * Math.sin(gaitPhase * TAU) : 0;
+    // The spine's sideways bend from the feet's fore-aft split (each foot's z from its rest spot,
+    // body frame): (right fore − right hind) − (left fore − left hind), at most about 1.4 stance
+    // lengths in the walk, nothing in the bound (each pair moves together).
+    const r = gait.rest;
+    const zLH = a.toModel(feet[0].pos, _v).z - r[0].z;
+    const zRH = a.toModel(feet[1].pos, _v).z - r[1].z;
+    const zLF = a.toModel(feet[2].pos, _v).z - r[2].z;
+    const zRF = a.toModel(feet[3].pos, _v).z - r[3].z;
+    const span = 1.4 * gait.duty * gait.cycleLen;
+    const flex = clamp((zRF - zRH - (zLF - zLH)) / Math.max(0.2 * sh, span), -1, 1);
+    f.gaitSway = mw * P.spineYaw * flex;
+    // The chest turns 1.1× the sway (spine and chest bones); the neck takes back headCounter of it.
+    f.gaitNeckYaw = (-P.headCounter * 1.1 * f.gaitSway) / this.rig.idx.neck.length;
     // Settle: the landing dip pitches the nose down a little and the body rocks back up.
     f.gaitPitch = moving ? -0.03 * runBlend * Math.sin(gaitPhase * Math.PI * 4) : 0;
     f.dipPitch = (dipV / sh) * (0.5 + 0.2 * heft);
-    f.gaitRoll = moving ? 0.03 * Math.sin(gaitPhase * TAU) * (1 - runBlend) : 0;
+    f.gaitRoll = 0;
+    // Uneven ground: the body lowers and pitches so each end's lowest planted foot stays in reach
+    // (the hind end by dH, the fore by dF): it drops to its lowest feet, never hanging a straight
+    // leg in the air. Flat ground, or a slope the body's own tilt takes, asks nothing.
+    // (Each end's drop as last applied, plus how much more its limbs asked for in last frame's IK.)
+    const lim = 0.35 * sh;
+    const need = this.need;
+    const dH = this.dropH.step(f.groundW * clamp(this.dropH.value + Math.max(need[0], need[1]), 0, lim), f.dt);
+    const dF = this.dropF.step(f.groundW * clamp(this.dropF.value + Math.max(need[2], need[3]), 0, lim), f.dt);
+    const tilt = (dH - dF) / this.footSpan;
+    f.groundDrop = -(dF + this.foreZ * tilt);
+    f.groundPitch = -tilt;
     f.crouchPitch = f.takeoffCrouch ? -0.08 * f.openAmt : 0;
     // The kneel: down nose-first to a belly-down couch, rolled toward the rider.
     const kn = f.kneel * f.groundW;
@@ -492,6 +596,7 @@ export class GroundLayer {
     // fold goes back along the body, never out sideways.
     this.elbowPole(side, S, Wt, fwdG, outG, _v4);
     const E = _v5;
+    this.reachNeed(2 + side, S, Wt, 0.98 * (this.lens[0] + this.lens[1]));
     solveTwoBoneAt(S, this.lens, 0, Wt, _v4, E);
     // A wall at the elbow: tuck the wing in against the body (next frame's pole, smoothed).
     this.wallProbe(side, E);
@@ -605,12 +710,14 @@ export class GroundLayer {
       if (f === 2) this.trailRoll(side, _q);
       a.setModelBlend(w.fingers[f][1], _q);
     }
-    // Claws point forward along the ground.
-    _fd.x = fwdG.x + up.x * -0.25 + LEFT.x * (0.2 * sx);
-    _fd.y = fwdG.y + up.y * -0.25 + LEFT.y * (0.2 * sx);
-    _fd.z = fwdG.z + up.z * -0.25 + LEFT.z * (0.2 * sx);
+    // Claws point forward along the ground (along its slope).
+    const gn = this.groundNormal(foot.normal, foot.airborne);
+    const fn = FWD.x * gn.x + FWD.y * gn.y + FWD.z * gn.z;
+    _fd.x = FWD.x - gn.x * fn - gn.x * 0.25 + LEFT.x * (0.2 * sx);
+    _fd.y = FWD.y - gn.y * fn - gn.y * 0.25 + LEFT.y * (0.2 * sx);
+    _fd.z = FWD.z - gn.z * fn - gn.z * 0.25 + LEFT.z * (0.2 * sx);
     _fd.normalize();
-    aimRotation(FWD, UP, _fd, up, _q);
+    aimRotation(FWD, UP, _fd, gn, _q);
     a.setModelBlend(w.claw, _q);
   }
 
@@ -844,6 +951,59 @@ export class GroundLayer {
   }
 
   /**
+   * How much lower limb root `root` must be for its target `tip` (body frame) to sit at reach
+   * `R` (m; negative: how much it could rise and still reach), written into this.need[i]; a foot
+   * late in its swing asks it of where it will land, one early in it nothing.
+   */
+  private reachNeed(i: number, root: Vector3, tip: Vector3, R: number): void {
+    const up = this.a.upM;
+    const foot = this.gait.feet[i];
+    let dx = tip.x - root.x;
+    let dy = tip.y - root.y;
+    let dz = tip.z - root.z;
+    if (foot.swinging) {
+      // Through the second half of a swing, where it will land (so the body is lowered in time).
+      if (foot.s < 0.5) {
+        this.need[i] = -this.f.sh;
+        return;
+      }
+      if (i < 2) {
+        // The ankle over the landing spot as the foot will stand there (heel down: the swing's
+        // lifted heel would overstate it).
+        const G = this.rig.props.leg;
+        const q = this.a.toModel(foot.target, _gn);
+        const fz = up.z;
+        const b = (G.meta * Math.sin(this.metaAngle)) / Math.sqrt(Math.max(1e-9, 1 - fz * fz));
+        const u = G.sole + G.meta * Math.cos(this.metaAngle);
+        dx = q.x + up.x * u + up.x * fz * b - root.x;
+        dy = q.y + up.y * u + up.y * fz * b - root.y;
+        dz = q.z + up.z * u + (up.z * fz - 1) * b - root.z;
+      } else {
+        const d = _gn.subVectors(foot.target, foot.pos).applyQuaternion(this.a.qWInv);
+        dx += d.x;
+        dy += d.y;
+        dz += d.z;
+      }
+    }
+    const dUp = dx * up.x + dy * up.y + dz * up.z;
+    const h2 = dx * dx + dy * dy + dz * dz - dUp * dUp;
+    this.need[i] = -dUp - Math.sqrt(Math.max(0, R * R - h2));
+  }
+
+  /**
+   * A foot's ground normal in the body frame (into _gn), blended back to up by `lift` (0..1, the
+   * foot's airborne share).
+   */
+  private groundNormal(n: Vector3, lift: number): Vector3 {
+    const up = this.a.upM;
+    const g = _gn.copy(n).applyQuaternion(this.a.qWInv);
+    g.x += (up.x - g.x) * lift;
+    g.y += (up.y - g.y) * lift;
+    g.z += (up.z - g.z) * lift;
+    return g.normalize();
+  }
+
+  /**
    * The four ground contacts (LH, RH, LF, RF; world) as the gait plants them, and how firmly each
    * is down (1 planted … 0 lifted or in the air). Returns how many were written.
    */
@@ -934,15 +1094,20 @@ export class GroundLayer {
     fwdG.y -= up.y * up.z;
     fwdG.z -= up.z * up.z;
     fwdG.normalize();
+    // The ground's normal under the foot (body frame), easing back to up as the foot lifts.
+    const gn = this.groundNormal(foot.normal, foot.airborne);
     // Ball of the foot above the planted sole.
     const sole = G.sole;
     const ball = a.toModel(foot.pos, _v);
-    ball.x += up.x * sole;
-    ball.y += up.y * sole;
-    ball.z += up.z * sole;
+    ball.x += gn.x * sole;
+    ball.y += gn.y * sole;
+    ball.z += gn.z * sole;
     // Metatarsus leans forward at the breed's own angle (near flat on the ironback); more when the
-    // heel lifts during a swing.
-    const ang = this.metaAngle + (KNEEL.metaFlat - this.metaAngle) * this.f.kneel + foot.airborne * 0.5;
+    // heel lifts during a swing. Late in a stance the heel rises for the push-off (the metatarsus
+    // stands up toward vertical, the ankle toward the hip): the leg reaches its stride's end.
+    const st = this.gait.stance[side];
+    const heel = st > 0.5 ? 0.8 * this.metaAngle * smoothstep(0.5, 1, st) * this.moveW : 0;
+    const ang = this.metaAngle + (KNEEL.metaFlat - this.metaAngle) * this.f.kneel + foot.airborne * 0.5 - heel;
     const ca = -Math.cos(ang);
     const sa = Math.sin(ang);
     const metaDir = _v3;
@@ -961,6 +1126,7 @@ export class GroundLayer {
     pole.y = fwdG.y + LEFT.y * out;
     pole.z = fwdG.z + LEFT.z * out;
     const knee = _hum;
+    this.reachNeed(side, hip, ankle, 0.98 * (G.thigh + G.shin));
     solveTwoBoneAt(hip, this.lens, 2, ankle, pole, knee);
     const lat = _ref.copy(LEFT).applyQuaternion(a.modelQ[a.parent[l.thigh]]);
     aimRotation(rest[0], LEFT, _fore.subVectors(knee, hip), lat, _q);
@@ -969,13 +1135,14 @@ export class GroundLayer {
     a.setModelBlend(l.shin, _q);
     aimRotation(rest[2], LEFT, _fore.subVectors(ball, a.pivot(l.meta)), lat, _q);
     a.setModelBlend(l.meta, _q);
-    // Toes flat on the ground in stance, pointing down as the foot lifts.
+    // Toes flat on the ground in stance (along its slope), pointing down as the foot lifts.
     const down = -0.9 * foot.airborne;
-    _fd.x = fwdG.x + up.x * down;
-    _fd.y = fwdG.y + up.y * down;
-    _fd.z = fwdG.z + up.z * down;
+    const fn = FWD.x * gn.x + FWD.y * gn.y + FWD.z * gn.z;
+    _fd.x = FWD.x - gn.x * fn + gn.x * down;
+    _fd.y = FWD.y - gn.y * fn + gn.y * down;
+    _fd.z = FWD.z - gn.z * fn + gn.z * down;
     _fd.normalize();
-    aimRotation(FWD, UP, _fd, up, _q);
+    aimRotation(FWD, UP, _fd, gn, _q);
     a.setModelBlend(l.toes, _q);
   }
 

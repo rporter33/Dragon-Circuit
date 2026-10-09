@@ -3,37 +3,30 @@
 // is mounted on the ground and by the riderless wyvern when it follows its rider.
 
 import { Matrix4, Quaternion, Vector3 } from 'three';
-import type { BreedStats, ContactInfo, SurfaceKind, TerrainQuery } from '../core/types';
-import { angleDelta, clamp, damp, lerp, smoothstep } from '../core/math';
+import type { BreedId, BreedStats, ContactInfo, SurfaceKind, TerrainQuery } from '../core/types';
+import { angleDelta, clamp, damp, smoothstep } from '../core/math';
+import { TURN_CYCLE, footOffset, froudeStride, gaitProfile, runBlendAt } from '../core/gait';
 import { PLAYER_TUNING as P } from './tuning';
 
 export type WalkResult = 'ok' | 'edge' | 'blocked';
 
 /**
- * The wyvern's ground gait as the model animates it (creatures/wyvern/gait.ts — mirrored here,
- * since gameplay never imports presentation): four contacts per cycle, a lateral-sequence walk
- * (LH, LF, RH, RF) blending into a bounding run, the cycle covering `cycle` × standHeight of
- * ground. Footsteps fire per contact so the sounds land on the visible footfalls; the phase goes
- * out on WyvernPose.gaitPhase so the animation can follow the same clock.
+ * Where the feet stand in the body frame, × standHeight: [left/right, forward] (hind, then fore).
+ * A footstep's position when no model reports its foot (PlayerDeps.foot).
  */
 export const GAIT = {
-  walkOffsets: [0, 0.5, 0.25, 0.75] as const,
-  runOffsets: [0, 0.08, 0.5, 0.58] as const,
-  walkCycle: 1.55,
-  runCycle: 2.5,
-  /** Turning on the spot (TURN_CYCLE in gait.ts). */
-  turnCycle: 0.6,
-  /** Walk → run blend between these × the breed's run speed (m/s). */
-  runFrom: 0.7,
-  runTo: 1.25,
-  /** Foot rest spots in body space, × standHeight: [left/right, forward] (hind, then fore). */
   hind: [0.3, -0.2] as const,
   fore: [0.5, 0.55] as const,
 };
 
-/** Speed (m/s) at which the model's gait reads as a run (the animator's threshold). */
-export function gaitRunSpeed(breed: BreedStats): number {
-  return breed.id === 'galewing' ? 5 : 5.5;
+/**
+ * The slope limits, per breed: the least ground normal y the wyvern can land on ('land') and walk
+ * up ('walk'). Its GaitProfile's own limit, else the global one (PLAYER_TUNING landNormalY,
+ * maxSlopeY); a breed that climbs steeper ground is one field in its profile row.
+ */
+export function slopeLimitY(breed: BreedId, kind: 'land' | 'walk'): number {
+  const g = gaitProfile(breed);
+  return kind === 'land' ? (g.landNormalY ?? P.landNormalY) : (g.walkNormalY ?? P.maxSlopeY);
 }
 
 const _m = new Matrix4();
@@ -44,6 +37,7 @@ const _probe = new Vector3();
 const _push = new Vector3();
 const _n = new Vector3();
 const _info: ContactInfo = { soft: false };
+const _stride = new Float64Array(2);
 
 /**
  * Body probes that keep a wyvern on its feet out of walls, in standHeight units: [height above
@@ -104,10 +98,18 @@ export class GroundWalker {
   /** Distance walked since the last footstep. */
   private stride = 0;
   private stepSide = 0;
-  /** 0..1 position in the gait cycle (see GAIT). */
+  /**
+   * 0..1 position in the gait cycle (the breed's GaitProfile, core/gait.ts): goes out on
+   * WyvernPose.gaitPhase, and the model's feet follow it, so each footstep lands on a footfall.
+   */
   gaitPhase = 0;
   /** Bit i set: foot i (LH, RH, LF, RF) touched down during the last gaitStep(). */
   contacts = 0;
+  /**
+   * Each foot's own phase (0..1, touching down as it wraps): the clock plus the foot's offset, held
+   * while a change of gait moves its offset back faster than the clock runs (it never steps twice).
+   */
+  private readonly footPh = new Float64Array(4).fill(NaN);
 
   /** Snap onto the ground under (x, z) near `fromY`. False over open air. */
   settle(terrain: TerrainQuery, standHeight: number, fromY = this.position.y + 4): boolean {
@@ -180,7 +182,7 @@ export class GroundWalker {
       this.velocity.set(dt > 0 ? px / dt : 0, 0, dt > 0 ? pz / dt : 0);
       // Standing (or turning on the spot) still mustn't leave the head in a wall, or the chest
       // on its rider.
-      this.resolveWalls(terrain, breed.standHeight, 0);
+      this.resolveWalls(terrain, breed.standHeight, 0, slopeLimitY(breed.id, 'land'));
       if (keepOut) this.stayClear(keepOut, breed.standHeight);
       return 'ok';
     }
@@ -194,7 +196,7 @@ export class GroundWalker {
       return 'blocked';
     }
     // Too steep to climb: walking uphill means walking against the slope's downhill direction.
-    if (g.normal.y < P.maxSlopeY && Math.sin(this.yaw) * g.normal.x + Math.cos(this.yaw) * g.normal.z < 0) {
+    if (g.normal.y < slopeLimitY(breed.id, 'walk') && Math.sin(this.yaw) * g.normal.x + Math.cos(this.yaw) * g.normal.z < 0) {
       this.speed = Math.min(this.speed, 0.5);
       return 'blocked';
     }
@@ -210,7 +212,7 @@ export class GroundWalker {
     this.islandId = g.islandId;
     // Walls, trunks, posts: pushed back out and along them (sliding), the pace following
     // whatever ground was actually covered.
-    if (this.resolveWalls(terrain, standHeight, dt)) {
+    if (this.resolveWalls(terrain, standHeight, dt, slopeLimitY(breed.id, 'land'))) {
       const mx = this.position.x - x0;
       const mz = this.position.z - z0;
       const moved = Math.sqrt(mx * mx + mz * mz) / dt;
@@ -278,9 +280,11 @@ export class GroundWalker {
 
   /**
    * Push the standing/walking body horizontally out of solid walls (foliage is walked through).
+   * Ground it can stand on (a push whose direction's y is at least `floorY`, the slope limit) is
+   * floor, not wall: the uphill side of a steep slope it stands on never shoves it downhill.
    * True if anything pushed.
    */
-  resolveWalls(terrain: TerrainQuery, standHeight: number, _dt: number): boolean {
+  resolveWalls(terrain: TerrainQuery, standHeight: number, _dt: number, floorY: number): boolean {
     const s = Math.sin(this.yaw);
     const c = Math.cos(this.yaw);
     let pushed = false;
@@ -288,8 +292,8 @@ export class GroundWalker {
       _probe.set(this.position.x + s * fwd * standHeight, this.groundY + h * standHeight, this.position.z + c * fwd * standHeight);
       if (!terrain.collideSphere(_probe, r * standHeight, _push, _n, _info) || _info.soft) continue;
       const hl = Math.sqrt(_push.x * _push.x + _push.z * _push.z);
-      // A purely vertical push (an eave overhead, a step underfoot) isn't a wall.
-      if (hl < 1e-4) continue;
+      // A purely vertical push (an eave overhead, a step underfoot) isn't a wall, nor is ground.
+      if (hl < 1e-4 || _push.y >= floorY * Math.sqrt(hl * hl + _push.y * _push.y)) continue;
       this.position.x += _push.x;
       this.position.z += _push.z;
       pushed = true;
@@ -299,28 +303,41 @@ export class GroundWalker {
 
   /**
    * Advance the gait clock by the ground covered this step (or the turn on the spot) and note
-   * which feet touched down. Returns the contact bitmask (0 when none).
+   * which feet touched down. The breed's GaitProfile and the stride by dynamic similarity
+   * (core/gait.ts), as the model's gait runs them. Returns the contact bitmask (0 when none).
    */
   gaitStep(dt: number, breed: BreedStats, moving = true): number {
     this.contacts = 0;
     const sh = breed.standHeight;
     const speed = Math.abs(this.speed);
+    const prof = gaitProfile(breed.id);
+    const run = runBlendAt(prof, speed);
     const go = moving && (speed > 0.35 || Math.abs(this.turnRate) > 0.35);
-    if (!go) return 0;
-    const run = smoothstep(gaitRunSpeed(breed) * GAIT.runFrom, gaitRunSpeed(breed) * GAIT.runTo, speed);
-    const turnEff = Math.abs(this.turnRate) * 0.9 * sh;
-    const speedEff = Math.max(speed, turnEff);
-    // Turning on the spot: short, quick steps round the pivot.
-    const turning = speedEff > 1e-6 ? clamp((turnEff - speed) / speedEff, 0, 1) : 0;
-    const cycle = lerp(lerp(GAIT.walkCycle, GAIT.runCycle, run), GAIT.turnCycle, turning) * sh;
-    const prev = this.gaitPhase;
-    const next = prev + (speedEff / cycle) * dt;
+    if (go) {
+      const turnEff = Math.abs(this.turnRate) * 0.9 * sh;
+      const speedEff = Math.max(speed, turnEff);
+      // Turning on the spot: short, quick steps round the pivot.
+      const turning = speedEff > 1e-6 ? clamp((turnEff - speed) / speedEff, 0, 1) : 0;
+      const stride = froudeStride(speedEff, sh, _stride)[0];
+      const cycle = stride + (TURN_CYCLE * sh - stride) * turning;
+      this.gaitPhase = (this.gaitPhase + (speedEff / cycle) * dt) % 1;
+    }
     for (let i = 0; i < 4; i++) {
       // Model foot order is LH, RH, LF, RF; a foot lands when its own phase wraps past 1.
-      const off = lerp(GAIT.walkOffsets[i], GAIT.runOffsets[i], run);
-      if (Math.floor(prev + off) !== Math.floor(next + off)) this.contacts |= 1 << i;
+      const want = this.gaitPhase + footOffset(prof, i, run);
+      const was = this.footPh[i];
+      if (!go || was !== was) {
+        this.footPh[i] = want - Math.floor(want);
+        continue;
+      }
+      let d = want - was;
+      d -= Math.round(d);
+      // (Held while the offset runs back; a jump of the clock, a re-phase, is followed.)
+      if (d <= 0 && d >= -0.25) continue;
+      const now = was + d;
+      if (d > 0 && now >= 1) this.contacts |= 1 << i;
+      this.footPh[i] = now - Math.floor(now);
     }
-    this.gaitPhase = next % 1;
     return this.contacts;
   }
 

@@ -21,7 +21,7 @@ import {
   createWyvernUniforms,
   type WyvernUniforms,
 } from './materials';
-import { STAND_ROOT_PITCH, WyvernAnimator } from './animator';
+import { WyvernAnimator } from './animator';
 
 export interface WyvernOptions {
   /** Render as a translucent race ghost. */
@@ -134,7 +134,7 @@ export class Wyvern implements WyvernRenderable {
   seatOffset(out: Vector3): Vector3 {
     // The seat rides the spine bone; standing at rest the trunk's only rotation is the root's
     // pitch about the body origin.
-    return out.copy(this.info.saddle.seat).applyAxisAngle(X_AXIS, STAND_ROOT_PITCH);
+    return out.copy(this.info.saddle.seat).applyAxisAngle(X_AXIS, this.animator.standPitch);
   }
 
   /**
@@ -172,6 +172,11 @@ export class Wyvern implements WyvernRenderable {
    */
   footContacts(outPos: Vector3[], outW: { [i: number]: number }): number {
     return this.animator.footContacts(outPos, outW);
+  }
+
+  /** Where foot i (LH, RH, LF, RF) will land, or stands (world): its footstep belongs there. */
+  footLanding(i: number, out: Vector3): Vector3 {
+    return this.animator.footLanding(i, out);
   }
 
   /** The body's heave from the wingbeat this frame (m, + up): cameras can ride part of it. */

@@ -49,7 +49,7 @@ export const PLAYER_TUNING = {
   /** Below this fraction of groundSpeed the gait is a walk. */
   walkFraction: 0.55,
   /** Keyboard keys are all or nothing: W walks at this fraction of groundSpeed, Shift gallops. */
-  keyboardWalk: 0.5,
+  keyboardWalk: 0.3,
 
   // --- Rest ----------------------------------------------------------------------------------
   /**

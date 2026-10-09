@@ -33,7 +33,8 @@ import { FlightModel, createFlightState } from '../flight/FlightModel';
 import { angleDelta, clamp, clamp01, damp, DEG, lerp, smoothstep } from '../core/math';
 import { hashSeed, mulberry32 } from '../core/rng';
 import { createRiderPose, createWyvernPose } from './poses';
-import { standingOrientation, yawOf } from './ground';
+import { slopeLimitY, standingOrientation, yawOf } from './ground';
+import { gaitProfile } from '../core/gait';
 import { RiderFoot } from './foot';
 import { Companion } from './companion';
 import { PLAYER_TUNING as P } from './tuning';
@@ -52,6 +53,11 @@ export interface PlayerDeps {
    * (Wyvern.seatOffset). Return null (or omit) to use the standHeight-proportional estimate.
    */
   seat?: (out: Vector3) => Vector3 | null;
+  /**
+   * Where the model's foot i (LH, RH, LF, RF) is coming down, or stands (world; Wyvern.footLanding):
+   * the wyvern's footsteps are placed there. Return null (or omit) to use the walker's estimate.
+   */
+  foot?: (i: number, out: Vector3) => Vector3 | null;
   /** Where home (the stable, the last-resort respawn) is. Defaults to the Roost. */
   home?: HomeAnchor;
   /**
@@ -206,6 +212,7 @@ export class Player implements PlayerSystem {
     this.model = new FlightModel(this.breed);
     this.home = deps.home ?? new FixedHome(deps.terrain.layout, deps.terrain);
     this.lastSafeYaw = this.home.respawn(this.lastSafe);
+    this.companion.footAt = (i, out) => this.footstepAt(i, out);
   }
 
   get flight(): FlightState {
@@ -307,10 +314,10 @@ export class Player implements PlayerSystem {
       w.position.set(_v.x, _v.y + 3, _v.z);
       w.yaw = yaw;
       w.speed = 0;
-      if (!w.settle(t, sh, _v.y + 3) || w.normal.y < P.maxSlopeY) continue;
+      if (!w.settle(t, sh, _v.y + 3) || w.normal.y < slopeLimitY(this.breed.id, 'walk')) continue;
       // Clear of the walls, posts and planters (it would only be pushed aside).
       _v2.copy(w.position);
-      w.resolveWalls(t, sh, 0);
+      w.resolveWalls(t, sh, 0, slopeLimitY(this.breed.id, 'land'));
       if (w.position.distanceToSquared(_v2) > 0.01) continue;
       c.standStill();
       c.called = false;
@@ -567,7 +574,7 @@ export class Player implements PlayerSystem {
     const sink = Math.max(0, -vn);
     _v.copy(s.velocity).addScaledVector(n, -vn);
     const along = _v.length();
-    if (n.y < P.landNormalY) {
+    if (n.y < slopeLimitY(this.breed.id, 'land')) {
       // Too steep to stand: the legs skate and the wyvern slides off.
       s.position.addScaledVector(n, (sh - h) * 0.5);
       if (vn < 0) s.velocity.addScaledVector(n, -vn);
@@ -1039,15 +1046,32 @@ export class Player implements PlayerSystem {
     return speed < this.breed.groundSpeed * P.walkFraction ? 'walk' : 'run';
   }
 
-  /** Footsteps on the visible footfalls: hind feet are heavy, the wing knuckles lighter. */
+  /**
+   * Footsteps on the visible footfalls, where the model's foot comes down (PlayerDeps.foot): heavy
+   * for the feet that carry more than an even share of the weight (GaitProfile.load: the hind
+   * feet), lighter for the wing knuckles.
+   */
   private wyvernFootsteps(dt: number, moving: boolean): void {
     const w = this.companion.walker;
     const contacts = w.gaitStep(dt, this.breed, moving);
     if (contacts === 0) return;
+    const load = gaitProfile(this.breed.id).load;
     for (let i = 0; i < 4; i++) {
       if (!(contacts & (1 << i))) continue;
-      this.deps.events.emit('footstep', { position: w.footPosition(i, this.breed.standHeight, new Vector3()), surface: w.surface, heavy: i < 2 });
+      this.deps.events.emit('footstep', { position: this.footstepAt(i, new Vector3()), surface: w.surface, heavy: load[i] > 0.25 });
     }
+  }
+
+  /**
+   * Where foot i's footstep is heard: where the model's foot comes down (PlayerDeps.foot) while
+   * that is under the walking body, else the walker's estimate of the foot's spot.
+   */
+  private footstepAt(i: number, out: Vector3): Vector3 {
+    const w = this.companion.walker;
+    const sh = this.breed.standHeight;
+    const m = this.deps.foot?.(i, out);
+    if (m && Math.hypot(m.x - w.position.x, m.z - w.position.z) < 1.5 * sh && Math.abs(m.y - w.groundY) < sh) return m;
+    return w.footPosition(i, sh, out);
   }
 
   /** Camera-relative stick → world direction (length = stick magnitude). */
@@ -1062,7 +1086,7 @@ export class Player implements PlayerSystem {
     const w = this.companion.walker;
     const s = this.model.state;
     s.position.copy(w.position);
-    const stand = standingOrientation(w.yaw, w.normal, 0.35, 0, _q);
+    const stand = standingOrientation(w.yaw, w.normal, gaitProfile(this.breed.id).slopeTilt, 0, _q);
     if (this.mode === 'landed' && this.landBlend < 1) {
       s.orientation.slerpQuaternions(this.touchdownQuat, stand, smoothstep(0, 1, this.landBlend));
     } else s.orientation.copy(stand);

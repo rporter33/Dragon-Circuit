@@ -120,6 +120,7 @@ export class Game implements GameActions {
       settings: () => this.settings,
       // The saddle as the model builds it (falls back to an estimate until Wyvern.seatOffset exists).
       seat: (out) => (this.wyvern as { seatOffset?: (o: Vector3) => Vector3 } | undefined)?.seatOffset?.(out) ?? null,
+      foot: (i, out) => (this.wyvern as Wyvern | undefined)?.footLanding(i, out) ?? null,
       daylight: () => 1 - this.sky.night,
       interactableNear: (p) => this.interactables.nearest(p) !== null,
     });

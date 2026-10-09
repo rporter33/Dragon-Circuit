@@ -12,6 +12,7 @@ import { yawQuat } from '../flight/telemetry';
 import { DEG } from '../core/math';
 import { Player } from './Player';
 import { GroundWalker } from './ground';
+import { froudeStride } from '../core/gait';
 import { RiderFoot } from './foot';
 import { computePrompt } from './prompts';
 import { PLAYER_TUNING as P } from './tuning';
@@ -286,37 +287,75 @@ describe('takeoff and landing', () => {
     expect(gallop.speed).toBeGreaterThan(BREEDS.harrier.groundSpeed * 0.9);
   });
 
-  it('footsteps land per foot on the gait clock: four contacts a cycle, hind feet heavy', () => {
+  it('footsteps land per foot on the gait clock: a lateral-sequence walk (LH, LF, RH, RF), the stride by dynamic similarity, hind feet heavy (C4)', () => {
+    // (Was: one cycle per 1.55 standHeights in a diagonal sequence. The walk is now the monitor
+    // lizard's lateral sequence, its stride and duty factor scaled by the Froude number.)
     const r = rig();
+    const sh = BREEDS.harrier.standHeight;
     r.player.teleport(new Vector3(0, 250, 0), 0, 'landed');
     const steps: GameEvents['footstep'][] = [];
     const bodyAt: Vector3[] = [];
+    const yawAt: number[] = [];
     r.events.on('footstep', (p) => {
       steps.push(p);
       bodyAt.push(r.player.model.state.position.clone());
+      yawAt.push(r.player.companion.walker.yaw);
     });
+    const walk = (inp: InputFrame) => (inp.foot.moveY = 1);
     r.run(1); // settle
+    r.run(1.5, walk, Math.PI / 2); // up to speed
     steps.length = 0;
     bodyAt.length = 0;
-    const x0 = r.player.position.x;
-    r.run(4, (inp) => (inp.foot.moveY = 1), Math.PI / 2);
-    const walked = r.player.position.x - x0;
-    // Walking: one cycle per 1.55 standHeights, four feet each.
-    const cycles = walked / (1.55 * BREEDS.harrier.standHeight);
-    expect(steps.length).toBeGreaterThan(cycles * 4 - 3);
-    expect(steps.length).toBeLessThan(cycles * 4 + 4);
-    expect(steps.filter((p) => p.heavy).length).toBeGreaterThan(steps.length * 0.35);
-    expect(steps.filter((p) => !p.heavy).length).toBeGreaterThan(steps.length * 0.35);
-    // Each on the ground beside the body, not at its center.
-    steps.forEach((p, i) => {
+    yawAt.length = 0;
+    // Expected cycles: the ground covered over each frame's own stride.
+    const stride = new Float64Array(2);
+    let cycles = 0;
+    r.run(4, (inp) => {
+      walk(inp);
+      const v = Math.abs(r.player.companion.walker.speed);
+      if (v > 0.35) cycles += (v * DT) / froudeStride(v, sh, stride)[0];
+    }, Math.PI / 2);
+    expect(cycles).toBeGreaterThan(2);
+    expect(steps.length).toBeGreaterThan(cycles * 4 - 2);
+    expect(steps.length).toBeLessThan(cycles * 4 + 2);
+    const names = steps.map((p, i) => {
       const body = bodyAt[i];
-      expect(body.y - p.position.y).toBeCloseTo(BREEDS.harrier.standHeight, 0);
-      const off = Math.hypot(p.position.x - body.x, p.position.z - body.z);
-      expect(off).toBeGreaterThan(BREEDS.harrier.standHeight * 0.3);
-      expect(off).toBeLessThan(BREEDS.harrier.standHeight * 1.2);
+      const yaw = yawAt[i];
+      // Body frame: left = (cos yaw, 0, −sin yaw), forward = (sin yaw, 0, cos yaw).
+      const dx = p.position.x - body.x;
+      const dz = p.position.z - body.z;
+      const left = dx * Math.cos(yaw) - dz * Math.sin(yaw);
+      const fwd = dx * Math.sin(yaw) + dz * Math.cos(yaw);
+      // Each on the ground beside the body, not at its center.
+      expect(body.y - p.position.y).toBeCloseTo(sh, 0);
+      expect(Math.hypot(dx, dz)).toBeGreaterThan(sh * 0.3);
+      expect(Math.hypot(dx, dz)).toBeLessThan(sh * 1.2);
+      const fore = fwd > 0.15 * sh;
+      // The hind feet carry more than an even share of the weight: theirs are the heavy steps.
+      expect(p.heavy).toBe(!fore);
+      return (left > 0 ? 'L' : 'R') + (fore ? 'F' : 'H');
     });
+    // Touchdowns in the lateral sequence: LH, LF, RH, RF, over and over.
+    const order = ['LH', 'LF', 'RH', 'RF'];
+    const k0 = order.indexOf(names[0]);
+    names.forEach((n, i) => expect(n).toBe(order[(k0 + i) % 4]));
     expect(r.player.wyvernPose.gaitPhase).toBeGreaterThanOrEqual(0);
     expect(r.player.wyvernPose.gaitPhase).toBeLessThan(1);
+  });
+
+  it('walks at most 2.7 m/s on the keyboard (the harrier), a walk, not a jog (C4)', () => {
+    const r = rig();
+    r.player.teleport(new Vector3(0, 250, 0), 0, 'landed');
+    r.run(1);
+    let top = 0;
+    r.run(4, (inp) => {
+      inp.device = 'keyboard';
+      inp.foot.moveY = 1;
+      top = Math.max(top, Math.abs(r.player.companion.walker.speed));
+    });
+    expect(top).toBeGreaterThan(2);
+    expect(top).toBeLessThanOrEqual(2.7 + 1e-6);
+    expect(r.player.wyvernPose.gait).toBe('walk');
   });
 });
 
@@ -580,6 +619,62 @@ describe('the wyvern on its feet (GroundWalker)', () => {
       expect(w.chest(sh, new Vector3()).distanceTo(c0), id).toBeGreaterThan(1.2 * (P.chestAhead + P.turnPivot) * sh);
       expect(w.speed).toBe(0);
     }
+  });
+});
+
+describe('the wyvern on steep ground (C4, door-keeping 8)', () => {
+  /**
+   * An endless plane rising toward +z at `deg`, with a sheer rock wall (facing −x) at x = wallX:
+   * the ground query and the sphere collision a GroundWalker asks of the world.
+   */
+  const slope = (deg: number, wallX = 1e9): TerrainQuery => {
+    const t = Math.tan(deg * DEG);
+    const n = new Vector3(0, 1, -t).normalize();
+    const hit: GroundHit = { y: 0, normal: n.clone(), islandId: 1, surface: 'rock' };
+    return {
+      groundAt: (_x: number, z: number) => {
+        hit.y = 100 + z * t;
+        hit.normal.copy(n);
+        return hit;
+      },
+      collideSphere: (c: Vector3, r: number, push: Vector3, nrm: Vector3) => {
+        push.set(0, 0, 0);
+        // The slope: signed distance of the centre above the plane.
+        const d = (c.y - (100 + c.z * t)) * n.y;
+        if (d < r) push.addScaledVector(n, r - d);
+        // The wall.
+        if (c.x + r > wallX) push.x -= c.x + r - wallX;
+        if (push.lengthSq() === 0) return false;
+        nrm.copy(push).normalize();
+        return true;
+      },
+    } as unknown as TerrainQuery;
+  };
+
+  it('stands on the uphill side of a 44-48° slope without being shoved downhill by its own wall probes', () => {
+    for (const deg of [44, 46, 48]) {
+      for (const id of BREED_ORDER) {
+        const b = BREEDS[id];
+        const t = slope(deg);
+        const w = new GroundWalker();
+        w.position.set(0, 1e4, 0);
+        w.yaw = 0; // facing uphill
+        expect(w.settle(t, b.standHeight, 1e4)).toBe(true);
+        const p0 = w.position.clone();
+        for (let i = 0; i < 2 * 120; i++) w.step(DT, null, 0, b, t, false);
+        expect(Math.hypot(w.position.x - p0.x, w.position.z - p0.z), `${id} ${deg}°`).toBeLessThan(1e-6);
+      }
+    }
+  });
+
+  it('is still pushed out of a rock wall', () => {
+    const b = BREEDS.harrier;
+    const t = slope(10, 1);
+    const w = new GroundWalker();
+    w.position.set(0, 1e4, 0);
+    w.settle(t, b.standHeight, 1e4);
+    for (let i = 0; i < 120; i++) w.step(DT, null, 0, b, t, false);
+    expect(w.position.x).toBeLessThan(1 - 0.3 * b.standHeight);
   });
 });
 

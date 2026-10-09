@@ -132,6 +132,22 @@ export class AnimFrame {
   kneelDrop = 0;
   kneelPitch = 0;
   kneelRoll = 0;
+  /**
+   * The gait's trunk, driven by the feet (C4): the body's shift toward the side with more feet down
+   * (m, + = left), the pelvis's roll over the hind feet and the chest's over the fore feet (rad,
+   * + = left side up: the swinging side hikes), and the neck's turn back against the spine's sway
+   * (rad of yaw per neck bone; read by the life layer).
+   */
+  gaitShift = 0;
+  pelvisRoll = 0;
+  chestRoll = 0;
+  gaitNeckYaw = 0;
+  /**
+   * Uneven ground: how far the body lowers so its lowest planted feet stay in reach (m, ≤ 0), and
+   * the pitch that leaves the higher end where it was (rad, − = nose up).
+   */
+  groundDrop = 0;
+  groundPitch = 0;
 
   // --- Life: anim/life.ts (LifeLayer) --------------------------------------------------------
   /** Idle on the ground (standing still in the idle gait). */
