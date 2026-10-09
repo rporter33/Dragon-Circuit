@@ -14,8 +14,15 @@ export interface QualityProfile {
   /** FXAA in the grade pass (for levels without MSAA). Optional: off when absent. */
   fxaa?: boolean;
   shadows: boolean;
+  /**
+   * Shadow map resolution. Ultra uses 3072 (36 MB instead of 64 MB at 4096; 9 cm texels over
+   * its 140 m half-extent, indistinguishable in captures).
+   */
   shadowMapSize: number;
-  /** Half-extent of the shadow camera around the player (m). */
+  /**
+   * Half-extent of the shadow camera around the player (m). Shadows fade out over the box's outer
+   * band (sky/shadowFade.ts), so a smaller box costs reach, never a visible border.
+   */
   shadowExtent: number;
   /** Multiplier on grass blade counts. 0 disables grass. */
   grassDensity: number;
@@ -39,7 +46,7 @@ export const QUALITY: Record<QualityLevel, QualityProfile> = {
   },
   medium: {
     level: 'medium', pixelRatioCap: 1.25, msaa: 2, bloom: true, bloomLevels: 5, shadows: true, shadowMapSize: 1024,
-    shadowExtent: 90, grassDensity: 0.6, grassRadius: 110, propDensity: 0.8, drawDistance: 5500,
+    shadowExtent: 80, grassDensity: 0.6, grassRadius: 110, propDensity: 0.8, drawDistance: 5500,
     particles: 0.7, clouds: 1,
   },
   high: {
@@ -48,7 +55,7 @@ export const QUALITY: Record<QualityLevel, QualityProfile> = {
     particles: 1, clouds: 2,
   },
   ultra: {
-    level: 'ultra', pixelRatioCap: 2, msaa: 4, bloom: true, bloomLevels: 6, shadows: true, shadowMapSize: 4096,
+    level: 'ultra', pixelRatioCap: 2, msaa: 4, bloom: true, bloomLevels: 6, shadows: true, shadowMapSize: 3072,
     shadowExtent: 140, grassDensity: 1.5, grassRadius: 200, propDensity: 1.3, drawDistance: 8000,
     particles: 1.4, clouds: 2,
   },
