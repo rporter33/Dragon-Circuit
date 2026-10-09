@@ -48,6 +48,10 @@ export class FlightLayer {
   private readonly style: FlapStyle;
   /** Where the stroke plane sits on average (rad of shoulder sweep, − = forward). */
   private readonly planeMean: number;
+  /** wingPoses.bodyClock's constants for this style: a / 2π, D / 2 and sin(πD). */
+  private readonly clockK: number;
+  private readonly clockC: number;
+  private readonly clockS: number;
   /** Air load on each wing (left, right), smoothed: bends the fingers, billows the membrane. */
   private readonly loadSpring: [Spring, Spring] = [new Spring(28), new Spring(28)];
   readonly wingLoad = [0, 0];
@@ -65,19 +69,25 @@ export class FlightLayer {
     this.f = a.frame;
     this.style = FLAP_STYLES[a.rig.props.breed];
     this.planeMean = strokePlaneMean(this.style);
+    const D = this.style.down;
+    this.clockS = Math.sin(Math.PI * D);
+    this.clockK = ((0.5 - D) * Math.PI) / this.clockS / TAU;
+    this.clockC = 0.5 * D;
   }
 
   /** Heave, chest lift and lean, the flare's trunk pitch, and this frame's wing prelude. */
   flightTrunk(): void {
     const f = this.f;
     const { flap, airW, phase, heft, sh, flare, tuck, om } = f;
-    // The beat's shared clock (wingPoses.strokePhase, inlined): 0 at the top of the stroke, 0.5 at
-    // the bottom (phase D, the 'flap' event), linear within each half. The flight model's power
-    // stroke peaks at 0.25 on it, and so do the membrane load and the chest's pitch, whatever the
-    // breed's downstroke fraction: the surge is felt while the wing is visibly half way down.
-    const D = this.style.down;
+    // The beat's shared clock for the body (wingPoses.bodyClock, inlined): 0 at the top of the
+    // stroke, 0.25 at the power peak (D/2), 0.5 at the bottom (phase D, the 'flap' event), 0.75
+    // mid-recovery. The flight model's power stroke peaks at 0.25 on it, and so do the membrane
+    // load and the chest's pitch, whatever the breed's downstroke fraction: the surge is felt while
+    // the wing is visibly half way down. Unlike strokePhase its rate has no corners, so the body
+    // never changes speed in an instant at the top or the bottom (which kicked the tail into a
+    // flick and jolted the neck's spring every beat).
     const p = phase - Math.floor(phase);
-    const sp = p < D ? (0.5 * p) / D : 0.5 + (0.5 * (p - D)) / (1 - D);
+    const sp = p + this.clockK * (Math.sin(TAU * (p - this.clockC)) + this.clockS);
     // Heave: the downstroke lifts the chest and saddle, the recovery lets them sink. The body
     // rises fastest just after the power peak and is highest just after the bottom of the stroke
     // (the lift lags the force).

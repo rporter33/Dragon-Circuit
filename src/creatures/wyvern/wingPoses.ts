@@ -115,9 +115,9 @@ export function blendPose(a: WingPose, b: WingPose, t: number, out: WingPose): W
 // the bottom over [0, D), the recovery back up over [D, 1), where D is the breed's downstroke
 // fraction (BreedStats.downFrac, 0.54–0.62: big flyers spend most of the beat driving down). The
 // flight model's power curve, the 'flap' event (at D), the membrane load and the body's heave all
-// run on the same clock (strokePhase); the wing's visible travel is that clock eased
-// (strokeWarp), so the wing is moving fastest while it pushes hardest and reverses briskly at the
-// top instead of hanging there.
+// run on the same clock (strokePhase; the body's motion on its smooth twin, bodyClock); the wing's
+// visible travel is that clock eased (strokeWarp), so the wing is moving fastest while it pushes
+// hardest and reverses briskly at the top instead of hanging there.
 
 /**
  * Easing of the wing's travel (cubic Béziers (0,0)–(x1,0)–(x2,1)–(1,1)). The downstroke leaves
@@ -183,6 +183,22 @@ const frac = (x: number) => x - Math.floor(x);
 export function strokePhase(phase: number, down: number): number {
   const p = frac(phase);
   return p < down ? (0.5 * p) / down : 0.5 + (0.5 * (p - down)) / (1 - down);
+}
+
+/**
+ * strokePhase without its corners, for the body's own motion (the heave and the chest's beat
+ * pitch): p + a·(sin(2π(p − D/2)) + sin(πD)) / 2π, with a = (0.5 − D)·π / sin(πD). It agrees with
+ * strokePhase at the top (0), the power peak (D/2 → 0.25), the bottom (D → 0.5) and mid-recovery
+ * ((1 + D)/2 → 0.75), so everything keeps its timing; but its rate is smooth. strokePhase's rate
+ * jumps at the top and the bottom of the stroke, and a body moving on it changes speed instantly
+ * there: every beat kicked the tail chain (which follows part of the heave through its springs)
+ * into a flick at the tip, and jolted the neck's spring. Monotonic for D in 0.3–0.7.
+ */
+export function bodyClock(phase: number, down: number): number {
+  const p = frac(phase);
+  const s = Math.sin(Math.PI * down);
+  const a = ((0.5 - down) * Math.PI) / s;
+  return p + (a * (Math.sin(2 * Math.PI * (p - 0.5 * down)) + s)) / (2 * Math.PI);
 }
 
 /**

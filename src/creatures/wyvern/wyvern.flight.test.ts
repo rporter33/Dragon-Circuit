@@ -14,7 +14,7 @@ import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { strokeForce } from '../../flight/FlightModel';
 import { createWyvernPose } from '../../player/poses';
 import { Wyvern } from './Wyvern';
-import { FLAP_STYLES, W, flapPose, strokeLoad, strokePhase, strokeTravel, strokeWarp } from './wingPoses';
+import { FLAP_STYLES, W, bodyClock, flapPose, strokeLoad, strokePhase, strokeTravel, strokeWarp } from './wingPoses';
 import { beat, gliding, look } from './wyvern.testkit';
 
 const _p = new Vector3();
@@ -287,6 +287,27 @@ describe('the beat’s shared clock', () => {
         prev = w;
       }
       expect(Math.abs(strokeTravel(0.9999, D) - strokeTravel(0, D))).toBeLessThan(1e-3);
+    }
+  });
+
+  it('the body moves on a smooth twin of the clock: the same top, power peak, bottom and mid-recovery, no corners', () => {
+    for (const b of BREED_ORDER) {
+      const D = FLAP_STYLES[b].down;
+      for (const p of [0, D / 2, D, (1 + D) / 2]) expect(bodyClock(p, D), `${b} at ${p}`).toBeCloseTo(strokePhase(p, D), 9);
+      expect(bodyClock(0.999999, D)).toBeCloseTo(1, 4);
+      // Monotonic, and its rate never jumps (strokePhase's jumps by 30-70 % at the top and the
+      // bottom, which kicked the tail into a flick on every beat).
+      const n = 2000;
+      const rate0 = (bodyClock(1 / n, D) - bodyClock(0, D)) * n;
+      let prevRate = rate0;
+      for (let i = 1; i < n - 1; i++) {
+        const rate = (bodyClock((i + 1) / n, D) - bodyClock(i / n, D)) * n;
+        expect(rate, `${b} at ${i / n}`).toBeGreaterThan(0);
+        expect(Math.abs(rate - prevRate), `${b} at ${i / n}`).toBeLessThan(0.01);
+        prevRate = rate;
+      }
+      // ...nor across the wrap into the next beat.
+      expect(Math.abs(prevRate - rate0), b).toBeLessThan(0.02);
     }
   });
 
