@@ -94,6 +94,8 @@ export class Gait {
   /** Rest spots of the feet in body space (on the ground plane y = -standHeight). */
   readonly rest: Vector3[];
   private timing: GaitTiming = { offsets: [0, 0, 0, 0], duty: 0.5, cycle: 2 };
+  /** Seconds per cycle at this frame's speed. */
+  private cycleTime = 1;
   private initialized = false;
 
   constructor(rest: Vector3[]) {
@@ -134,7 +136,7 @@ export class Gait {
     const speed = Math.hypot(ctx.velocity.x, ctx.velocity.z);
     const speedEff = Math.max(speed, Math.abs(ctx.yawRate) * 0.9 * sh);
     const cycleLen = T.cycle * sh;
-    const cycleTime = cycleLen / Math.max(0.3, speedEff);
+    this.cycleTime = cycleLen / Math.max(0.3, speedEff);
     if (ctx.moving) this.phase = (this.phase + (speedEff / cycleLen) * ctx.dt) % 1;
 
     let swingingCount = 0;
@@ -143,16 +145,9 @@ export class Gait {
     for (let i = 0; i < FOOT_COUNT; i++) {
       const foot = this.feet[i];
       const fore = isFore(i);
-      // Predicted landing: the rest spot, carried forward by the body's motion and turn.
-      const swingLeft = foot.swinging ? (1 - foot.s) * (foot.stepTime > 0 ? foot.stepTime : (1 - T.duty) * cycleTime) : 0;
-      const ahead = ctx.moving ? swingLeft + 0.5 * T.duty * cycleTime : 0;
-      const turn = clamp(ctx.yawRate * ahead, -0.6, 0.6);
-      const r = this.rest[i];
-      _n.set(r.x * Math.cos(turn) + r.z * Math.sin(turn), r.y, -r.x * Math.sin(turn) + r.z * Math.cos(turn));
-      ctx.toWorld(_n, foot.target);
-      foot.target.addScaledVector(ctx.velocity, Math.min(ahead, 1.2));
-      foot.target.y = ctx.groundAt(foot.target.x, foot.target.z, foot.target.y + sh);
-
+      // First the foot's state this frame (lifting, how far through its swing), then where it is
+      // headed from there: the landing spot is predicted from the swing time actually left, so an
+      // update that takes no time (a render-only frame) changes nothing.
       if (ctx.moving) {
         const ph = footPhase(this.phase, T.offsets[i], T.duty, _ph);
         if (ph.swing && !foot.swinging) {
@@ -165,7 +160,9 @@ export class Gait {
           if (ph.swing) foot.s = Math.max(foot.s, ph.t);
           else foot.s = 1;
         }
-      } else if (!foot.swinging) {
+      }
+      this.predict(foot, i, ctx);
+      if (!ctx.moving && !foot.swinging) {
         // Standing: step only if this foot has drifted, one foot at a time.
         _v.subVectors(foot.target, foot.plant);
         _v.y = 0;
@@ -198,5 +195,22 @@ export class Gait {
         foot.airborne = 0;
       }
     }
+  }
+
+  /**
+   * Predicted landing spot for foot i: its rest spot, carried forward by the body's motion and
+   * turn over the swing time it has left plus half a stance (nothing ahead when standing).
+   */
+  private predict(foot: Foot, i: number, ctx: GaitContext): void {
+    const T = this.timing;
+    const cycleTime = this.cycleTime;
+    const swingLeft = foot.swinging ? (1 - foot.s) * (foot.stepTime > 0 ? foot.stepTime : (1 - T.duty) * cycleTime) : 0;
+    const ahead = ctx.moving ? swingLeft + 0.5 * T.duty * cycleTime : 0;
+    const turn = clamp(ctx.yawRate * ahead, -0.6, 0.6);
+    const r = this.rest[i];
+    _n.set(r.x * Math.cos(turn) + r.z * Math.sin(turn), r.y, -r.x * Math.sin(turn) + r.z * Math.cos(turn));
+    ctx.toWorld(_n, foot.target);
+    foot.target.addScaledVector(ctx.velocity, Math.min(ahead, 1.2));
+    foot.target.y = ctx.groundAt(foot.target.x, foot.target.z, foot.target.y + ctx.standHeight);
   }
 }
