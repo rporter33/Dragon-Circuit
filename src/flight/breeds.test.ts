@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BreedId } from '../core/types';
 import { BREEDS, BREED_ORDER } from './breeds';
 import { AIR_DENSITY, GRAVITY, deriveFlight } from './FlightModel';
-import { measureBestGlide, measureClimb, measureDive, measureRoll } from './telemetry';
+import { measureBestGlide, measureCircling, measureClimb, measureDive, measureRoll } from './telemetry';
 
 /** Breeds sorted by a measured quantity, highest first. */
 function rank(measure: (id: BreedId) => number): BreedId[] {
@@ -39,12 +39,14 @@ describe('breed ratings tell the truth', () => {
     expect(rankRating('speed')[0]).toBe(rank((id) => measureDive(BREEDS[id]))[0]);
   }, SLOW);
 
-  it('stall speeds sit in the 12–17 m/s band and cruise in 22–30', () => {
+  // B8's bigger wings carry the same weight on 8% more area: stall and cruise come down 4% (the
+  // client: "the stall speed may drop a little"), the galewing and skimmer cruising just over 21.
+  it('stall speeds sit in the 12–17 m/s band and cruise in 21–30', () => {
     for (const id of BREED_ORDER) {
       const d = deriveFlight(BREEDS[id]);
       expect(d.vStall, id).toBeGreaterThan(12);
       expect(d.vStall, id).toBeLessThan(17);
-      expect(d.vCruise, id).toBeGreaterThan(22);
+      expect(d.vCruise, id).toBeGreaterThan(21);
       expect(d.vCruise, id).toBeLessThan(30);
     }
   });
@@ -84,4 +86,31 @@ describe('size-true wingbeats (FANIM-04: big wings beat slowly)', () => {
     expect(rank((id) => BREEDS[id].flapRate)[0]).toBe('skimmer');
     expect(rank((id) => BREEDS[id].flapRate)[3]).toBe('galewing');
   });
+});
+
+describe('the bigger wings (B8: "the wingspan could be scaled to be larger, which may help with the ascending")', () => {
+  it('keeps the span order skimmer < harrier ≈ ironback < galewing, the galewing clearly the biggest', () => {
+    const span = (id: BreedId) => BREEDS[id].wingspan;
+    expect(span('skimmer')).toBeLessThan(span('harrier'));
+    expect(Math.abs(span('ironback') - span('harrier')) / span('harrier')).toBeLessThan(0.05);
+    expect(span('galewing')).toBeGreaterThan(1.2 * Math.max(span('harrier'), span('ironback')));
+    // Spans of 13–21 m: an 11 m body under a 15.5 m wing.
+    for (const id of BREED_ORDER) {
+      expect(span(id), id).toBeGreaterThanOrEqual(13);
+      expect(span(id), id).toBeLessThanOrEqual(21);
+    }
+  });
+
+  it('climbs hard without floating: a strong held-flap climb, a light circling sink, the stall still above 12.5 m/s', () => {
+    for (const id of BREED_ORDER) {
+      const b = BREEDS[id];
+      // The light breeds climb over 6 m/s on the flaps, the heavy and the glider near 4 (it was
+      // 5.0–5.5 and 3.3–3.4 on the 13 m wings).
+      expect(measureClimb(b).climb, id).toBeGreaterThan(b.mass < 700 && b.wingspan < 16 ? 6 : 3.8);
+      // Circling in a thermal sinks under 3 m/s (2.9–3.5 for the harrier, skimmer and ironback before).
+      expect(measureCircling(b).sink, id).toBeLessThan(3);
+      // Not a feather: the wing loading barely moved.
+      expect(deriveFlight(b).vStall, id).toBeGreaterThan(12.5);
+    }
+  }, 60_000);
 });

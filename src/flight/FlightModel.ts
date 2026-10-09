@@ -235,9 +235,11 @@ export const FLIGHT_TUNING = {
   /**
    * Stamina never locks the wings. As the meter runs dry (the last `weakBand` of it) beats fade
    * to `weakBeat` of their strength: an empty wyvern can still labor along, sinking slowly,
-   * but gliding (or landing) is how it gets its breath back.
+   * but gliding (or landing) is how it gets its breath back. (0.185 of B8's bigger strokes is
+   * the same push as the 0.22 of the 13 m wings': the bigger wings mustn't hold an empty
+   * wyvern's height.)
    */
-  weakBeat: 0.22,
+  weakBeat: 0.185,
   weakBand: 0.1,
   /**
    * Rising air is restful: regen × (1 + thermalRegen × how strong the updraft is), ramping in
