@@ -77,6 +77,14 @@ const _seat = new Vector3();
 const UP = new Vector3(0, 1, 0);
 const NEUTRAL: FlightInput = { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flare: 0 };
 
+/** A cycle phase (0..1) from `a` to `b` at `t`, the short way round. */
+function phaseLerp(a: number, b: number, t: number): number {
+  let d = b - a;
+  d -= Math.round(d);
+  const p = a + d * t;
+  return p - Math.floor(p);
+}
+
 /** The Rested bonus, announced the first few times: basking by day, a rest by night. */
 const SUN_WARMED_TOAST = { text: 'Sun-warmed — your wyvern spreads its wings to the sun', sub: 'Its stamina lasts longer for a while', icon: 'info' } as const;
 const RESTED_TOAST = { text: 'Rested — your wyvern stretches and settles', sub: 'Its stamina lasts longer for a while', icon: 'info' } as const;
@@ -116,6 +124,8 @@ export class Player implements PlayerSystem {
   // Interpolation: wyvern body and rider (feet on foot / seat mounted).
   private prevWyPos = new Vector3();
   private prevWyQuat = new Quaternion();
+  /** The animation channels at the previous physics step (interpolated like the body). */
+  private readonly prevAnim = { velocity: new Vector3(), angularVelocity: new Vector3(), airspeed: 0, wingSpread: 1, flapPhase: 0, flapStrength: 0, flare: 0, stall: 0 };
   private riderPos = new Vector3();
   private prevRiderPos = new Vector3();
   private riderYaw = 0;
@@ -321,6 +331,7 @@ export class Player implements PlayerSystem {
       this.prevPosition.copy(s.position);
       this.prevWyPos.copy(s.position);
       this.prevWyQuat.copy(s.orientation);
+      this.keepAnimPrev();
       this.lookFresh = true;
       this.update(0, 1);
       return true;
@@ -400,6 +411,7 @@ export class Player implements PlayerSystem {
     this.prevPosition.copy(this.model.state.position);
     this.prevWyPos.copy(this.model.state.position);
     this.prevWyQuat.copy(this.model.state.orientation);
+    this.keepAnimPrev();
     this.prevRiderPos.copy(this.riderPos);
     this.prevRiderYaw = this.riderYaw;
 
@@ -1162,12 +1174,41 @@ export class Player implements PlayerSystem {
     this.position.copy(s.position);
     this.prevWyPos.copy(s.position);
     this.prevWyQuat.copy(s.orientation);
+    this.keepAnimPrev();
     this.prevRiderPos.copy(this.riderPos);
     this.prevRiderYaw = this.riderYaw;
     this.updateLookTarget(0);
     this.lookFresh = true;
     // Poses and riderPosition are valid immediately, before the next frame.
     this.update(0, 1);
+  }
+
+  /**
+   * The wyvern's animation channels as they stand now become the previous physics step's: the
+   * render pose interpolates them between the last two steps like the body's position, so a
+   * frame that ran no step, or two, sees them move on smoothly rather than stand still or jump.
+   */
+  private keepAnimPrev(): void {
+    const s = this.model.state;
+    const p = this.prevAnim;
+    p.velocity.copy(s.velocity);
+    p.angularVelocity.copy(s.angularVelocity);
+    p.airspeed = this.animAirspeed();
+    p.wingSpread = this.wingSpread;
+    p.flapPhase = this.flapPhase;
+    p.flapStrength = this.flapStrength;
+    p.flare = this.flare;
+    p.stall = this.animStall();
+  }
+
+  /** Airspeed for the animation: the flight model's in the air, the ground speed otherwise. */
+  private animAirspeed(): number {
+    const s = this.model.state;
+    return this.mode === 'flying' || this.mode === 'respawning' ? s.airspeed : s.velocity.length();
+  }
+
+  private animStall(): number {
+    return this.mode === 'flying' ? this.model.state.stall : 0;
   }
 
   /** Rider lean / crouch / brace and wyvern fatigue, smoothed at the physics rate. */
@@ -1261,15 +1302,20 @@ export class Player implements PlayerSystem {
     wp.position.lerpVectors(this.prevWyPos, s.position, a);
     wp.orientation.slerpQuaternions(this.prevWyQuat, s.orientation, a);
     if (!this.airborne && this.crouch > 0) wp.position.y -= this.crouch * 0.22 * this.breed.standHeight;
-    wp.velocity.copy(s.velocity);
     wp.airborne = this.airborne;
-    wp.airspeed = this.mode === 'flying' || this.mode === 'respawning' ? s.airspeed : s.velocity.length();
-    wp.angularVelocity.copy(s.angularVelocity);
-    wp.wingSpread = this.wingSpread;
-    wp.flapPhase = this.flapPhase;
-    wp.flapStrength = this.flapStrength;
-    wp.flare = this.flare;
-    wp.stall = this.mode === 'flying' ? s.stall : 0;
+    // The animation channels, interpolated between the last two physics steps like the body: at a
+    // frame rate that isn't a multiple of the physics rate, raw values would stand still on one
+    // frame and jump two steps on the next (the beat's phase, its heave, the velocity the
+    // animator differentiates into an acceleration).
+    const pa = this.prevAnim;
+    wp.velocity.lerpVectors(pa.velocity, s.velocity, a);
+    wp.airspeed = lerp(pa.airspeed, this.animAirspeed(), a);
+    wp.angularVelocity.lerpVectors(pa.angularVelocity, s.angularVelocity, a);
+    wp.wingSpread = lerp(pa.wingSpread, this.wingSpread, a);
+    wp.flapPhase = phaseLerp(pa.flapPhase, this.flapPhase, a);
+    wp.flapStrength = lerp(pa.flapStrength, this.flapStrength, a);
+    wp.flare = lerp(pa.flare, this.flare, a);
+    wp.stall = lerp(pa.stall, this.animStall(), a);
     wp.fatigue = this.fatigue;
     wp.gait = this.gait;
     wp.gaitTime = this.simTime - this.gaitStart;

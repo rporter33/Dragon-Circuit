@@ -712,6 +712,49 @@ describe('poses', () => {
     expect(mid.distanceTo(r.player.prevPosition) + mid.distanceTo(r.player.position)).toBeCloseTo(r.player.prevPosition.distanceTo(r.player.position), 4);
   });
 
+  it('interpolates the animation channels between physics steps like the body, the beat the short way round', () => {
+    // The animator runs once per rendered frame: at 60 Hz a frame spans one, two or no physics
+    // steps, so raw channels would stand still on one frame and jump on the next (the beat's
+    // phase and heave, the velocity it differentiates into an acceleration): the tail freaked out.
+    const r = rig();
+    r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 24);
+    const s = r.player.model.state;
+    const w = r.player.wyvernPose;
+    // Right after a teleport there is nothing to interpolate from.
+    r.player.update(0, 0);
+    expect(w.velocity.distanceTo(s.velocity)).toBe(0);
+    const cyc = (a: number, b: number) => Math.min(Math.abs(a - b), 1 - Math.abs(a - b));
+    let wrapped = 0;
+    for (let i = 0; i < 240; i++) {
+      const p0 = s.flapPhase;
+      const st0 = s.flapStrength;
+      const v0 = s.velocity.clone();
+      const w0 = s.angularVelocity.clone();
+      const inp = emptyFrame();
+      inp.flight.flap = 1;
+      inp.flight.roll = 0.5;
+      r.player.latchPresses(inp);
+      r.player.fixedUpdate(DT, inp, 0);
+      const p1 = s.flapPhase;
+      if (p1 < p0 - 0.5) wrapped++;
+      r.player.update(DT, 0);
+      expect(cyc(w.flapPhase, p0)).toBeLessThan(1e-9);
+      expect(w.velocity.distanceTo(v0)).toBeLessThan(1e-9);
+      r.player.update(DT, 1);
+      expect(cyc(w.flapPhase, p1)).toBeLessThan(1e-9);
+      expect(w.velocity.distanceTo(s.velocity)).toBeLessThan(1e-9);
+      expect(w.angularVelocity.distanceTo(s.angularVelocity)).toBeLessThan(1e-9);
+      r.player.update(DT, 0.5);
+      // Halfway, and across the end of a beat the short way round (0.99 → 0.01 passes 0, not 0.5).
+      const mid = p1 < p0 - 0.5 ? (p0 + p1 + 1) / 2 : (p0 + p1) / 2;
+      expect(cyc(w.flapPhase, mid - Math.floor(mid))).toBeLessThan(1e-9);
+      expect(w.flapStrength).toBeCloseTo((st0 + s.flapStrength) / 2, 9);
+      expect(w.velocity.distanceTo(v0.clone().add(s.velocity).multiplyScalar(0.5))).toBeLessThan(1e-9);
+      expect(w.angularVelocity.distanceTo(w0.clone().add(s.angularVelocity).multiplyScalar(0.5))).toBeLessThan(1e-9);
+    }
+    expect(wrapped).toBeGreaterThan(0);
+  });
+
   it('the head leads into turns and watches the rider on foot', () => {
     const r = rig();
     r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 24);
