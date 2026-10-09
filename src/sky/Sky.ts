@@ -280,6 +280,7 @@ export class Sky implements SkySystem {
     const g = this.renderer.grade;
     g.uExposure.value = pal.exposure * (1 + flash * 0.12);
     g.uSaturation.value = pal.saturation;
+    g.uVibrance.value = pal.vibrance;
     g.uContrast.value = pal.contrast;
     g.uLift.value.copy(pal.lift);
     g.uGain.value.copy(pal.gain);
