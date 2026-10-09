@@ -14,6 +14,7 @@ import {
   SCALES_MAX_LUMINANCE,
   applyLookUniforms,
   createBodyMaterial,
+  createGhostMaterial,
   createMembraneMaterial,
   createWyvernUniforms,
   luminance,
@@ -227,4 +228,27 @@ describe('creature toon ramp and relief', () => {
     expect(RELIEF_APPLY).toContain('diffuseColor.rgb *=');
     expect(RELIEF_APPLY).not.toMatch(/\bnormal\s*=/);
   });
+});
+
+describe('every wyvern program declares what it reads', () => {
+  // GLSL fails to compile (and the material renders nothing) on an undeclared identifier; the
+  // injected chunks read these from the painterly patch, the creature light or the albedo pass.
+  const NAMES = ['uSunDir', 'uSunColor', 'uSkyZenith', 'uDwBloomT', 'uKickDir', 'uRimDir', 'uBreed', 'vDwWorldPos', 'vDwUp', 'dwThin', 'dwRimScale', 'dwTq'];
+  const declared = (src: string, name: string) =>
+    new RegExp(`^\\s*(flat\\s+)?(uniform|varying)\\s+\\w+\\s+${name}\\s*[;[]|^\\s*(float|vec2|vec3|vec4)\\s+${name}\\s*[=;]`, 'm').test(src);
+  const used = (src: string, name: string) => new RegExp(`\\b${name}\\b`).test(src);
+  it('body, membrane and the ghost shell', () => {
+    const u = createWyvernUniforms();
+    const mats = [
+      createBodyMaterial(u),
+      createMembraneMaterial(u),
+      createGhostMaterial(u, false),
+      createGhostMaterial(u, true),
+    ];
+    for (const m of mats) {
+      const s = compiled(m).fragmentShader;
+      for (const n of NAMES) if (used(s, n)) expect(declared(s, n), `${m.customProgramCacheKey()} reads ${n}`).toBe(true);
+    }
+  });
+
 });

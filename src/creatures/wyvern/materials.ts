@@ -268,7 +268,7 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   // How much of the rim a region takes (dwRimScale, shading/light.ts): full on the hide, little
   // on the saddle's leather, cloth and gold (thin edges flare like a light source), the eye and
   // the keratin of claws and teeth; the belly is masked below by anatomy.
-  dwRimScale = region == 5 ? 0.15 : (region >= 4 && region <= 7) || region == 11 ? 0.3 : region == 2 ? 0.5 : region == 9 ? 0.25 : 1.0;
+  dwRimScale = region == 5 ? 0.15 : (region >= 4 && region <= 7) || region == 11 ? 0.3 : region == 2 ? 0.5 : region == 9 || region == 13 ? 0.25 : 1.0;
   vec3 bp = vBodyPos / uBodyScale;
   float n1 = dwVnoise(bp * 2.3);
   float n2 = dwVnoise(bp * 6.1 + 3.1);
@@ -449,9 +449,14 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
     return c;
   }
   if (region == 9) {
-    // Claws and teeth: keratin, a worn horn tone at the base darkening toward the tips (never
-    // the palest thing on the animal: an ivory near 0.9 read as LED sparks at every foot).
-    return mix(vec3(0.46, 0.40, 0.31), vec3(0.17, 0.14, 0.12), smoothstep(0.35, 1.0, vUv2.x));
+    // Claws: dark keratin as on monitors and crocodilians, a worn horn tone at the base going
+    // near-black at the tips (never the palest thing on the animal: an ivory near 0.9 read as LED
+    // sparks at every foot, and even a mid horn out-shone the hide in the foot close-ups).
+    return mix(vec3(0.3, 0.25, 0.19), vec3(0.1, 0.085, 0.075), smoothstep(0.3, 0.95, vUv2.x));
+  }
+  if (region == 13) {
+    // Teeth: a dull, stained enamel, kept under the hide's value.
+    return vec3(0.5, 0.46, 0.38) * (0.92 + 0.12 * (n2 - 0.5));
   }
   if (region == 2) {
     // Eye: glowing iris, slit pupil, dark limbus, eyelid when blinking.
@@ -634,9 +639,18 @@ vRegion = aMat.x;
 }
 `;
 
+/** Uniforms and vertex attributes every wyvern material shares (the ghost shell included). */
 function patchShared(shader: WebGLProgramParametersWithUniforms, u: WyvernUniforms): void {
   Object.assign(shader.uniforms, u, creatureUniforms, { uTime: globalUniforms.uTime, uNight: globalUniforms.uNight });
   shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_PARS);
+}
+
+/**
+ * The creature light's declarations and toon ramp, for the lit body and membrane (after
+ * applyPainterly has declared the sun, fog and world-position inputs they read).
+ */
+function patchLit(shader: WebGLProgramParametersWithUniforms, u: WyvernUniforms): void {
+  patchShared(shader, u);
   shader.fragmentShader = shader.fragmentShader
     .replace('#include <common>', '#include <common>\n' + CREATURE_LIGHT_PARS)
     .replace('#include <lights_toon_pars_fragment>', CREATURE_TOON_PARS + RELIEF_PARS);
@@ -666,7 +680,7 @@ export function createBodyMaterial(u: WyvernUniforms, _opts: WyvernMaterialOptio
   applyPainterly(m, {
     rim: 1.1,
     onBeforeCompile: (shader) => {
-      patchShared(shader, u);
+      patchLit(shader, u);
       shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_BEGIN);
       shader.fragmentShader = creatureLight(shader.fragmentShader)
         .replace('void main() {', BODY_PARS_FRAG + '\nvoid main() {')
@@ -707,7 +721,7 @@ export function createMembraneMaterial(u: WyvernUniforms, _opts: WyvernMaterialO
   applyPainterly(m, {
     rim: 0.6,
     onBeforeCompile: (shader) => {
-      patchShared(shader, u);
+      patchLit(shader, u);
       shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + MEMBRANE_VERT_BEGIN);
       const idx = shader.fragmentShader.lastIndexOf('#include <opaque_fragment>');
       let frag = shader.fragmentShader;
@@ -744,7 +758,11 @@ export function createMembraneMaterial(u: WyvernUniforms, _opts: WyvernMaterialO
   return m;
 }
 
-/** Race ghost: additive bluish-white fresnel shell. */
+/**
+ * The generic ghost shell (Wyvern {ghost: true}): a translucent bluish-white fresnel. Races dress
+ * the ghost in RaceGhost's own glass materials (depth prepass, outline) over this; the shell is
+ * what showcases and anything else that asks for a ghost see.
+ */
 export function createGhostMaterial(u: WyvernUniforms, membrane: boolean): MeshToonMaterial {
   const m = new MeshToonMaterial({
     gradientMap: toonRamp(),
@@ -767,10 +785,12 @@ export function createGhostMaterial(u: WyvernUniforms, membrane: boolean): MeshT
         /* glsl */ `
         {
           vec3 gV = normalize(vViewPosition);
-          float gF = pow(1.0 - abs(dot(normal, gV)), 2.2);
+          // pow() of a negative base is undefined (a NaN-black core at grazing fan vertices):
+          // clamp it. Stacked inner layers converge to the colour, so cap it (no white flare).
+          float gF = pow(clamp(1.0 - abs(dot(normal, gV)), 0.0, 1.0), 2.2);
           float band = 0.5 + 0.5 * sin(vBodyPos.z * 3.0 - uTime * 4.0);
-          vec3 gc = mix(vec3(0.42, 0.66, 1.0), vec3(0.9, 0.96, 1.0), gF) * (1.15 + 0.25 * band);
-          float a = clamp(${membrane ? '0.2' : '0.16'} + 0.62 * gF + 0.06 * band, 0.0, 0.9);
+          vec3 gc = min(mix(vec3(0.42, 0.66, 1.0), vec3(0.9, 0.96, 1.0), gF) * (1.15 + 0.25 * band), vec3(0.95));
+          float a = clamp(${membrane ? '0.2' : '0.16'} + 0.62 * gF + 0.06 * band, 0.0, 0.85);
           gl_FragColor = vec4(gc * a, a);
         }`,
       );
