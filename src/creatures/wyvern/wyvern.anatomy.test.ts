@@ -9,6 +9,7 @@ import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { COSMETICS, cosmeticsFor } from '../../cosmetics/catalog';
 import { Wyvern } from './Wyvern';
 import { buildRig, rigFor } from './rig';
+import { computeProportions } from './proportions';
 import { buildWyvernGeometry } from './geometry';
 import { humerusRootRadius } from './parts/wings';
 import { LOD_BUDGET, type Lod } from './parts/res';
@@ -25,6 +26,25 @@ describe('proportions', { timeout: 30000 }, () => {
     for (const breed of BREED_ORDER) {
       const rig = buildRig(breed);
       expect(rig.fingerTips[0].x * 2).toBeCloseTo(BREEDS[breed].wingspan, 3);
+    }
+  });
+
+  it('sizes the wing to the body and finds its span in the wingtip finger (A13)', () => {
+    // B8's bigger spans scaled the whole wing 16-19%, and the longer folded forearm put the elbow
+    // into the haunch. The arm, the hand and the inner fingers are the body's (WingShape.armLength):
+    // only the wingtip finger's outer phalanx, which folds back along the flank, carries the span.
+    for (const breed of BREED_ORDER) {
+      const P = computeProportions(breed);
+      const W = P.shape.wing;
+      const unit = W.armLength / (W.humerus + W.forearm);
+      expect(P.arm.humerus + P.arm.forearm, breed).toBeCloseTo(W.armLength, 6);
+      expect(P.arm.humerus / P.arm.forearm, breed).toBeCloseTo(W.humerus / W.forearm, 6);
+      expect(P.arm.hand, breed).toBeCloseTo(W.hand * unit, 6);
+      expect(P.arm.fingers[0][0], breed).toBeCloseTo(W.fingers[0][0] * unit, 6);
+      for (const f of [1, 2]) for (const k of [0, 1]) expect(P.arm.fingers[f][k], breed).toBeCloseTo(W.fingers[f][k] * unit, 6);
+      // The outer phalanx: longer than the inner one (a wing finger), but no whip (1.5-1.9x).
+      expect(P.arm.fingers[0][1] / P.arm.fingers[0][0], breed).toBeGreaterThan(1);
+      expect(P.arm.fingers[0][1] / P.arm.fingers[0][0], breed).toBeLessThan(2.2);
     }
   });
 
@@ -138,6 +158,11 @@ describe('model budget and cosmetics', { timeout: 60000 }, () => {
       // Visual membranes cover most of the physical wing area (the rest is body and arm).
       expect(a / BREEDS[b].wingArea).toBeGreaterThan(0.35);
       expect(a / BREEDS[b].wingArea).toBeLessThan(1.1);
+      // ...and track it: B8 grew the flight model's area 8-9% for 16-19% more span (a slimmer
+      // wing), so the membranes keep their share of it (0.42-0.60; scaling the whole wing with
+      // the span made it 0.50-0.74, the visual wing a third bigger than the one that flies).
+      expect(a / BREEDS[b].wingArea, b).toBeGreaterThan(0.4);
+      expect(a / BREEDS[b].wingArea, b).toBeLessThan(0.65);
     }
   });
 });
@@ -470,7 +495,7 @@ describe('the folded wing contracts (Q3, A2 rig side)', () => {
 });
 
 describe('the inner membrane folds and beats like a sheet hinged on the flank (A2)', () => {
-  it('skins it by lever arm: the rows by the root ride the body, the trailing edge out from it rides finger 2', () => {
+  it('skins it by lever arm: the rows by the root ride the body, the trailing edge passes from the flank to finger 2', () => {
     for (const breed of BREED_ORDER) {
       const rig = rigFor(breed);
       const g = buildWyvernGeometry(rig, look(breed), 0).geometry;
@@ -503,9 +528,12 @@ describe('the inner membrane folds and beats like a sheet hinged on the flank (A
           expect(share(v, arm), `${breed} root row t=${t.toFixed(2)} v=${pv.toFixed(2)}`).toBeLessThan(0.15);
           rootRows++;
         }
-        // The trailing edge from half way out: mostly finger 2.
-        if (Math.abs(pv - 1) < 1e-4 && t >= 0.5) {
-          expect(share(v, finger2), `${breed} trailing edge t=${t.toFixed(2)}`).toBeGreaterThan(0.6);
+        // The trailing edge passes linearly from the flank to finger 2 (C3's trailRoll rolls finger 2
+        // so the edge's midpoint, half on each, lies half-way across; A13 returned it from the
+        // (1 − t)^1.5 fall-off, which put 0.65 on finger 2 there and turned the folded panel's
+        // middle 20-37 cm into the flank).
+        if (Math.abs(pv - 1) < 1e-4 && t >= 0.1) {
+          expect(share(v, finger2), `${breed} trailing edge t=${t.toFixed(2)}`).toBeCloseTo(t, 1);
           edge++;
         }
       }

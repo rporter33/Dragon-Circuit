@@ -70,8 +70,13 @@ const _pc = new Vector3();
 const LEVER = 1.5;
 /** Rows across the inner panel at LOD0: four to each of the eight fold pleats. */
 const PLEAT_ROWS = 32;
-/** How fast the flank's share falls off along the inner panel's trailing edge: (1 − t)^TRAIL_DECAY. */
-const TRAIL_DECAY = 1.5;
+/**
+ * How fast the flank's share falls off along the inner panel's trailing edge: (1 − t)^TRAIL_DECAY.
+ * Linear, as C3's trailRoll (anim/ground.ts) models it: it rolls finger 2 so the edge's midpoint,
+ * half on the flank and half on the finger, lies half-way across. (A faster fall-off, 1.5, put 65%
+ * on the finger there and turned the folded panel's middle 20-37 cm into the flank.)
+ */
+const TRAIL_DECAY = 1;
 
 export { armScale, humerusRootRadius } from '../rig';
 
@@ -408,9 +413,7 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
         s.add(rig.idx.chest, (1 - v) * (1 - k) * (1 - vr));
         s.mix(bodyTrailSkin, (1 - v) * (1 - k) * vr);
       }
-      // Trailing boundary: the flank at the root, finger 2 toward the tip. The flank's share falls
-      // off faster than linearly, so out along the edge finger 2 carries it in when the wing folds
-      // (half on the flank, the galewing's long edge held its spread position 0.45 m out).
+      // Trailing boundary: the flank at the root, finger 2 toward the tip (see TRAIL_DECAY).
       const bt = Math.pow(1 - t, TRAIL_DECAY);
       s.mix(bodyTrailSkin, v * bt);
       fingerSkin(2, 1, s, v * (1 - bt));
