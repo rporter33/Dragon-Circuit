@@ -24,7 +24,7 @@
 // heaves, lags and settles slowest, the skimmer quickest — but all of them are big animals.
 // Everything is smoothed with springs. No allocations per frame (scalar math in the hot loops).
 
-import { Euler, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import type { TerrainQuery, WyvernCueKind, WyvernPose } from '../../core/types';
 import { DEG, clamp, clamp01, damp } from '../../core/math';
 import { BREEDS } from '../../flight/breeds';
@@ -41,10 +41,16 @@ import { LifeLayer, type IdleCue } from './anim/life';
 import { TailLayer } from './anim/tail';
 
 /**
- * Root pitch while standing at rest (radians; negative = nose up). Wyvern.seatOffset reports the
- * bind seat under this rotation, so mounting lines up with the standing animal.
+ * Root pitch while standing at rest (radians; negative = nose up): a flier's long arms carry the
+ * chest high, like a bat or a pterosaur on the ground. Wyvern.seatOffset reports the bind seat
+ * under this rotation, so mounting lines up with the standing animal.
  */
-export const STAND_ROOT_PITCH = -4 * DEG;
+export const STAND_ROOT_PITCH = -10 * DEG;
+/**
+ * The pelvis's pitch against the root while standing (radians, + = nose down): the hindquarters
+ * and the tail root keep a near-level carriage while the long arms raise the chest.
+ */
+export const STAND_PELVIS_PITCH = 6 * DEG;
 
 /** 0 (lightest breed) … 1 (heaviest), from the breed's mass. */
 export function heftOf(mass: number): number {
@@ -85,6 +91,12 @@ export class WyvernAnimator {
   readonly upM = new Vector3();
   /** Ground height under the body (from the pose), the fallback for foot placement. */
   groundRef = 0;
+  /**
+   * The wing-fold helpers' transforms (left, right; body frame, affine): Wyvern composes each onto
+   * its helper's rest hold (the blend of the inner panel's bones), so the folded membrane
+   * contracts beside the arm. Identity unless the wings are folded on the ground.
+   */
+  readonly foldXform: [Matrix4, Matrix4] = [new Matrix4(), new Matrix4()];
 
   readonly flight: FlightLayer;
   readonly ground: GroundLayer;
@@ -313,7 +325,7 @@ export class WyvernAnimator {
     e[7] = spineYaw * 0.5;
     e[8] = lean * 0.5 + f.turnLean;
     // The stretch lifts the tail root level with the back.
-    e[9] = f.pelvisAir + stretch * 0.05;
+    e[9] = f.pelvisAir + stretch * 0.05 + groundW * STAND_PELVIS_PITCH;
     e[10] = -spineYaw * 0.55;
     e[11] = -lean * 0.6;
     this.setEulerAt(I.root, e, 0);
@@ -338,6 +350,7 @@ export class WyvernAnimator {
       this.applyWingFK(side, wp);
       this.ground.applyWingIK(side);
     }
+    this.ground.foldHelpers();
 
     // --- Legs, contacts -----------------------------------------------------------------------
     this.flight.flightLegWeights();

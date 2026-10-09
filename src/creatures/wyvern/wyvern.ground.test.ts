@@ -391,6 +391,41 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
     }
   });
 
+  it('folds each wing into a limb that hangs from the shoulder, its membrane in along the body (Q3, C3)', () => {
+    // The client's top complaint: on the ground the folded membrane stood out from the flank as a
+    // big flat panel, 1.2-1.6 m outboard ("greaves"). Now every bone keeps its dorsal face turned
+    // out, the fingers bundle up the forearm and the innermost finger's roll keeps the inner
+    // panel's trailing edge in to the flank. Measured in the body frame from the skinned mesh.
+    for (const breed of BREED_ORDER) {
+      const w = new Wyvern(look(breed));
+      const pose = standing(breed);
+      for (let i = 0; i < 150; i++) w.update(1 / 60, pose);
+      const f = foldedStance(w);
+      for (const s of f.sides) {
+        // The wrist plants under the shoulder or just ahead of it, and the forearm stands near
+        // vertical seen from the front: no sideways elbow.
+        expect(s.wrist.z - s.shoulder.z, `${breed} wrist under the shoulder`).toBeGreaterThan(-0.2);
+        expect(s.wrist.z - s.shoulder.z, `${breed} wrist under the shoulder`).toBeLessThan(0.45);
+        expect(Math.abs(s.foreFrontDeg), `${breed} forearm from the front`).toBeLessThan(15);
+        // From the side it leans forward from the elbow tucked back against the flank, like a
+        // bat's or a pterosaur's on the ground. (The long-armed breeds, skimmer and galewing,
+        // can't stand it straighter with the wrist under the shoulder without swinging the elbow
+        // out sideways or the humerus up into a seated rider's stirrup foot.)
+        expect(s.foreSideDeg, `${breed} forearm from the side`).toBeGreaterThan(0);
+        expect(s.foreSideDeg, `${breed} forearm from the side`).toBeLessThan(38);
+        expect(Math.abs(s.elbow.x) - f.maxHalfWidth, `${breed} elbow tucked in`).toBeLessThan(0.3);
+      }
+      // Seen from the front, the hand-wing panels stay within 0.35 m of the body's silhouette (the
+      // shoulders, its widest). The inner panel's trailing edge is skinned partly to the body,
+      // which holds its spread-wing (bind) position, so the folded edge can't come all the way in
+      // on the long-armed breeds until that edge is re-skinned (A2): within 0.5 m (was 1.2-1.6 m).
+      expect(f.outboard.handWing, `${breed} hand-wing panels`).toBeLessThan(0.35);
+      expect(f.outboard.leading, `${breed} leading-edge panel`).toBeLessThan(0.35);
+      expect(f.outboard.inner, `${breed} inner panel`).toBeLessThan(0.5);
+      w.dispose();
+    }
+  });
+
   it('settles on landing: the body sinks into the legs and springs back', () => {
     const w = new Wyvern(look('harrier'));
     const sh = BREEDS.harrier.standHeight;
@@ -680,3 +715,55 @@ describe('debug capture hooks (scripts/dragon-capture.mjs)', () => {
     b.dispose();
   });
 });
+
+/**
+ * The folded stance of a standing wyvern, measured in its body frame: each arm's joints and the
+ * forearm's lean (degrees from vertical; seen from the side + = the wrist ahead of the elbow, from
+ * the front + = the wrist outboard of it), the body's widest half-width (front view) and how far
+ * the membrane panels reach beyond it (m): the hand-wing panels between the fingers, the
+ * leading-edge panel and the inner panel (arm to flank).
+ */
+function foldedStance(w: Wyvern) {
+  const mesh = w.skinnedMesh!;
+  const inv = w.group.matrixWorld.clone().invert();
+  const rig = w.rigDef;
+  const bones = mesh.skeleton.bones;
+  const at = (name: string) => bones.find((b) => b.name === name)!.getWorldPosition(new Vector3()).applyMatrix4(inv);
+  const plan = rig.plan;
+  const s0 = plan.keyS[plan.marks.neckBase];
+  const s1 = plan.keyS[plan.marks.tailBase];
+  let maxHalfWidth = 0;
+  for (let k = 0; k <= 100; k++) maxHalfWidth = Math.max(maxHalfWidth, plan.station(s0 + ((s1 - s0) * k) / 100).halfWidth);
+  const sides = ['L', 'R'].map((n) => {
+    const shoulder = at(`humerus${n}`);
+    const elbow = at(`forearm${n}`);
+    const wrist = at(`hand${n}`);
+    const fore = wrist.clone().sub(elbow);
+    return {
+      shoulder,
+      elbow,
+      wrist,
+      foreSideDeg: (Math.atan2(fore.z, -fore.y) * 180) / Math.PI,
+      foreFrontDeg: (Math.atan2(Math.abs(wrist.x) - Math.abs(elbow.x), -fore.y) * 180) / Math.PI,
+    };
+  });
+  // Membrane panels by aUv2.y (parts/wings.ts): the leading-edge panel below 0, the hand-wing
+  // panels 0..2, the inner panel 2..3.
+  const geo = mesh.geometry;
+  const uv2 = geo.getAttribute('aUv2');
+  const idx = geo.index!.array;
+  const g1 = geo.groups[1];
+  const outboard = { handWing: -Infinity, leading: -Infinity, inner: -Infinity };
+  const seen = new Set<number>();
+  for (let i = g1.start; i < g1.start + g1.count; i++) {
+    const v = idx[i];
+    if (seen.has(v)) continue;
+    seen.add(v);
+    mesh.getVertexPosition(v, _p).applyMatrix4(mesh.matrixWorld).applyMatrix4(inv);
+    const o = Math.abs(_p.x) - maxHalfWidth;
+    const y = uv2.getY(v);
+    const key = y < 0 ? 'leading' : y <= 2 ? 'handWing' : 'inner';
+    outboard[key] = Math.max(outboard[key], o);
+  }
+  return { sides, maxHalfWidth, outboard };
+}

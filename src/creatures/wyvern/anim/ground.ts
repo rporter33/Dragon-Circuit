@@ -18,9 +18,9 @@
 import { Quaternion, Vector3 } from 'three';
 import type { GroundHit, TerrainQuery } from '../../../core/types';
 import { DEG, TAU, clamp, clamp01, smoothstep } from '../../../core/math';
-import { SIDE_SIGN, type RigDef } from '../rig';
-import { LEG_ANGLES } from '../proportions';
+import { SIDE_SIGN, innerTrailRoot, type RigDef } from '../rig';
 import { Bouncy, aimRotation, solveTwoBoneAt } from '../ik';
+import { armScale } from '../parts/wings';
 import { Gait, type GaitContext } from '../gait';
 import { FLAP_STYLES, WING_CHANNELS, blendPose, flapPose, type WingPose } from '../wingPoses';
 import type { WyvernAnimator } from '../animator';
@@ -47,10 +47,68 @@ const _v5 = new Vector3();
 const _hum = new Vector3();
 const _fore = new Vector3();
 const _ref = new Vector3();
-const _refN = new Vector3();
 const _handD = new Vector3();
 const _fd = new Vector3();
 const _lv = new Vector3();
+const _outG = new Vector3();
+const _tv1 = new Vector3();
+const _tv2 = new Vector3();
+const _tv3 = new Vector3();
+const _tv4 = new Vector3();
+const _qr = new Quaternion();
+const _qa = new Float64Array(4);
+
+/**
+ * The folded stance (applyWingIK), as fractions: where the wrist plants, the elbow's pole, how
+ * the hand and fingers bundle along the forearm, and how the outer finger segments rise.
+ */
+export const FOLD = {
+  /** Wrist rest spot: in from the elbow's line (× standHeight) and ahead of the shoulder (× forearm). */
+  wristIn: 0.03,
+  wristFwd: 0.15,
+  /**
+   * Where the elbow tucks: behind the shoulder (× humerus), down the flank (× the body's depth
+   * below its centreline), clear of the flank (× the elbow's radius), and no narrower than this
+   * share of the shoulders' half-width (the track the forefeet stand on).
+   */
+  elbowBack: 0.55,
+  elbowLow: 0.5,
+  elbowClear: 1.0,
+  minTrack: 0.6,
+  /** How hard the elbow's pole leans out toward its tuck point (1 = straight at it). */
+  poleOut: 1,
+  /** How far the humerus's dorsal face turns up from out (its flat blade lies lower on the flank). */
+  humRefUp: 0,
+  /** Hand direction offsets from straight up the forearm (out, back; negative out = in toward the body). */
+  handOut: -0.05,
+  handBack: 0.08,
+  /** Finger inner segments: out and back offsets from up the forearm, and the step per finger. */
+  fingerOut: -0.2,
+  fingerOutStep: 0,
+  fingerBack: 0.1,
+  fingerBackStep: 0.06,
+  /**
+   * Where the outer finger segments' tips ride: their height as a share of the body's upper
+   * half-height above its centreline at the elbow (the wingtip finger, the others, the step per
+   * finger), within this pitch range above level (rad).
+   */
+  tipH0: 0.9,
+  tipH: 0.35,
+  tipHStep: 0.25,
+  riseMin: 0.15,
+  riseMax: 1.25,
+  /**
+   * The fold helpers (A2): the inner panel's interior is drawn toward the folded arm, scaled about
+   * a point on the elbow's inner face: across (x), up and down (y) and fore and aft (z).
+   */
+  helperX: 0.2,
+  helperY: 0.85,
+  helperZ: 0.6,
+  /** ...across about this share of the shoulders' half-width at most. */
+  helperFlank: 1,
+  /** Outer finger segments turned out from straight back (rad). */
+  tipOut: 0.04,
+};
 
 export class GroundLayer {
   private readonly a: WyvernAnimator;
@@ -77,6 +135,30 @@ export class GroundLayer {
   private readonly lens: Float64Array;
   /** Reused terrain query result. */
   private readonly hit: GroundHit = { y: 0, normal: new Vector3(), islandId: -1, surface: 'grass' };
+  /**
+   * Per side and finger: sin and cos of half the angle (about the bind wing normal) that turns the
+   * finger's bind direction onto the innermost finger's, which closes the fan in the fold.
+   */
+  private readonly fanClose = new Float64Array(12);
+  /** The outer finger segments' lengths. */
+  private readonly fingerB: Float64Array;
+  /** The body's centreline height and upper half-height at the folded elbow. */
+  private readonly flankMid = new Float64Array(2);
+  /** Where the folded elbow tucks against the flank (left side, body frame). */
+  private readonly elbowAt = new Vector3();
+  /** The shoulders' half-width (the body's widest, seen from the front). */
+  private readonly flankX: number;
+  /** The arm's radius scale (parts/wings.ts armScale). */
+  private readonly armR: number;
+  /** The breed's standing metatarsus angle from vertical (BreedShape.legAngles). */
+  private readonly metaAngle: number;
+  /**
+   * Per side (12 each), for trailRoll: the innermost finger's bind direction (3); the offset of
+   * the inner panel's trailing-edge midpoint from that finger's outer joint, across the finger (3);
+   * that offset along the finger; the midpoint's bind x; the trailing root's bind x; the outer
+   * segment's length.
+   */
+  private readonly trailBind = new Float64Array(24);
 
   constructor(a: WyvernAnimator, terrain?: Pick<TerrainQuery, 'groundAt'>) {
     this.a = a;
@@ -102,6 +184,46 @@ export class GroundLayer {
         dirOf(w.fingers[2][0], m(rig.fingerTips[2])),
       ];
     });
+    for (let side = 0; side < 2; side++) {
+      const r = this.wingRestDir[side];
+      for (let f = 0; f < 3; f++) {
+        // Angle about +Y from finger f's bind direction to straight back (0, 0, -1), turned out from
+        // the body by FOLD.tipOut (both in the bind plane).
+        const d = r[3 + f];
+        const o = FOLD.tipOut * SIDE_SIGN[side];
+        const tx = Math.sin(o);
+        const tz = -Math.cos(o);
+        const ang = Math.atan2(d.z * tx - d.x * tz, d.x * tx + d.z * tz);
+        this.fanClose[side * 6 + f * 2] = Math.sin(ang / 2);
+        this.fanClose[side * 6 + f * 2 + 1] = Math.cos(ang / 2);
+      }
+    }
+    this.armR = armScale(rig);
+    {
+      // The inner panel's trailing edge (parts/wings.ts, sector C): a scalloped line from the
+      // flank root to finger 2's tip, its middle drawn in toward the wrist.
+      const trail0 = innerTrailRoot(rig.props, rig.plan);
+      for (let side = 0; side < 2; side++) {
+        const sx = SIDE_SIGN[side];
+        const w = rig.idx.wings[side];
+        const trail = new Vector3(trail0.x * sx, trail0.y, trail0.z);
+        const tip = new Vector3(rig.fingerTips[2].x * sx, rig.fingerTips[2].y, rig.fingerTips[2].z);
+        const wr = new Vector3(rig.wrist.x * sx, rig.wrist.y, rig.wrist.z);
+        const mid = trail.clone().lerp(tip, 0.5);
+        const inward = wr.clone().sub(mid);
+        inward.y = 0;
+        inward.normalize();
+        mid.addScaledVector(inward, rig.props.shape.wing.scallop * 1.2 * trail.distanceTo(tip));
+        const m2 = rig.bones[w.fingers[2][1]].pos;
+        const d = this.wingRestDir[side][5];
+        const off = mid.clone().sub(m2);
+        const along = off.dot(d);
+        const perp = off.clone().addScaledVector(d, -along);
+        this.trailBind.set([d.x, d.y, d.z, perp.x, perp.y, perp.z, along, mid.x, trail.x, tip.distanceTo(m2)], side * 12);
+      }
+    }
+    this.metaAngle = rig.props.shape.legAngles.meta;
+    this.fingerB = new Float64Array(rig.props.arm.fingers.map((f) => f[1]));
     this.legRestDir = [0, 1].map((side) => {
       const l = rig.idx.legs[side];
       const m = (v: Vector3) => new Vector3(v.x * SIDE_SIGN[side], v.y, v.z);
@@ -113,8 +235,22 @@ export class GroundLayer {
     const sh = P.standHeight;
     const hipX = P.hip[0];
     const restHind = (side: number) => new Vector3(hipX * 1.08 * SIDE_SIGN[side], -sh, rig.ball.z + 0.1 * sh);
-    const restFore = (side: number) =>
-      new Vector3((P.shoulder[0] + 0.12 * P.arm.humerus + 0.1 * sh) * SIDE_SIGN[side], -sh, P.shoulder[2] + 0.42 * P.arm.forearm);
+    // The folded elbow rests against the flank below and behind the shoulder, the forearm's
+    // surface just clear of the body there; the wrist plants under it, a little in and ahead.
+    {
+      const hum = P.arm.humerus;
+      const ez = P.shoulder[2] - FOLD.elbowBack * hum;
+      const st = rig.plan.station(rig.plan.sAtZ(ez));
+      const ey = st.center.y - FOLD.elbowLow * st.lower;
+      const ty = Math.min(1, Math.abs(ey - st.center.y) / st.lower);
+      const flank = st.halfWidth * Math.pow(Math.max(0, 1 - Math.pow(ty, st.squareness)), 1 / st.squareness);
+      this.flankX = rig.plan.station(rig.plan.keyS[rig.plan.marks.shoulder]).halfWidth;
+      const track = FOLD.minTrack * this.flankX;
+      this.elbowAt.set(Math.max(flank, track) + FOLD.elbowClear * 0.17 * armScale(rig), ey, ez);
+      this.flankMid[0] = st.center.y;
+      this.flankMid[1] = st.upper;
+    }
+    const restFore = (side: number) => new Vector3((this.elbowAt.x - FOLD.wristIn * sh) * SIDE_SIGN[side], -sh, P.shoulder[2] + FOLD.wristFwd * P.arm.forearm);
     this.gait = new Gait([restHind(0), restHind(1), restFore(0), restFore(1)]);
     this.gaitCtx = {
       dt: 0,
@@ -211,13 +347,16 @@ export class GroundLayer {
   }
 
   /**
-   * Folded stance: the wrist (with its thumb claws) is a front foot planted by the gait; humerus
-   * + forearm reach it by two-bone IK with the elbow high and back. The hand folds back up along
-   * the forearm and the fingers run on up beside it in a tight bundle, then their outer segments
-   * fold back along the flank toward the tail, so the folded wing reads as one strong limb with
-   * the wingtips lying along the upper flank and the membrane bunched into a narrow wedge (not a
-   * second pair of stilts with a sheet hung between them). Blended over the FK pose by this
-   * frame's IK weight.
+   * Folded stance: the wrist (with its pad and digits) is a front foot planted by the gait under
+   * the shoulder; humerus + forearm reach it by two-bone IK with the elbow tucked back against the
+   * flank, so the arm hangs from the shoulder like a bird's or a bat's (never a crocodile's
+   * sideways elbow). The hand folds back up along the forearm and the fingers run on up its inner
+   * side in a tight bundle; their outer segments fold back along the flank, the fan closed in the
+   * wing's own plane, the wingtip finger riding highest. Every bone keeps its dorsal face turned
+   * out, so the membrane lies along the body in a narrow pleated bundle rather than standing out as
+   * a panel; the innermost finger's roll keeps the inner panel's trailing edge in to the flank
+   * (trailRoll) and the fold helpers draw its interior in (foldHelpers). Blended over the FK pose
+   * by this frame's IK weight.
    */
   applyWingIK(side: number): void {
     const weight = this.ikW;
@@ -230,6 +369,7 @@ export class GroundLayer {
     const sx = SIDE_SIGN[side];
     const rest = this.wingRestDir[side];
     const up = a.upM;
+    const T = FOLD;
     // (Scalar arithmetic in place of three.js calls taking computed numbers: in a function this
     // size the JIT may not inline them, and every double passed would be boxed on the heap.)
     const fwdG = this.fwdG.copy(FWD);
@@ -237,6 +377,11 @@ export class GroundLayer {
     fwdG.y -= up.y * up.z;
     fwdG.z -= up.z * up.z;
     fwdG.normalize();
+    // Out from the body (this side), level with the ground.
+    const outG = _outG;
+    outG.x = LEFT.x * sx;
+    outG.y = LEFT.y * sx;
+    outG.z = LEFT.z * sx;
     // Wrist target (model space) from the planted foot, the claws resting on the ground.
     const foot = this.gait.feet[2 + side];
     const Wt = a.toModel(foot.pos, _v3);
@@ -245,55 +390,72 @@ export class GroundLayer {
     Wt.y += up.y * lift;
     Wt.z += up.z * lift;
     const S = _v2.copy(a.modelP[w.humerus]);
-    // Pole: back and up, a little out, so the elbow juts up behind the shoulder.
-    _v4.x = 0.25 * sx;
-    _v4.y = 0.75;
-    _v4.z = -0.62;
+    // Pole: level toward the elbow's tuck against the flank, back and a little out from the
+    // shoulder (a bird's or bat's arm hanging from the shoulder, never a crocodile's sideways
+    // elbow). Level, so it never lines up with the near-vertical shoulder-to-wrist line as the
+    // forefoot swings through a stride.
+    const ea = this.elbowAt;
+    const pOut = (ea.x - S.x * sx) * T.poleOut;
+    const pBack = S.z - ea.z;
+    _v4.x = outG.x * pOut - fwdG.x * pBack;
+    _v4.y = outG.y * pOut - fwdG.y * pBack;
+    _v4.z = outG.z * pOut - fwdG.z * pBack;
     const E = _v5;
     solveTwoBoneAt(S, this.lens, 0, Wt, _v4, E);
     const hum = _hum.subVectors(E, S);
     const fore = _fore.subVectors(Wt, E);
-    // Wing surface "up" in the bind is −(humerus × forearm) for the left wing.
-    const ref = _ref.crossVectors(hum, fore);
-    ref.x *= -sx;
-    ref.y *= -sx;
-    ref.z *= -sx;
-    if (ref.lengthSq() < 1e-8) ref.copy(UP);
-    ref.normalize();
-    aimRotation(rest[0], UP, hum, ref, _q);
+    // Every wing bone keeps its dorsal face turned out from the body: the membrane between them
+    // then lies along the flank instead of standing out from it as a panel.
+    // (The humerus's flat deltopectoral blade turns a little up, keeping its crest low on the flank.)
+    _fd.x = outG.x + up.x * T.humRefUp;
+    _fd.y = outG.y + up.y * T.humRefUp;
+    _fd.z = outG.z + up.z * T.humRefUp;
+    aimRotation(rest[0], UP, hum, _fd, _q);
     a.setModelBlend(w.humerus, _q);
-    aimRotation(rest[1], UP, fore, ref, _q);
+    aimRotation(rest[1], UP, fore, outG, _q);
     a.setModelBlend(w.forearm, _q);
-    // Hand folds back up along the forearm, just outside it.
+    // Up the forearm from the wrist.
     const back = _handD.subVectors(E, Wt).normalize();
-    _fd.x = back.x + LEFT.x * (0.12 * sx) + fwdG.x * -0.06;
-    _fd.y = back.y + LEFT.y * (0.12 * sx) + fwdG.y * -0.06;
-    _fd.z = back.z + LEFT.z * (0.12 * sx) + fwdG.z * -0.06;
+    // The hand folds back up along the forearm, behind and just inside it.
+    _fd.x = back.x + outG.x * T.handOut + fwdG.x * -T.handBack;
+    _fd.y = back.y + outG.y * T.handOut + fwdG.y * -T.handBack;
+    _fd.z = back.z + outG.z * T.handOut + fwdG.z * -T.handBack;
     _fd.normalize();
-    aimRotation(rest[2], UP, _fd, ref, _q);
+    aimRotation(rest[2], UP, _fd, outG, _q);
     a.setModelBlend(w.hand, _q);
     for (let f = 0; f < 3; f++) {
-      // Inner segment: up beside the forearm, bundled (outside and a little behind it).
-      const out = (0.07 + 0.02 * f) * sx;
-      const behind = -0.1 - 0.06 * f;
-      _fd.x = back.x + LEFT.x * out + fwdG.x * behind;
-      _fd.y = back.y + LEFT.y * out + fwdG.y * behind;
-      _fd.z = back.z + LEFT.z * out + fwdG.z * behind;
+      // Inner segment: up beside the forearm, bundled on its inner side and a little behind it.
+      const out = T.fingerOut + T.fingerOutStep * f;
+      const behind = -T.fingerBack - T.fingerBackStep * f;
+      _fd.x = back.x + outG.x * out + fwdG.x * behind;
+      _fd.y = back.y + outG.y * out + fwdG.y * behind;
+      _fd.z = back.z + outG.z * out + fwdG.z * behind;
       _fd.normalize();
-      aimRotation(rest[3 + f], UP, _fd, ref, _q);
+      aimRotation(rest[3 + f], UP, _fd, outG, _q);
       a.setModelBlend(w.fingers[f][0], _q);
-      // Outer segment: folded back along the flank, tips toward the tail; the wingtip finger
-      // rides highest, the inner ones fan a little lower. Membrane side faces outward.
-      const rise = 0.3 - 0.13 * f;
-      const flank = (0.07 - 0.02 * f) * sx;
-      _fd.x = fwdG.x * -0.92 + up.x * rise + LEFT.x * flank;
-      _fd.y = fwdG.y * -0.92 + up.y * rise + LEFT.y * flank;
-      _fd.z = fwdG.z * -0.92 + up.z * rise + LEFT.z * flank;
-      _fd.normalize();
-      _refN.x = LEFT.x * sx;
-      _refN.y = LEFT.y * sx;
-      _refN.z = LEFT.z * sx;
-      aimRotation(rest[3 + f], UP, _fd, _refN, _q);
+      // Outer segment: folded back along the flank, tips toward the tail. The fan closes in the
+      // wing's own plane (each finger turned about the bind normal onto the innermost finger's
+      // line, so the panels between them collapse like a closing fan instead of twisting), then
+      // pitches up about the body's side axis: the inner panel's trailing edge, which hangs between
+      // the flank and this finger, then runs straight from its root to the fingertip instead of
+      // bowing out from the body.
+      // Pitched up just enough to bring the tip to its height on the flank.
+      const pv = a.pivot(w.fingers[f][1]);
+      const tipY = this.flankMid[0] + (f === 0 ? T.tipH0 : T.tipH - T.tipHStep * (f - 1)) * this.flankMid[1];
+      const sinR = (tipY - pv.y) / this.fingerB[f];
+      const rise = sinR >= 1 ? T.riseMax : sinR <= -1 ? T.riseMin : clamp(Math.asin(sinR), T.riseMin, T.riseMax);
+      const sxh = Math.sin(rise * 0.5);
+      const cxh = Math.cos(rise * 0.5);
+      const close = this.fanClose;
+      const syh = close[side * 6 + f * 2];
+      const cyh = close[side * 6 + f * 2 + 1];
+      const qa = _qa;
+      qa[0] = sxh * cyh;
+      qa[1] = cxh * syh;
+      qa[2] = sxh * syh;
+      qa[3] = cxh * cyh;
+      _q.fromArray(qa);
+      if (f === 2) this.trailRoll(side, _q);
       a.setModelBlend(w.fingers[f][1], _q);
     }
     // Claws point forward along the ground.
@@ -303,6 +465,99 @@ export class GroundLayer {
     _fd.normalize();
     aimRotation(FWD, UP, _fd, up, _q);
     a.setModelBlend(w.claw, _q);
+  }
+
+  /**
+   * Roll the innermost finger's outer segment about its own axis so the inner panel's trailing
+   * edge runs straight out from the flank to the fingertip. That edge is skinned partly to the body
+   * (which keeps its bind, spread-wing position) and partly to this bone, so any other roll bows its
+   * middle out from the flank — the "slab". `q` (the segment's model rotation, its direction already
+   * set) is rolled in place; the roll that keeps the dorsal face turning outward wins.
+   */
+  private trailRoll(side: number, q: Quaternion): void {
+    const k = side * 12;
+    const B = this.trailBind;
+    const sx = SIDE_SIGN[side];
+    // d' = q·d (the finger's direction), u = q·q⊥ (the bind edge midpoint's offset across it).
+    const d = _tv1.set(B[k], B[k + 1], B[k + 2]).applyQuaternion(q);
+    const u = _tv2.set(B[k + 3], B[k + 4], B[k + 5]).applyQuaternion(q);
+    const wv = _tv3.crossVectors(d, u);
+    const qd = B[k + 6];
+    const pMidX = B[k + 7];
+    const trailX = B[k + 8];
+    const tipLen = B[k + 9];
+    // The finger's pivot and tip (model frame; the tip doesn't depend on the roll).
+    const m2 = this.a.modelP[this.rig.idx.wings[side].fingers[2][1]];
+    const tipX = m2.x + d.x * tipLen;
+    // x of the bind midpoint carried by this bone, so the edge's middle sits half-way across.
+    const c = trailX + tipX - pMidX - m2.x - qd * d.x;
+    const A = u.x;
+    const Bv = wv.x;
+    const R = Math.sqrt(A * A + Bv * Bv);
+    const base = Math.atan2(Bv, A);
+    let psi = base;
+    if (R > 1e-6) {
+      const r = c / R;
+      if (r >= 1) psi = base;
+      else if (r <= -1) psi = base + Math.PI;
+      else {
+        // Two rolls satisfy it: keep the one whose dorsal face (q·UP rolled) points out more.
+        const ac = Math.acos(r);
+        const up0 = _tv4.copy(UP).applyQuaternion(q);
+        // Dorsal x after rolling by ±ac about d (Rodrigues; only x is needed).
+        const dn = d.x * (d.x * up0.x + d.y * up0.y + d.z * up0.z);
+        const cx = d.y * up0.z - d.z * up0.y;
+        const p1 = base + ac;
+        const p2 = base - ac;
+        const x1 = up0.x * Math.cos(p1) + cx * Math.sin(p1) + dn * (1 - Math.cos(p1));
+        const x2 = up0.x * Math.cos(p2) + cx * Math.sin(p2) + dn * (1 - Math.cos(p2));
+        psi = x1 * sx >= x2 * sx ? p1 : p2;
+      }
+    }
+    const sh = Math.sin(psi * 0.5);
+    const qa = _qa;
+    qa[0] = d.x * sh;
+    qa[1] = d.y * sh;
+    qa[2] = d.z * sh;
+    qa[3] = Math.cos(psi * 0.5);
+    q.premultiply(_qr.fromArray(qa));
+  }
+
+  /**
+   * The fold helpers' transforms this frame (body frame, composed onto their rest hold by
+   * Wyvern): with the wings folded on the ground the inner panel's interior is drawn in toward the
+   * folded arm, so the membrane bunches into a narrow pleated bundle beside it instead of
+   * standing out from the flank as a sheet. Identity in the air.
+   */
+  foldHelpers(): void {
+    const a = this.a;
+    const fold = this.f.fold;
+    const T = FOLD;
+    const r = 0.17 * this.armR;
+    for (let side = 0; side < 2; side++) {
+      const e = a.foldXform[side].elements;
+      if (!(fold > 0.001)) {
+        e[0] = e[5] = e[10] = e[15] = 1;
+        e[1] = e[2] = e[3] = e[4] = e[6] = e[7] = e[8] = e[9] = e[11] = e[12] = e[13] = e[14] = 0;
+        continue;
+      }
+      const sx = SIDE_SIGN[side];
+      // About the folded elbow (fore and aft, up and down), and across about the flank or the
+      // elbow's inner face, whichever is further in.
+      const el = a.modelP[this.rig.idx.wings[side].forearm];
+      const px = sx * Math.min(el.x * sx - r, this.flankX * T.helperFlank);
+      const kx = 1 + (T.helperX - 1) * fold;
+      const ky = 1 + (T.helperY - 1) * fold;
+      const kz = 1 + (T.helperZ - 1) * fold;
+      e[0] = kx;
+      e[5] = ky;
+      e[10] = kz;
+      e[15] = 1;
+      e[1] = e[2] = e[3] = e[4] = e[6] = e[7] = e[8] = e[9] = e[11] = 0;
+      e[12] = (1 - kx) * px;
+      e[13] = (1 - ky) * el.y;
+      e[14] = (1 - kz) * el.z;
+    }
   }
 
   /** Both legs: the flight poses (FK) blended with ground IK to the planted feet. */
@@ -421,8 +676,9 @@ export class GroundLayer {
     ball.x += up.x * sole;
     ball.y += up.y * sole;
     ball.z += up.z * sole;
-    // Metatarsus leans forward; more when the heel lifts during a swing.
-    const ang = LEG_ANGLES.meta + foot.airborne * 0.5;
+    // Metatarsus leans forward at the breed's own angle (near flat on the ironback); more when the
+    // heel lifts during a swing.
+    const ang = this.metaAngle + foot.airborne * 0.5;
     const ca = -Math.cos(ang);
     const sa = Math.sin(ang);
     const metaDir = _v3;

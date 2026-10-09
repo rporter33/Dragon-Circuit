@@ -34,6 +34,8 @@ const _m = new Matrix4();
 const _v = new Vector3();
 const _mInv = new Matrix4();
 const _acc = new Float64Array(16);
+const _gInv = new Matrix4();
+const _fold = new Matrix4();
 const X_AXIS = new Vector3(1, 0, 0);
 /** The forearm's radius about half way down (× the arm scale; parts/wings.ts). */
 const FOREARM_STEP_R = 0.16;
@@ -216,6 +218,8 @@ export class Wyvern implements WyvernRenderable {
     const B = this.bones;
     const F = this.foldHold;
     _mInv.copy(B[this.rig.idx.chest].matrixWorld).invert();
+    const G = this.group.matrixWorld;
+    _gInv.copy(G).invert();
     const acc = _acc;
     for (let side = 0; side < 2; side++) {
       acc.fill(0);
@@ -235,6 +239,9 @@ export class Wyvern implements WyvernRenderable {
       const fold = B[this.rig.idx.fold[side]];
       const mw = fold.matrixWorld.elements;
       for (let k = 0; k < 16; k++) mw[k] = acc[k];
+      // The animator's fold (stream C, C3), a body-frame transform composed onto the rest hold.
+      _fold.multiplyMatrices(G, this.animator.foldXform[side]).multiply(_gInv);
+      fold.matrixWorld.premultiply(_fold);
       fold.matrix.multiplyMatrices(_mInv, fold.matrixWorld);
     }
   }
