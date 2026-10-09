@@ -147,3 +147,47 @@ describe('levels of detail (Q15)', { timeout: 120000 }, () => {
     for (const breed of BREED_ORDER) expect(rigFor(breed).bones.length).toBeLessThanOrEqual(64);
   });
 });
+
+describe('the folded wing contracts (Q3, A2 rig side)', () => {
+  it('has fold helpers on the chest at the inner panel, skinning its interior and pleat valleys', () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      const [fl, fr] = rig.idx.fold;
+      expect(rig.bones[fl].name).toBe('foldL');
+      expect(rig.bones[fr].name).toBe('foldR');
+      expect(rig.bones[fl].parent).toBe(rig.idx.chest);
+      // Between the shoulder and the flank root, out from the body, mirrored.
+      const p = rig.bones[fl].pos;
+      expect(p.x).toBeGreaterThan(rig.props.shoulder[0]);
+      expect(p.x).toBeLessThan(rig.fingerTips[2].x);
+      expect(rig.bones[fr].pos.x).toBeCloseTo(-p.x, 6);
+      const g = buildWyvernGeometry(rig, look(breed), 0).geometry;
+      const si = g.getAttribute('skinIndex');
+      const sw = g.getAttribute('skinWeight');
+      const ex = g.getAttribute('aExtra');
+      const idx = g.index!.array;
+      const g1 = g.groups[1];
+      const membrane = new Set<number>();
+      for (let i = g1.start; i < g1.start + g1.count; i++) membrane.add(idx[i]);
+      let maxW = 0;
+      let pleated = 0;
+      for (let v = 0; v < si.count; v++) {
+        let w = 0;
+        for (let k = 0; k < 4; k++) if (si.getComponent(v, k) === fl || si.getComponent(v, k) === fr) w += sw.getComponent(v, k);
+        if (w > 0) expect(membrane.has(v)).toBe(true);
+        maxW = Math.max(maxW, w);
+        const y = ex.getY(v);
+        expect(y).toBeGreaterThanOrEqual(0);
+        expect(y).toBeLessThanOrEqual(1);
+        if (y > 0.5) {
+          expect(membrane.has(v)).toBe(true);
+          pleated++;
+        }
+      }
+      expect(maxW).toBeGreaterThan(0.45);
+      expect(maxW).toBeLessThan(0.6);
+      expect(pleated).toBeGreaterThan(20);
+      g.dispose();
+    }
+  });
+});

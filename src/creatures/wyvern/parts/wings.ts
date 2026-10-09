@@ -12,11 +12,17 @@
 
 import { Vector3 } from 'three';
 import { GeoBuilder, MREGION, REGION, Skin } from '../builder';
-import { SIDE_SIGN, type RigDef } from '../rig';
+import { SIDE_SIGN, innerTrailRoot, type RigDef } from '../rig';
 import { bodyChain } from './body';
 import { SkinChain } from './chain';
 import { bezier3, keyed, spike } from './shape';
 import { RES, sides, steps, type Res } from './res';
+
+/** Peak skin weight of the fold helper in the inner panel (sector C). */
+const FOLD_W = 0.55;
+/** Fold helper weight over sector C (t along the arm, v from the arm to the trailing edge). */
+export const foldWeight = (t: number, v: number) => FOLD_W * Math.sin(Math.PI * v) * Math.pow(1 - t, 0.7);
+const _ext: [number, number, number, number] = [0, 0, 0, 0];
 
 /** How far below the flank's equator the membrane root runs half-way back (fraction of lower). */
 const ROOT_DROP = 0.3;
@@ -43,6 +49,25 @@ export function humerusRootRadius(rig: RigDef): number {
   return HUMERUS_R[0][1] * armScale(rig);
 }
 
+/**
+ * The fold helpers' rest blend, per side: the bones (and weights) the inner panel's interior is
+ * skinned to besides the helper, averaged over the panel by the helper's own weight. Holding a
+ * helper at this blend of bone transforms leaves the panel as it would be without the helper;
+ * the animator folds from there.
+ */
+export type FoldRest = [{ bone: number; weight: number }[], { bone: number; weight: number }[]];
+const foldRestCache = new WeakMap<RigDef, FoldRest>();
+
+/** The fold helpers' rest blend for a rig (see FoldRest). */
+export function foldRest(rig: RigDef): FoldRest {
+  let r = foldRestCache.get(rig);
+  if (!r) {
+    buildWings(new GeoBuilder(), rig, RES[2]);
+    r = foldRestCache.get(rig)!;
+  }
+  return r;
+}
+
 export interface WingInfo {
   /** Membrane area of one wing (m², bind pose), for checks against BreedStats.wingArea. */
   membraneArea: number;
@@ -57,9 +82,13 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
   const S = P.shape;
   const k = armScale(rig);
   let area = 0;
+  const rest: FoldRest = [[], []];
   for (let side = 0; side < 2; side++) {
+    // Fold-weighted bone shares of the inner panel (sampled on a fixed grid, any LOD alike).
+    const share = new Map<number, number>();
     const sx = SIDE_SIGN[side];
     const wi = rig.idx.wings[side];
+    const foldBone = rig.idx.fold[side];
     const m = (v: Vector3) => new Vector3(v.x * sx, v.y, v.z);
     const sh = new Vector3(P.shoulder[0] * sx, P.shoulder[1], P.shoulder[2]);
     const el = m(rig.elbow);
@@ -204,6 +233,7 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
       edge: (t: number, v: number) => number,
       flutter: (t: number, v: number) => number,
       vOffset: number,
+      extra?: (t: number, v: number) => readonly [number, number, number, number],
     ) => {
       b.begin(1);
       const grid: number[][] = [];
@@ -213,7 +243,9 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
         for (let j = 0; j <= nv; j++) {
           const v = j / nv;
           pos(t, v, p);
-          row.push(b.vertex(p, skin(t, v), { region: MREGION.wing, belly: thin(t, v), dorsal: edge(t, v), flutter: flutter(t, v) }, t, v + vOffset));
+          row.push(
+            b.vertex(p, skin(t, v), { region: MREGION.wing, belly: thin(t, v), dorsal: edge(t, v), flutter: flutter(t, v), extra: extra?.(t, v) }, t, v + vOffset),
+          );
         }
         grid.push(row);
       }
@@ -268,10 +300,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
 
     // C: arm + finger 2 ↔ flank.
     const body = bodyChain(rig);
-    const trailZ = S.wing.trailZ * S.torsoLength;
-    const sTrail = rig.plan.sAtZ(trailZ);
-    const stT = rig.plan.station(sTrail);
-    const trail = new Vector3(stT.halfWidth * 0.9 * sx, stT.center.y + 0.35 * stT.upper, trailZ);
+    const trail = m(innerTrailRoot(P, rig.plan));
+    const sTrail = rig.plan.sAtZ(trail.z);
     const bodyTrailSkin = body.skin(sTrail);
     const shAttach = sh.clone().add(new Vector3(-0.05 * sx, 0, -0.08));
     const armPts = [shAttach, el, wr, kn];
@@ -305,6 +335,17 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
         .addScaledVector(rootCtl, 2 * v * (1 - v))
         .addScaledVector(trail, v * v)
         .sub(_line.lerpVectors(shAttach, trail, v));
+    /** The inner panel's skin without the fold helper. */
+    const innerSkin = (t: number, v: number) => {
+      const s = new Skin();
+      // Leading boundary follows the arm (the root follows the chest).
+      if (t < 0.02) s.add(rig.idx.chest, 1 - v);
+      else s.mix(chain.skin(armChainS(t)), 1 - v);
+      // Trailing boundary: flank at the root, finger 2 at the tip.
+      s.mix(bodyTrailSkin, v * (1 - t));
+      fingerSkin(2, 1, s, v * t);
+      return s;
+    };
     const tip2 = tips[2];
     const midC = trail.clone().lerp(tip2, 0.5);
     const inwardC = wr.clone().sub(midC);
@@ -324,20 +365,42 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
         return w > 1e-4 ? out.addScaledVector(rootDip(v, _dip), w) : out;
       },
       (t, v) => {
-        const s = new Skin();
-        // Leading boundary follows the arm (the root follows the chest).
-        if (t < 0.02) s.add(rig.idx.chest, 1 - v);
-        else s.mix(chain.skin(armChainS(t)), 1 - v);
-        // Trailing boundary: flank at the root, finger 2 at the tip.
-        s.mix(bodyTrailSkin, v * (1 - t));
-        fingerSkin(2, 1, s, v * t);
-        return s;
+        const s = innerSkin(t, v);
+        // The fold helper takes the interior (most near the root, none on the boundaries), so
+        // the animator can contract and pleat the folded panel against the flank.
+        const wf = foldWeight(t, v);
+        return wf > 1e-4 ? new Skin().mix(s, 1 - wf).add(foldBone, wf) : s;
       },
       (t, v) => v * (0.35 + 0.65 * Math.sin(Math.PI * Math.min(1, t * 1.3))),
       (_t, v) => v,
       (t, v) => v * v * Math.sin(Math.PI * t),
       2,
+      (t, v) => {
+        // Pleat valleys: troughs of the uFold vertex pleats (sin(aUv2.y * 8π + aUv2.x * 3),
+        // aUv2.y = v + 2 here), where the folded sheet bunches, weighted like the fold helper.
+        const trough = 0.5 - 0.5 * Math.sin((v + 2) * 25.13 + t * 3);
+        _ext[1] = (foldWeight(t, v) / FOLD_W) * trough;
+        return _ext;
+      },
     );
+
+    {
+      // The rest blend: sample the panel's own skin (without the helper) on a fixed grid.
+      for (let i = 0; i <= 16; i++)
+        for (let j = 0; j <= 10; j++) {
+          const t = i / 16;
+          const v = j / 10;
+          const wf = foldWeight(t, v);
+          if (wf < 1e-4) continue;
+          const sk = innerSkin(t, v);
+          for (let q = 0; q < sk.bones.length; q++) share.set(sk.bones[q], (share.get(sk.bones[q]) ?? 0) + wf * sk.weights[q]);
+        }
+      let sum = 0;
+      for (const w of share.values()) sum += w;
+      for (const [bone, w] of share) if (w / sum > 0.01) rest[side].push({ bone, weight: w / sum });
+      const kept = rest[side].reduce((a, e) => a + e.weight, 0);
+      for (const e of rest[side]) e.weight /= kept;
+    }
 
     // D: leading-edge panel in front of the elbow.
     const lead0 = sh.clone().add(new Vector3(0, 0, 0.12));
@@ -374,5 +437,6 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
       area += B.sub(A).cross(C.sub(A)).length() / 2;
     }
   }
+  foldRestCache.set(rig, rest);
   return { membraneArea: area / 2 };
 }

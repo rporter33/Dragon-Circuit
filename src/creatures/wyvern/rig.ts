@@ -55,6 +55,12 @@ export interface RigIndex {
   tail: number[];
   wings: [WingIdx, WingIdx];
   legs: [LegIdx, LegIdx];
+  /**
+   * Fold helpers [left, right] (children of the chest, at the centroid of the inner membrane
+   * panel): the inner panel's interior is partly skinned to them so the animator can contract
+   * and pleat the folded wing against the flank. Rest (bind) = no change. Driven by stream C.
+   */
+  fold: [number, number];
 }
 
 /** A point on the body tube's centerline with its cross-section. */
@@ -470,6 +476,10 @@ export function buildRig(breed: BreedId): RigDef {
     tip: keys.length - 1,
   });
 
+  // Fold helpers: appended after every other bone so existing indices stay put.
+  const foldC = innerPanelCentroid(P, shoulder, elbow, wrist, knuckle, fingerTips[2], plan, T);
+  const fold: [number, number] = [add('foldL', chest, mirror(foldC, 0)), add('foldR', chest, mirror(foldC, 1))];
+
   // Seat: behind the shoulder girdle, over the ribcage near the center of mass — where a horse
   // saddle sits behind the withers. Not over the wing roots: the flight muscles anchor there and
   // heave with every beat (a bumpy ride). The spine bone carries it.
@@ -485,7 +495,7 @@ export function buildRig(breed: BreedId): RigDef {
   return {
     props: P,
     bones,
-    idx: { root, spine, chest, breath, pelvis, neck, head, jaw, tongue: [tongue0, tongue1], fans, tail, wings, legs },
+    idx: { root, spine, chest, breath, pelvis, neck, head, jaw, tongue: [tongue0, tongue1], fans, tail, wings, legs, fold },
     plan,
     elbow,
     wrist,
@@ -501,6 +511,30 @@ export function buildRig(breed: BreedId): RigDef {
     seatHalfWidth: st.halfWidth,
     tailTip,
   };
+}
+
+/** Where the inner panel's trailing edge meets the flank (left side, body space). */
+export function innerTrailRoot(P: WyvernProportions, plan: BodyPlan): Vector3 {
+  const trailZ = P.shape.wing.trailZ * P.shape.torsoLength;
+  const st = plan.station(plan.sAtZ(trailZ));
+  return new Vector3(st.halfWidth * 0.9, st.center.y + 0.35 * st.upper, trailZ);
+}
+
+/** Area centroid of the inner membrane panel (left; shoulder, arm, finger 2 tip, flank root). */
+function innerPanelCentroid(P: WyvernProportions, sh: Vector3, el: Vector3, wr: Vector3, kn: Vector3, tip2: Vector3, plan: BodyPlan, T: number): Vector3 {
+  void T;
+  const poly = [sh, el, wr, kn, tip2, innerTrailRoot(P, plan)];
+  // Fan triangulation from the first corner, area-weighted.
+  const c = new Vector3();
+  let area = 0;
+  const ab = new Vector3();
+  const ac = new Vector3();
+  for (let i = 1; i < poly.length - 1; i++) {
+    const a = ab.subVectors(poly[i], poly[0]).cross(ac.subVectors(poly[i + 1], poly[0])).length() / 2;
+    c.addScaledVector(poly[0], a / 3).addScaledVector(poly[i], a / 3).addScaledVector(poly[i + 1], a / 3);
+    area += a;
+  }
+  return c.multiplyScalar(1 / Math.max(1e-9, area));
 }
 
 /** Smooth 0..1 ramp used by builders for blending weights. */

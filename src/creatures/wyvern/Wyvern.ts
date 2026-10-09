@@ -5,12 +5,13 @@
 // (horns, frill, tail tip, saddle) rebuilds the geometry (and, for a breed, the skeleton) and
 // disposes the old resources.
 
-import { Bone, Group, Matrix4, Object3D, Skeleton, SkinnedMesh, Sphere, Vector3, type Material } from 'three';
+import { Bone, Group, Matrix4, Object3D, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3, type Material } from 'three';
 import type { WyvernLook, WyvernPose } from '../../core/types';
 import type { WyvernRenderable } from '../../game/contracts';
 import type { TerrainQuery } from '../../core/types';
 import { rigFor, type RigDef } from './rig';
 import { buildWyvernGeometry, type WyvernMeshInfo } from './geometry';
+import { foldRest, type FoldRest } from './parts/wings';
 import {
   applyLookUniforms,
   createBodyMaterial,
@@ -29,6 +30,12 @@ export interface WyvernOptions {
 }
 
 const _m = new Matrix4();
+const _v = new Vector3();
+const _p = new Vector3();
+const _qc = new Quaternion();
+const _qb = new Quaternion();
+const _qs = new Quaternion();
+const _mInv = new Matrix4();
 const X_AXIS = new Vector3(1, 0, 0);
 
 export class Wyvern implements WyvernRenderable {
@@ -47,6 +54,7 @@ export class Wyvern implements WyvernRenderable {
   private animator!: WyvernAnimator;
   private shapeKey = '';
   private tipOffset = new Vector3();
+  private foldRest!: FoldRest;
   private mouthOffset = new Vector3();
 
   constructor(look: WyvernLook, opts: WyvernOptions = {}) {
@@ -87,6 +95,7 @@ export class Wyvern implements WyvernRenderable {
     this.animator.update(dt, pose, this.uniforms);
     this.animator.apply(this.bones);
     this.group.updateMatrixWorld(true);
+    this.holdFoldHelpers();
   }
 
   getWingtips(outLeft: Vector3, outRight: Vector3): void {
@@ -134,6 +143,39 @@ export class Wyvern implements WyvernRenderable {
 
   // --- Internals ----------------------------------------------------------------------------------
 
+  /**
+   * Until the animator drives the wing-fold helpers (stream C, C3), hold each at its rest blend
+   * (parts/wings.ts foldRest): the fold-weighted average of the bones the inner membrane panel
+   * hangs from. The panel then moves as it did before the helpers existed (skinning is a linear
+   * blend of bone matrices). World matrices must be current; the helpers' are refreshed here.
+   */
+  private holdFoldHelpers(): void {
+    const rig = this.rig;
+    const B = this.bones;
+    const chest = B[rig.idx.chest];
+    _qc.setFromRotationMatrix(chest.matrixWorld).invert();
+    _mInv.copy(chest.matrixWorld).invert();
+    for (let side = 0; side < 2; side++) {
+      const fold = B[rig.idx.fold[side]];
+      const pivot = rig.bones[rig.idx.fold[side]].pos;
+      _p.set(0, 0, 0);
+      _qs.set(0, 0, 0, 0);
+      for (const { bone, weight } of this.foldRest[side]) {
+        const M = B[bone].matrixWorld;
+        // Where this bone carries the helper's pivot (its bind pivot is at the bone's origin).
+        _v.subVectors(pivot, rig.bones[bone].pos).applyMatrix4(M);
+        _p.addScaledVector(_v, weight);
+        _qb.setFromRotationMatrix(M);
+        const sgn = _qs.x * _qb.x + _qs.y * _qb.y + _qs.z * _qb.z + _qs.w * _qb.w < 0 ? -weight : weight;
+        _qs.set(_qs.x + _qb.x * sgn, _qs.y + _qb.y * sgn, _qs.z + _qb.z * sgn, _qs.w + _qb.w * sgn);
+      }
+      _qs.normalize();
+      fold.position.copy(_p.applyMatrix4(_mInv));
+      fold.quaternion.copy(_qc).multiply(_qs);
+      fold.updateMatrixWorld(true);
+    }
+  }
+
   private disposeMesh(): void {
     if (this.mesh) {
       this.mesh.geometry.dispose();
@@ -157,6 +199,7 @@ export class Wyvern implements WyvernRenderable {
     if (breedChanged) this.rig = rigFor(look.breed);
     const rig = this.rig;
     this.info = buildWyvernGeometry(rig, look);
+    this.foldRest = foldRest(rig);
     this.shapeKey = shapeKeyOf(look);
 
     // Bones: identity rest rotations, positions relative to the parent.
