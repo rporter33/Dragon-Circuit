@@ -323,16 +323,19 @@ describe('pure helpers', () => {
 });
 
 describe('weight and life (client direction: a big, heavy dragon)', { timeout: 60000 }, () => {
-  it('holds the head steadier than the body, trailing the shoulders it hangs from (neck lag)', () => {
-    // The harrier at its retuned 1.45 Hz beat. (All four breeds are the dragon fidelity pass's job:
-    // the galewing's 0.95 Hz beat still lifts the head with the chest.)
-    const h = beat('harrier');
-    expect(h.headRange).toBeLessThan(h.saddleRange * 0.8);
-    expect(h.headRange).toBeLessThan(h.shoulderRange * 0.8);
-    // The head's high point comes after the shoulders' (modulo the cycle).
-    const lag = (h.headPeak - h.shoulderPeak + 1) % 1;
-    expect(lag).toBeGreaterThan(0.01);
-    expect(lag).toBeLessThan(0.3);
+  it('holds the head steadier than the body, trailing the shoulders it hangs from (neck lag), on every breed and beat rate', () => {
+    // The head-height hold (C12) holds it on the slow galewing and ironback beats as well as the
+    // quick ones (before it, the galewing's 0.95 Hz beat lifted the head with the chest: 1.05× the
+    // saddle's travel).
+    for (const breed of BREED_ORDER) {
+      const h = beat(breed);
+      expect(h.headRange, breed).toBeLessThan(h.saddleRange * 0.55);
+      expect(h.headRange, breed).toBeLessThan(h.shoulderRange * 0.55);
+      // The head's high point comes after the shoulders' (modulo the cycle).
+      const lag = (h.headPeak - h.shoulderPeak + 1) % 1;
+      expect(lag, breed).toBeGreaterThan(0.01);
+      expect(lag, breed).toBeLessThan(0.3);
+    }
   });
 
   it('folds the wings back along the flank on the ground: tips up off the ground, behind the shoulder (VIS-17)', () => {
