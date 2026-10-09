@@ -215,6 +215,22 @@ export class WyvernAnimator {
     return this.modelP[i];
   }
 
+  /**
+   * Blend weight for setModelBlend (set once, then pose several bones with it): the weight travels
+   * in a field because a double passed into a call the JIT doesn't inline is boxed on the heap.
+   */
+  blend = 0.5;
+
+  /** setModel at this.blend. */
+  setModelBlend(i: number, q: Quaternion): void {
+    const p = this.parent[i];
+    _qi.copy(this.modelQ[p]).invert().multiply(q);
+    const weight = this.blend;
+    if (weight >= 1) this.local[i].copy(_qi);
+    else if (weight > 0) this.local[i].slerp(_qi, weight);
+    this.fk(i);
+  }
+
   /** Set a bone's model-space rotation (local derived from the parent), with FK. */
   setModel(i: number, q: Quaternion, weight = 1): void {
     const p = this.parent[i];

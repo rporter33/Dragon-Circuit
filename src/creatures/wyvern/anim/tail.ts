@@ -11,7 +11,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { DEG, TAU, clamp, clamp01, damp, lerp, smoothstep } from '../../../core/math';
 import type { RigDef } from '../rig';
-import { aimRotation, rotateAbout } from '../ik';
+import { aimRotation } from '../ik';
 import type { WyvernAnimator } from '../animator';
 import { UP, type AnimFrame } from './frame';
 
@@ -299,12 +299,26 @@ export class TailLayer {
       }
     }
 
-    // Bones follow the chain: aim each segment at the next point, rolling gently with the bank.
+    // Bones follow the chain: aim each segment at the next point, rolling gently with the bank
+    // (a scalar Rodrigues turn of the parent's up about the segment, inline: no doubles through
+    // calls).
+    const roll = clamp(-om.z * 0.04, -0.08, 0.08);
+    const rc = Math.cos(roll);
+    const rs = Math.sin(roll);
     for (let i = 0; i < n; i++) {
       const dirM = a.toModel(X[i + 1], _v4).sub(a.toModel(X[i], _v5));
       const parentQ = a.modelQ[a.parent[T[i]]];
       _ref.copy(UP).applyQuaternion(parentQ);
-      rotateAbout(_ref, _refN.copy(dirM).normalize(), clamp(-om.z * 0.04, -0.08, 0.08));
+      if (roll !== 0) {
+        const ax = _refN.copy(dirM).normalize();
+        const vx = _ref.x;
+        const vy = _ref.y;
+        const vz = _ref.z;
+        const k = (ax.x * vx + ax.y * vy + ax.z * vz) * (1 - rc);
+        _ref.x = vx * rc + (ax.y * vz - ax.z * vy) * rs + ax.x * k;
+        _ref.y = vy * rc + (ax.z * vx - ax.x * vz) * rs + ax.y * k;
+        _ref.z = vz * rc + (ax.x * vy - ax.y * vx) * rs + ax.z * k;
+      }
       aimRotation(this.tailRestDir[i], UP, dirM, _ref, _q);
       a.setModel(T[i], _q);
     }

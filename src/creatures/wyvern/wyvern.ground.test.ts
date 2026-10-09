@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
-import type { BreedId, WyvernPose } from '../../core/types';
+import type { BreedId, GroundHit, WyvernPose } from '../../core/types';
 import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { createWyvernPose } from '../../player/poses';
 import { mulberry32 } from '../../core/rng';
@@ -255,6 +255,37 @@ describe('the tail: a heavy reptile counterweight (C1)', { timeout: 120000 }, ()
     }
     a.dispose();
     b.dispose();
+  });
+});
+
+describe('budget (animator cost)', () => {
+  it('queries the terrain only when a landing spot moves: none standing, a few a stride walking', () => {
+    let calls = 0;
+    const terrain = {
+      groundAt: (x: number, _z: number, _y: number, out?: GroundHit) => {
+        calls++;
+        const h = out ?? { y: 0, normal: new Vector3(0, 1, 0), islandId: 1, surface: 'grass' as const };
+        h.y = 10 + 0.02 * Math.sin(x);
+        return h;
+      },
+    };
+    const w = new Wyvern(look('harrier'), { terrain });
+    const pose = standing('harrier');
+    for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
+    calls = 0;
+    for (let i = 0; i < 300; i++) w.update(1 / 60, pose);
+    expect(calls).toBe(0);
+    pose.gait = 'walk';
+    pose.groundSpeed = 3;
+    pose.velocity.set(0, 0, 3);
+    calls = 0;
+    for (let i = 0; i < 300; i++) {
+      pose.position.z += 3 / 60;
+      w.update(1 / 60, pose);
+    }
+    // (It was four per update: every foot, every frame.)
+    expect(calls / 300).toBeLessThan(0.25);
+    w.dispose();
   });
 });
 
