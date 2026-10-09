@@ -5,13 +5,13 @@
 //   aMat  (vec4): region id, belly mask, dorsal mask, flutter amount (membranes) or, on the
 //                 body tube, the angle around it (2 + θ/π) for the scale rows
 //   aUv2  (vec2): part-specific coordinates (arc length along a part, lateral position, …)
-//   aExtra (vec4): per-vertex shading data (0 where a part has none)
-//                 x  skin-fold crease (A10)
-//                 y  membrane pleat-valley mask: 1 in the troughs of the fold pleats of the
-//                    inner wing panel (in phase with the uFold vertex pleats), 0 elsewhere
-//                 z  zone id: 1 lip row, 2 eye ring, 3 nostril, 4 ear, 5 scutate scales
+//   aExtra (vec4): per-vertex shading data; (1, 0, 0, 0) unless a part sets it
+//                 x  baked ambient occlusion (1 = open; A10)
+//                 y  crease or pleat mask: on the inner wing panel, 1 in the troughs of the fold
+//                    pleats (in phase with the uFold vertex pleats); skin-fold creases (A10)
+//                 z  zone id (ZONE): 1 lip row, 2 eye ring, 3 nostril, 4 ear, 5 scutate scales
 //                    (front of the metatarsus and the toe tops)
-//                 w  baked ambient occlusion (A10)
+//                 w  spare
 // Two index lists are kept: group 0 for the opaque body, group 1 for membranes.
 
 import { BufferAttribute, BufferGeometry, Float32BufferAttribute, Uint16BufferAttribute, Vector3 } from 'three';
@@ -42,6 +42,11 @@ export const ZONE = {
   ear: 4,
   scutate: 5,
 } as const;
+
+/** aExtra for a vertex in a zone (open, no crease). */
+export function zoneExtra(zone: number): readonly [number, number, number, number] {
+  return [1, 0, zone, 0];
+}
 
 /** Membrane regions (aMat.x in group 1). */
 export const MREGION = {
@@ -105,15 +110,15 @@ export class Skin {
 }
 
 const _pick = [0, 0, 0, 0];
-const _ext: [number, number, number, number] = [0, 0, 0, 0];
 const _bp = new Vector3();
+const _ex: [number, number, number, number] = [1, 0, 0, 0];
 
 export interface VertexMat {
   region: number;
   belly?: number;
   dorsal?: number;
   flutter?: number;
-  /** aExtra (see the header); omitted = all zero. */
+  /** aExtra (AO, crease mask, zone, spare); default (1, 0, 0, 0). */
   extra?: readonly [number, number, number, number];
 }
 
@@ -124,7 +129,7 @@ export class GeoBuilder {
   private skinW: number[] = [];
   private mat: number[] = [];
   private uv: number[] = [];
-  private ext: number[] = [];
+  private extra: number[] = [];
   private index: [number[], number[]] = [[], []];
   private partStart = 0;
   private partIndexStart = 0;
@@ -142,7 +147,7 @@ export class GeoBuilder {
     c.skinW = this.skinW.slice();
     c.mat = this.mat.slice();
     c.uv = this.uv.slice();
-    c.ext = this.ext.slice();
+    c.extra = this.extra.slice();
     c.index = [this.index[0].slice(), this.index[1].slice()];
     c.group = this.group;
     return c;
@@ -171,8 +176,8 @@ export class GeoBuilder {
     this.mat.push(m.region, m.belly ?? 0, m.dorsal ?? 0, m.flutter ?? 0);
     this.uv.push(u, w);
     const e = m.extra;
-    if (e) this.ext.push(e[0], e[1], e[2], e[3]);
-    else this.ext.push(0, 0, 0, 0);
+    if (e) this.extra.push(e[0], e[1], e[2], e[3]);
+    else this.extra.push(1, 0, 0, 0);
     return this.vertexCount - 1;
   }
 
@@ -229,24 +234,18 @@ export class GeoBuilder {
     }
     const M = this.mat;
     const U = this.uv;
-    const E = this.ext;
+    const E = this.extra;
     // Continuous channels interpolate; the zone id is categorical, so it comes from the corner
     // whose region the new vertex takes.
     const zoneFrom = M[a * 4] === region ? a : b;
-    _ext[0] = (E[a * 4] + E[b * 4]) / 2;
-    _ext[1] = (E[a * 4 + 1] + E[b * 4 + 1]) / 2;
-    _ext[2] = E[zoneFrom * 4 + 2];
-    _ext[3] = (E[a * 4 + 3] + E[b * 4 + 3]) / 2;
+    _ex[0] = (E[a * 4] + E[b * 4]) / 2;
+    _ex[1] = (E[a * 4 + 1] + E[b * 4 + 1]) / 2;
+    _ex[2] = E[zoneFrom * 4 + 2];
+    _ex[3] = (E[a * 4 + 3] + E[b * 4 + 3]) / 2;
     const i = this.vertex(
       _bp,
       skin,
-      {
-        region,
-        belly: (M[a * 4 + 1] + M[b * 4 + 1]) / 2,
-        dorsal: (M[a * 4 + 2] + M[b * 4 + 2]) / 2,
-        flutter: (M[a * 4 + 3] + M[b * 4 + 3]) / 2,
-        extra: _ext,
-      },
+      { region, belly: (M[a * 4 + 1] + M[b * 4 + 1]) / 2, dorsal: (M[a * 4 + 2] + M[b * 4 + 2]) / 2, flutter: (M[a * 4 + 3] + M[b * 4 + 3]) / 2, extra: _ex },
       (U[a * 2] + U[b * 2]) / 2,
       (U[a * 2 + 1] + U[b * 2 + 1]) / 2,
     );
@@ -306,6 +305,15 @@ export class GeoBuilder {
     this.pos[i * 3 + 2] = p.z;
   }
 
+  /** Set a vertex's aExtra (after vertex(); e.g. a baked AO pass). */
+  setExtra(i: number, x: number, y: number, z: number, w: number): void {
+    const E = this.extra;
+    E[i * 4] = x;
+    E[i * 4 + 1] = y;
+    E[i * 4 + 2] = z;
+    E[i * 4 + 3] = w;
+  }
+
   getPosition(i: number, out: Vector3): Vector3 {
     return out.set(this.pos[i * 3], this.pos[i * 3 + 1], this.pos[i * 3 + 2]);
   }
@@ -318,7 +326,7 @@ export class GeoBuilder {
     g.setAttribute('skinWeight', new Float32BufferAttribute(this.skinW, 4));
     g.setAttribute('aMat', new Float32BufferAttribute(this.mat, 4));
     g.setAttribute('aUv2', new Float32BufferAttribute(this.uv, 2));
-    g.setAttribute('aExtra', new Float32BufferAttribute(this.ext, 4));
+    g.setAttribute('aExtra', new Float32BufferAttribute(this.extra, 4));
     const all = [...this.index[0], ...this.index[1]];
     const IndexArray = this.vertexCount > 65535 ? Uint32Array : Uint16Array;
     g.setIndex(new BufferAttribute(new IndexArray(all), 1));

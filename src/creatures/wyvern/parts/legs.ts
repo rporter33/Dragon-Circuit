@@ -2,7 +2,7 @@
 // theropod), and a foot with three forward toes and a hallux, all clawed.
 
 import { Vector3 } from 'three';
-import { GeoBuilder, REGION, Skin, ZONE, ellipsoid, tube } from '../builder';
+import { GeoBuilder, REGION, Skin, ZONE, ellipsoid, tube, zoneExtra } from '../builder';
 import { SIDE_SIGN, type RigDef } from '../rig';
 import { SkinChain } from './chain';
 import { bezier3, spike } from './shape';
@@ -16,7 +16,7 @@ const TOES: { az: number; len: number }[] = [
   { az: 0.5, len: 0.85 },
   { az: 1.3, len: 0.3 },
 ];
-const SCUTATE = [0, 0, ZONE.scutate, 0] as const;
+const SCUTATE = zoneExtra(ZONE.scutate);
 
 export function buildLegs(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): void {
   const thighRings = res.lod === 0 ? 4 + res.limbRings : res.lod === 1 ? 3 : 2;

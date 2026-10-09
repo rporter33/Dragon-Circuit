@@ -6,7 +6,8 @@
 // disposes the old resources.
 
 import { Bone, Group, Matrix4, Object3D, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3, type Material } from 'three';
-import type { WyvernLook, WyvernPose } from '../../core/types';
+import type { QualityLevel, WyvernCueKind, WyvernLook, WyvernPose } from '../../core/types';
+import type { QualityProfile } from '../../render/quality';
 import type { WyvernRenderable } from '../../game/contracts';
 import type { TerrainQuery } from '../../core/types';
 import { rigFor, type RigDef } from './rig';
@@ -37,6 +38,14 @@ const _qb = new Quaternion();
 const _qs = new Quaternion();
 const _mInv = new Matrix4();
 const X_AXIS = new Vector3(1, 0, 0);
+const _s = new Vector3();
+
+/**
+ * Attachment points on the wyvern (world space, see Wyvern.socket): the seat (the saddle origin),
+ * the pommel (where the rider's hand grips), and the steps on each forearm a mounting rider puts a
+ * foot on (the anatomy pass places these exactly).
+ */
+export type WyvernSocket = 'seat' | 'pommel' | 'stepL' | 'stepR';
 
 export class Wyvern implements WyvernRenderable {
   readonly group = new Group();
@@ -53,6 +62,8 @@ export class Wyvern implements WyvernRenderable {
   private info!: WyvernMeshInfo;
   private animator!: WyvernAnimator;
   private shapeKey = '';
+  /** Graphics quality (LOD caps and shading detail follow it once the LOD chain lands). */
+  private quality: QualityLevel = 'high';
   private tipOffset = new Vector3();
   private foldRest!: FoldRest;
   private mouthOffset = new Vector3();
@@ -133,6 +144,56 @@ export class Wyvern implements WyvernRenderable {
   /** Debug captures only: cue an idle event now, or hold natural ones off (see WyvernAnimator.cueIdle). */
   cueIdle(event: 'blink' | 'nictitate' | 'tongue' | null, hold = 0): void {
     this.animator.cueIdle(event, hold);
+  }
+
+  /** Play a one-shot behaviour (the Stable's display, the title's present; see WyvernCueKind). */
+  cue(kind: WyvernCueKind): void {
+    this.animator.cue(kind);
+  }
+
+  /** Graphics quality changed: LOD caps, shading detail and shadows follow it. */
+  setQuality(q: QualityProfile): void {
+    this.quality = q.level;
+  }
+
+  /** The current graphics quality level. */
+  get qualityLevel(): QualityLevel {
+    return this.quality;
+  }
+
+  /**
+   * The four ground contacts (left hind, right hind, left wrist, right wrist; world) where the gait
+   * has planted them, and how firmly each is down (1 planted … 0 lifted or in the air), as of the
+   * last update: footstep FX and contact shadows. Returns how many were written.
+   */
+  footContacts(outPos: Vector3[], outW: { [i: number]: number }): number {
+    return this.animator.footContacts(outPos, outW);
+  }
+
+  /** The body's heave from the wingbeat this frame (m, + up): cameras can ride part of it. */
+  bodyHeave(): number {
+    return this.animator.heave;
+  }
+
+  /** World position of an attachment point (see WyvernSocket), as of the last update; null if unknown. */
+  socket(name: WyvernSocket, out: Vector3): Vector3 | null {
+    if (!this.bones.length) return null;
+    if (name === 'seat') return this.saddle.getWorldPosition(out);
+    if (name === 'pommel') {
+      const grip = this.saddle.userData.gripOffset as Vector3 | undefined;
+      if (!grip) return null;
+      this.saddle.updateWorldMatrix(true, false);
+      return out.copy(grip).applyMatrix4(this.saddle.matrixWorld);
+    }
+    // A step on the forearm, 40% of the way from the elbow to the wrist.
+    const w = this.rig.idx.wings[name === 'stepL' ? 0 : 1];
+    const elbow = this.bones[w.forearm];
+    const wrist = this.bones[w.hand];
+    elbow.updateWorldMatrix(true, false);
+    wrist.updateWorldMatrix(false, false);
+    elbow.getWorldPosition(out);
+    wrist.getWorldPosition(_s);
+    return out.lerp(_s, 0.4);
   }
 
   dispose(): void {

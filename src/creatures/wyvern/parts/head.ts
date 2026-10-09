@@ -9,7 +9,7 @@
 
 import { Vector3 } from 'three';
 import { smoothstep } from '../../../core/math';
-import { GeoBuilder, REGION, Skin, ZONE, ellipsoid, tube } from '../builder';
+import { GeoBuilder, REGION, Skin, ZONE, ellipsoid, tube, zoneExtra } from '../builder';
 import { TONGUE, type RigDef } from '../rig';
 import { bezier3, keyed, spike, spow } from './shape';
 import { RES, type Res } from './res';
@@ -38,7 +38,7 @@ const LOWER_SIZE = [0.95, 1.0, 1.1, 1.6, 0.9, 1.05, 0.85, 0.8];
 const UPPER_FEW = [0, 2, 3, 5, 7];
 const LOWER_FEW = [1, 3, 5, 6];
 
-const zone = (z: number) => [0, 0, z, 0] as const;
+const zone = zoneExtra;
 /** Segments along each lid rim arc. */
 const LID_SEGS = 12;
 

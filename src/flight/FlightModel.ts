@@ -463,6 +463,8 @@ export class FlightModel {
   private gustTick = 0;
   /** Roll rate the difference in vertical air across the span asks for (rad/s). */
   private gustRate = 0;
+  /** Vertical air at each wingtip (m/s) at the last gust sample. */
+  private readonly tipUp = { l: 0, r: 0 };
   /** Smoothed vertical air at the body (m/s): thermals and ridge lift make for a restful glide. */
   private updraft = 0;
   private contactInfo: ContactInfo = { soft: false };
@@ -503,6 +505,8 @@ export class FlightModel {
     this.stallRaw = 0;
     this.sinceStall = 99;
     this.gustRate = 0;
+    this.tipUp.l = 0;
+    this.tipUp.r = 0;
     this.clearance = Infinity;
     this.clearanceMeasured = -Infinity;
     this.groundTick = 0;
@@ -530,6 +534,11 @@ export class FlightModel {
    * How much of a beat the wyvern can put in right now: full until the meter runs dry, then
    * fading to a weak (but never refused) stroke.
    */
+  /** Rising air at each wingtip (m/s, left and right; sampled every 4th step), for the animation. */
+  get tipUpdraft(): { readonly l: number; readonly r: number } {
+    return this.tipUp;
+  }
+
   get effort(): number {
     return lerp(T.weakBeat, 1, smoothstep(0, T.weakBand, this.state.stamina));
   }
@@ -642,6 +651,8 @@ export class FlightModel {
       const upL = env.windAt(tmp, tipWind).dot(up);
       tmp.copy(s.position).addScaledVector(left, -reachTip);
       const upR = env.windAt(tmp, tipWind).dot(up);
+      this.tipUp.l = upL;
+      this.tipUp.r = upR;
       this.gustRate = (T.gustRoll * (17 / (b.mass / b.wingArea)) * (upL - upR)) / Math.max(V, 10);
     }
 

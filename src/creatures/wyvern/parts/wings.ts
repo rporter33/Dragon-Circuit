@@ -22,7 +22,8 @@ import { RES, sides, steps, type Res } from './res';
 const FOLD_W = 0.55;
 /** Fold helper weight over sector C (t along the arm, v from the arm to the trailing edge). */
 export const foldWeight = (t: number, v: number) => FOLD_W * Math.sin(Math.PI * v) * Math.pow(1 - t, 0.7);
-const _ext: [number, number, number, number] = [0, 0, 0, 0];
+/** aExtra scratch (x AO open, y pleat valley; see builder.ts). */
+const _ext: [number, number, number, number] = [1, 0, 0, 0];
 
 /** How far below the flank's equator the membrane root runs half-way back (fraction of lower). */
 const ROOT_DROP = 0.3;
