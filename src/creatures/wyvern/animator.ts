@@ -622,9 +622,12 @@ export class WyvernAnimator {
     // behind for a moment (the neck bows), then catches up.
     const bodyY = heave + gaitBob + dipV;
     const lagY = this.neckLag.step(bodyY, dt);
-    // Bend the neck so the head sits part of the way back toward where the spring says it should
-    // be (more on heavier breeds).
-    const neckSag = clamp(((0.55 + 0.15 * heft) * (bodyY - lagY)) / this.neckReach, -0.12, 0.12);
+    // Bend the neck so the head sits most of the way back toward where the spring says it should
+    // be (more on heavier breeds). Slower beats (the retuned 1.45 Hz harrier) need the stronger
+    // take-up to keep the head steadier than the saddle. Known gap: on the slowest beats (galewing
+    // 0.95 Hz) the chest's pitch swing still lifts the head with the body, because this only
+    // offsets the trunk's heave; the dragon fidelity pass replaces it with a head-height hold.
+    const neckSag = clamp(((0.75 + 0.15 * heft) * (bodyY - lagY)) / this.neckReach, -0.16, 0.16);
     const neckN = I.neck.length;
     this.toModel(pose.lookTarget, _v);
     _v.sub(this.modelP[I.head]);

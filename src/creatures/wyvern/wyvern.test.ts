@@ -461,6 +461,8 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
   });
 
   it('holds the head steadier than the body, trailing the shoulders it hangs from (neck lag)', () => {
+    // The harrier at its retuned 1.45 Hz beat. (All four breeds are the dragon fidelity pass's job:
+    // the galewing's 0.95 Hz beat still lifts the head with the chest.)
     const h = beat('harrier');
     expect(h.headRange).toBeLessThan(h.saddleRange * 0.8);
     expect(h.headRange).toBeLessThan(h.shoulderRange * 0.8);
