@@ -10,6 +10,7 @@ import { BREED_DEFAULT_COLORS, DEFAULT_WYVERN, PALETTES, cosmeticsFor } from '..
 import { Wyvern } from './Wyvern';
 import {
   BELLY_MAX_LUMINANCE,
+  BREED_INDEX,
   PATTERN_IDS,
   SCALES_MAX_LUMINANCE,
   applyLookUniforms,
@@ -237,11 +238,10 @@ describe('every wyvern program declares what it reads', () => {
   const declared = (src: string, name: string) =>
     new RegExp(`^\\s*(flat\\s+)?(uniform|varying)\\s+\\w+\\s+${name}\\s*[;[]|^\\s*(float|vec2|vec3|vec4)\\s+${name}\\s*[=;]`, 'm').test(src);
   const used = (src: string, name: string) => new RegExp(`\\b${name}\\b`).test(src);
-  it('body, membrane and the ghost shell', () => {
+  it('body, membrane (every detail level) and the ghost shell', () => {
     const u = createWyvernUniforms();
     const mats = [
-      createBodyMaterial(u),
-      createMembraneMaterial(u),
+      ...([0, 1, 2] as const).flatMap((d) => [createBodyMaterial(u, { detail: d }), createMembraneMaterial(u, { detail: d })]),
       createGhostMaterial(u, false),
       createGhostMaterial(u, true),
     ];
@@ -251,4 +251,37 @@ describe('every wyvern program declares what it reads', () => {
     }
   });
 
+  it('compiles each detail level as its own program', () => {
+    const u = createWyvernUniforms();
+    const keys = new Set(([0, 1, 2] as const).flatMap((d) => [createBodyMaterial(u, { detail: d }), createMembraneMaterial(u, { detail: d })].map((m) => m.customProgramCacheKey())));
+    expect(keys.size).toBe(6);
+    expect((createBodyMaterial(u).defines as Record<string, number>).DW_DETAIL).toBe(2);
+    expect((createBodyMaterial(u, { detail: 0 }).defines as Record<string, number>).DW_DETAIL).toBe(0);
+  });
+});
+
+describe('a hide that reads at gameplay distance', () => {
+  /** CIE L* (0..1) of an sRGB hex color. */
+  const lstar = (c: string) => {
+    const y = luminance(hex(c));
+    return (y > 0.008856 ? 116 * Math.cbrt(y) - 16 : 903.3 * y) / 100;
+  };
+
+  it('gives every breed default a mantle a full value step under its primary', () => {
+    for (const [id, c] of Object.entries(BREED_DEFAULT_COLORS)) {
+      expect(lstar(c.primary) - lstar(c.secondary), id).toBeGreaterThanOrEqual(0.2);
+    }
+  });
+
+  it('tells the body shader the breed, for its natural markings', () => {
+    const ids = Object.keys(BREED_DEFAULT_COLORS);
+    expect(Object.keys(BREED_INDEX).sort()).toEqual([...ids].sort());
+    expect(new Set(Object.values(BREED_INDEX)).size).toBe(ids.length);
+    const u = createWyvernUniforms();
+    for (const id of ids) {
+      applyLookUniforms(u, { ...DEFAULT_WYVERN, breed: id as keyof typeof BREED_DEFAULT_COLORS });
+      expect(u.uBreed.value).toBe(BREED_INDEX[id]);
+    }
+    expect(compiled(createBodyMaterial(u)).uniforms).toHaveProperty('uBreed');
+  });
 });

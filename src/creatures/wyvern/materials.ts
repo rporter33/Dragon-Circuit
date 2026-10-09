@@ -4,6 +4,10 @@
 //   body      region colors (skin, horn, claws, eyes, mouth, saddle leather/metal/cloth/wood,
 //             armor plates) and the procedural skin patterns, computed per fragment from the
 //             bind-pose (body-space) position, so markings stay glued to the animated body.
+//             The hide reads at every distance through a detail ladder (keeled scales, then
+//             rings of scale rows and paravertebral scutes, then soft mottling, each faded to
+//             its own mean), a countershaded back with a darker spine, and each breed's own
+//             markings on its natural coat. DW_DETAIL (0..2) drops the fine layers for LODs.
 //   membrane  wings, sails, fans, fins and feathers: veins, darker trailing edges, a fluttering
 //             trailing edge, and the signature backlight: when the sun is behind a membrane as
 //             seen from the camera, light glows through it (fake subsurface transmission).
@@ -38,6 +42,14 @@ export const PATTERN_IDS: Record<string, number> = {
   gilded: 6,
 };
 
+/** Breed ids as the body shader knows them (uBreed): each breed's natural markings. */
+export const BREED_INDEX: Record<string, number> = {
+  harrier: 0,
+  skimmer: 1,
+  galewing: 2,
+  ironback: 3,
+};
+
 /** Uniforms shared by the body and membrane materials of one wyvern. */
 export interface WyvernUniforms {
   uPrimary: IUniform<Color>;
@@ -49,6 +61,8 @@ export interface WyvernUniforms {
   uCloth: IUniform<Color>;
   uHorn: IUniform<Color>;
   uPattern: IUniform<number>;
+  /** Breed index (BREED_INDEX): which natural markings the coat carries. */
+  uBreed: IUniform<number>;
   uEyeCenter: IUniform<Vector3>;
   uEyeAxis: IUniform<Vector3>;
   uEyeRadius: IUniform<number>;
@@ -108,6 +122,7 @@ export function createWyvernUniforms(): WyvernUniforms {
     uCloth: { value: new Color() },
     uHorn: { value: new Color() },
     uPattern: num(0),
+    uBreed: num(0),
     uEyeCenter: { value: new Vector3() },
     uEyeAxis: { value: new Vector3(1, 0, 0) },
     uEyeRadius: num(0.1),
@@ -162,6 +177,7 @@ export function applyLookUniforms(u: WyvernUniforms, look: WyvernLook): void {
   // Horn: a bone color nudged toward the secondary scales.
   u.uHorn.value.set('#d9c9a6').lerp(_c.set(look.secondary), 0.18);
   u.uPattern.value = PATTERN_IDS[look.pattern] ?? 0;
+  u.uBreed.value = BREED_INDEX[look.breed] ?? 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -209,7 +225,13 @@ vec3 dwCells(vec3 p) {
 }
 `;
 
-const BODY_PARS_FRAG = /* glsl */ `
+const DETAIL_DEFAULT = /* glsl */ `
+#ifndef DW_DETAIL
+#define DW_DETAIL 2
+#endif
+`;
+
+const BODY_PARS_FRAG = /* glsl */ `${DETAIL_DEFAULT}
 uniform vec3 uPrimary;
 uniform vec3 uSecondary;
 uniform vec3 uBelly;
@@ -219,6 +241,8 @@ uniform vec3 uSaddle;
 uniform vec3 uCloth;
 uniform vec3 uHorn;
 uniform float uPattern;
+// Breed (0 harrier, 1 skimmer, 2 galewing, 3 ironback): its natural markings.
+uniform float uBreed;
 uniform vec3 uEyeCenter;
 uniform vec3 uEyeAxis;
 uniform float uEyeRadius;
@@ -270,64 +294,136 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   // the keratin of claws and teeth; the belly is masked below by anatomy.
   dwRimScale = region == 5 ? 0.15 : (region >= 4 && region <= 7) || region == 11 ? 0.3 : region == 2 ? 0.5 : region == 9 || region == 13 ? 0.25 : 1.0;
   vec3 bp = vBodyPos / uBodyScale;
+  // Footprint of a pixel in body space (body-scale units): every pattern below fades to its own
+  // mean as its features shrink toward a pixel, so nothing sparkles and nothing drifts in value.
+  vec3 bpw = fwidth(bp);
+  float fp = length(bpw);
   float n1 = dwVnoise(bp * 2.3);
+#if DW_DETAIL >= 1
   float n2 = dwVnoise(bp * 6.1 + 3.1);
-  // Scale coordinates, faded out by their on-screen frequency so they never shimmer at range
-  // (plain painterly hide there). On the body tube: along it (rows ~13 cm) and around it (40
-  // rows, so smaller on the neck and in rings down the tail); elsewhere a granular 3D cell.
+#else
+  float n2 = 0.5;
+#endif
+  float n1f = 1.0 - smoothstep(0.12, 0.3, fp);
+  float n2f = 1.0 - smoothstep(0.05, 0.12, fp);
+  // Scale coordinates, faded out by their on-screen frequency so they never shimmer at range.
+  // On the body tube: along it (rows ~13 cm) and around it (40 rows, so smaller on the neck and
+  // in rings down the tail); elsewhere a granular 3D cell.
   vec2 tq = vec2(vUv2.x / (0.13 * uBodyScale), (vMat.w - 2.0) * 20.0);
   dwTq = tq;
   dwReliefTq = vec2(0.0);
   dwReliefBp = vec3(0.0);
   dwThin = 0.0;
   vec2 tw = fwidth(tq);
-  float tubeFade = 1.0 - smoothstep(0.16, 0.42, length(tw));
+  float ft = length(tw);
+  float tubeFade = 1.0 - smoothstep(0.16, 0.42, ft);
   vec3 sq = bp * vec3(11.0, 11.0, 8.0);
-  float scaleFade = 1.0 - smoothstep(0.16, 0.4, length(fwidth(sq)));
+  float scaleFade = 1.0 - smoothstep(0.16, 0.4, length(bpw * vec3(11.0, 11.0, 8.0)));
   if (region == 0 || region == 8) {
     float belly = vMat.y;
     float dorsal = vMat.z;
     float s = vUv2.x / uBodyScale;
-    // Countershading: a touch darker along the spine.
-    vec3 col = mix(uPrimary, uSecondary, dorsal * 0.28);
-    // Painterly value variation.
-    col *= 0.93 + 0.12 * n1 + 0.05 * n2;
+    bool onTube = vMat.w > 0.5;
+    // Angle from the spine on the tube (0 on the spine, 0.5 mid-flank, 1 under the belly); its
+    // seam runs under the belly, so features keyed to it are kept to the back and flanks.
+    float ang = abs(vMat.w - 2.0);
+    float angW = tw.y / 20.0;
     int pat = int(uPattern + 0.5);
+    int breed = int(uBreed + 0.5);
+    // Countershading: the back a full value step under the flanks (dorsal 0.47 of the way to the
+    // secondary), and a darker stripe down the spine.
+    vec3 col = mix(uPrimary, uSecondary, dorsal * 0.47);
+    float spine = onTube ? (1.0 - smoothstep(0.035 - angW, 0.085 + angW, ang)) * smoothstep(0.6, 0.9, dorsal) : smoothstep(0.88, 1.0, dorsal);
+    col *= 1.0 - 0.16 * spine;
+    // Painterly value variation: soft mottling (~40 cm) that holds to the chase camera and a
+    // finer grain, each faded to its mean by footprint.
+    col *= 1.0 + 0.14 * (n1 - 0.5) * n1f + 0.08 * (n2 - 0.5) * n2f;
+    // The darkest coat tone: saddleback mantles and the breeds' markings.
+    vec3 mantle = min(uSecondary, 0.62 * uPrimary);
     if (pat == 1) {
       // Saddleback: a dark mantle over the shoulders and back, ragged edge.
       float along = smoothstep(-1.9, -1.2, bp.z) * (1.0 - smoothstep(1.2, 2.2, bp.z));
-      float m = smoothstep(0.38, 0.55, dorsal * 0.85 + 0.2 * along + 0.18 * (n1 - 0.5) + 0.08 * (n2 - 0.5) + 0.12 * along - 0.12);
+      float m = smoothstep(0.38, 0.55, dorsal * 0.85 + 0.2 * along + 0.18 * (n1 - 0.5) + 0.08 * (n2 - 0.5) * n2f + 0.12 * along - 0.12);
       m *= 1.0 - belly;
-      col = mix(col, uSecondary * (0.9 + 0.1 * n2), m * (0.35 + 0.65 * along));
+      col = mix(col, mantle * (0.92 + 0.16 * (n2 - 0.5) * n2f), m * (0.6 + 0.4 * along));
       // The mantle continues as a stripe down the tail.
-      float tailStripe = smoothstep(0.62, 0.8, dorsal + 0.1 * (n2 - 0.5)) * smoothstep(-1.9, -2.6, bp.z);
-      col = mix(col, uSecondary, tailStripe * 0.85);
+      float tailStripe = smoothstep(0.62, 0.8, dorsal + 0.1 * (n2 - 0.5) * n2f) * smoothstep(-1.9, -2.6, bp.z);
+      col = mix(col, mantle, tailStripe * 0.85);
+      // Each breed's own markings on its natural coat, keyed to the anatomy (body space), bold
+      // enough to read as shapes from the chase camera.
+      if (breed == 0) {
+        // Harrier: dark chevrons pointing forward down the back, closing into bands on the tail.
+        float cv = (bp.z + 1.1 * abs(bp.x)) / 0.62;
+        float cw = (bpw.z + 1.1 * bpw.x) / 0.62;
+        float fc = fract(cv);
+        float bar = smoothstep(0.0, 0.07 + cw, fc) * (1.0 - smoothstep(0.3, 0.37 + cw, fc));
+        bar = mix(0.3, bar, 1.0 - smoothstep(0.25, 0.5, cw));
+        float wv = onTube ? smoothstep(0.3, 0.75, dorsal) * (1.0 - smoothstep(0.9, 1.4, bp.z)) * smoothstep(-6.8, -3.2, bp.z) : 0.0;
+        col = mix(col, mantle * 0.5, bar * wv * 0.85);
+      } else if (breed == 1) {
+        // Skimmer: a pale stripe along each flank from the jaw down the tail.
+        float st = smoothstep(0.34 - angW, 0.39 + angW, ang) * (1.0 - smoothstep(0.47 - angW, 0.52 + angW, ang));
+        st *= onTube ? smoothstep(-7.5, -3.5, bp.z) : 0.0;
+        col = mix(col, mix(uBelly, uPrimary, 0.25), st * 0.85);
+      } else if (breed == 2) {
+        // Galewing: dark bars across the arm, the wing's leading edge (like a falcon's), and a
+        // pale stripe down the side of the throat.
+        if (!onTube && vUv2.x > 19.5) {
+          float a = (vUv2.x - 20.0) / uBodyScale;
+          float bv = a / 0.42;
+          float bw = tw.x * 0.13 / 0.42;
+          float fb = fract(bv);
+          float bar = smoothstep(0.0, 0.08 + bw, fb) * (1.0 - smoothstep(0.42, 0.5 + bw, fb));
+          bar = mix(0.45, bar, 1.0 - smoothstep(0.25, 0.5, bw));
+          col = mix(col, mantle * 0.7, bar * smoothstep(0.4, 0.9, a) * 0.85);
+        }
+        float st = smoothstep(0.42 - angW, 0.46 + angW, ang) * (1.0 - smoothstep(0.54 - angW, 0.59 + angW, ang));
+        st *= onTube ? smoothstep(1.05, 1.5, bp.z) : 0.0;
+        col = mix(col, uBelly, st * 0.85);
+      }
     } else if (pat == 2) {
       // Tiger stripes across the body, tapering down the flanks.
       float wob = 0.55 * (n1 - 0.5) + 0.25 * (n2 - 0.5);
       float band = 0.5 + 0.5 * sin(s * 4.2 + wob * 3.0);
+      float bwd = fwidth(band);
       float thr = mix(0.98, 0.62, clamp(dorsal * 1.15 + 0.15, 0.0, 1.0));
-      float stripe = smoothstep(thr - 0.04, thr + 0.02, band) * (1.0 - smoothstep(0.2, 0.6, belly));
+      float stripe = smoothstep(thr - 0.04 - bwd, thr + 0.02 + bwd, band) * (1.0 - smoothstep(0.2, 0.6, belly));
       col = mix(col, uSecondary * 0.8, stripe);
     } else if (pat == 3) {
       // Dapple: bold rounded blotches like a dappled horse — big dark ones ringed a shade
       // darker, smaller pale ones between — readable from the chase camera.
       float side = (1.0 - 0.85 * belly) * (0.65 + 0.35 * dorsal);
       vec3 c = dwCells(bp * 1.6 + n1 * 0.45);
-      float dark = (1.0 - smoothstep(0.26, 0.4, c.x)) * step(0.4, c.z);
-      float ring = smoothstep(0.18, 0.3, c.x) * (1.0 - smoothstep(0.32, 0.4, c.x)) * step(0.4, c.z);
+      float cw = fp * 1.6;
+      float dark = (1.0 - smoothstep(0.26 - cw, 0.4 + cw, c.x)) * step(0.4, c.z);
+      float ring = smoothstep(0.18, 0.3, c.x) * (1.0 - smoothstep(0.32, 0.4 + cw, c.x)) * step(0.4, c.z) * (1.0 - smoothstep(0.08, 0.2, cw));
+#if DW_DETAIL >= 1
       vec3 c2 = dwCells(bp * 3.0 + 2.0 + n2 * 0.4);
-      float light = (1.0 - smoothstep(0.14, 0.26, c2.x)) * step(0.45, c2.z) * (1.0 - dark);
+      float light = (1.0 - smoothstep(0.14, 0.26 + fp * 3.0, c2.x)) * step(0.45, c2.z) * (1.0 - dark);
+      light = mix(0.07, light, 1.0 - smoothstep(0.1, 0.25, fp * 3.0));
+#else
+      float light = 0.07 * (1.0 - dark);
+#endif
       vec3 spot = mix(uSecondary, uPrimary * 0.5, 0.25);
       col = mix(col, spot * 0.9, dark * side * 0.92);
       col = mix(col, spot * 0.62, ring * side * 0.5);
       col = mix(col, mix(uPrimary, uBelly, 0.75) * 1.15, light * side * 0.85);
     } else if (pat == 4) {
-      // Ember veins: a dark hide split by thin glowing seams that brighten after dusk.
+      // Ember veins: a dark hide split by thin glowing seams that brighten after dusk. The seams
+      // widen with their on-screen size and fade to their mean glow, so they never sparkle.
       vec3 c = dwCells(bp * 1.5 + vec3(n1 * 0.7));
-      float seam = 1.0 - smoothstep(0.012, 0.05, c.y - c.x);
+      float e1 = c.y - c.x;
+      float ew = fwidth(e1);
+      float seam = 1.0 - smoothstep(0.012, 0.05 + 1.5 * ew, e1);
+      seam = mix(seam, 0.16, smoothstep(0.08, 0.2, fp * 1.5));
+#if DW_DETAIL >= 1
       vec3 c2 = dwCells(bp * 3.4 + 5.0);
-      float fine = (1.0 - smoothstep(0.008, 0.03, c2.y - c2.x)) * 0.6 * step(0.5, c2.z);
+      float e2 = c2.y - c2.x;
+      float fine = (1.0 - smoothstep(0.008, 0.03 + 1.5 * fwidth(e2), e2)) * 0.6 * step(0.5, c2.z);
+      fine = mix(fine, 0.03, smoothstep(0.06, 0.15, fp * 3.4));
+#else
+      float fine = 0.03;
+#endif
       float v = max(seam, fine) * (1.0 - belly * 0.7);
       col = mix(col * 0.5, uSecondary * 0.45, 0.5);
       float flick = 0.8 + 0.2 * sin(uTime * 1.3 + c.z * 30.0);
@@ -335,35 +431,37 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
       col = mix(col, ember * 0.75, v * 0.7);
       emit += ember * v * (0.12 + 1.8 * uNight) * flick;
     } else if (pat == 5) {
-      // Starfield: pale freckles, densest along the back, twinkling a little at night.
+      // Starfield: pale freckles, densest along the back, twinkling a little at night; the
+      // freckles fade to their mean as they shrink toward a pixel.
       vec3 c = dwCells(bp * 4.1);
       float r = 0.13 + 0.12 * c.z;
-      float star = (1.0 - smoothstep(r, r + 0.04, c.x)) * step(0.35 - 0.35 * dorsal, c.z);
+      float star = (1.0 - smoothstep(r, r + 0.04 + fp * 4.1, c.x)) * step(0.35 - 0.35 * dorsal, c.z);
+      star = mix(star, 0.06, smoothstep(0.08, 0.2, fp * 4.1));
+#if DW_DETAIL >= 1
       vec3 c2 = dwCells(bp * 9.0 + 4.0);
-      star = max(star, (1.0 - smoothstep(0.1, 0.15, c2.x)) * step(0.3, c2.z) * (0.55 + 0.45 * dorsal));
+      float star2 = (1.0 - smoothstep(0.1, 0.15 + fp * 9.0, c2.x)) * step(0.3, c2.z) * (0.55 + 0.45 * dorsal);
+      star = max(star, mix(star2, 0.0, smoothstep(0.08, 0.2, fp * 9.0)));
+#endif
       col = mix(col * 0.72, uSecondary * 0.8, 0.35 * dorsal);
-      vec3 pale = min(mix(uBelly, vec3(1.0), 0.7) * 1.4, vec3(1.0));
+      // Pale, never white: a day-lit freckle near 1.0 read as a spark.
+      vec3 pale = min(mix(uBelly, vec3(1.0), 0.7) * 1.4, vec3(0.6));
       col = mix(col, pale, star * (1.0 - belly));
       emit += pale * star * (1.0 - belly) * uNight * 0.9 * (0.7 + 0.3 * sin(uTime * 2.0 + c.z * 40.0));
-    } else if (pat == 6) {
-      // Gilded scales: overlapping fish-scale rows (free edge toward the tail), darker at the
-      // base, with gold rims along the back that catch the sun.
-      vec2 uv = vec2(vUv2.y * 5.5, s * 6.0);
-      vec2 g = floor(uv);
-      vec2 f = fract(vec2(uv.x + 0.5 * mod(g.y, 2.0), uv.y));
-      float d = length(vec2(f.x - 0.5, f.y));
-      float rim = smoothstep(0.38, 0.47, d) * (1.0 - smoothstep(0.5, 0.58, d));
-      col *= 0.8 + 0.25 * smoothstep(0.1, 0.5, d);
-      float tip = rim * smoothstep(0.1, 0.7, dorsal + 0.3 * (1.0 - belly) - 0.2);
-      vec3 goldCol = vec3(1.0, 0.78, 0.32);
-      col = mix(col, goldCol, tip * 0.9);
-      gold = tip;
     }
-    if (region == 0 && vMat.w > 0.5) {
+    // Gilded: the free edges of the keeled scales themselves catch gold (one scale language),
+    // a gold sheen of the same mean where the scales are too small to draw.
+    float gilt = pat == 6 ? smoothstep(0.1, 0.7, dorsal + 0.3 * (1.0 - belly) - 0.2) : 0.0;
+    float giltRim = 0.07;
+    // Gold on the free edges of the fine scales up close, on the rear edges of the scale rings
+    // further out, a sheen of the same mean beyond.
+    float fineRim = 0.07;
+    float ringRim = 0.12;
+    if (region == 0 && onTube) {
       // Keeled dorsal scales on the body: staggered rows of overlapping scales running nose to
       // tail, each a round-tipped shield whose free rear edge overlaps the next, a raised keel
       // down its middle (strongest along the back); they flatten down the flanks and give way
       // to the broad ventral scutes.
+#if DW_DETAIL >= 2
       if (tubeFade > 0.001) {
         float row = floor(tq.y);
         float along = tq.x + 0.5 * mod(row, 2.0);
@@ -381,7 +479,9 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
         float rear = smoothstep(0.05, 0.9, f.y) * inside;
         float w = tubeFade * (1.0 - smoothstep(0.2, 0.55, belly));
         float shade = (1.0 - 0.24 * max(gap, 0.6 * side)) * mix(0.9, 1.06, rear) + 0.14 * keel;
-        col *= mix(1.0, shade, w);
+        // Normalised to its mean (0.935): as the scales fade out the hide keeps its value.
+        col *= mix(1.0, shade * 1.0695, w);
+        fineRim = gap * smoothstep(0.25, 0.75, f.y) * 1.25;
         // Relief (shading/light.ts RELIEF_APPLY): the analytic gradient of a smooth height:
         // each scale rises toward its free edge, keeled down the middle, dropping into the
         // crevice at the edge and the seam between rows. u across the row, v along it.
@@ -396,22 +496,69 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
         float sw = 0.08 + 1.5 * tw.y;
         float hv = ri * (0.45 + 0.6 * ke * dwDss(0.1, 0.6, f.y)) - top * rdi;
         float hu = ri * 0.6 * rk * (-2.0 * f.x / 0.0121) + top * rdi * dDu - 0.3 * dwDss(0.5 - sw, 0.5, abs(f.x)) * sign(f.x);
-        float wr = w * (1.0 - smoothstep(0.08, 0.2, length(tw)));
+        float wr = w * (1.0 - smoothstep(0.08, 0.2, ft));
         dwReliefTq = wr * vec2(hv, hu);
       }
-    } else if (region == 0 && scaleFade > 0.001) {
+#endif
+#if DW_DETAIL >= 1
+      // Detail ladder: as the scales drop under a few pixels they merge into rings three rows
+      // long (the whorls of a lizard's tail, about 5% in value), which in turn give way to the
+      // mottling above; each layer normalised to its mean.
+      {
+        float fb = fract(tq.x / 3.0);
+        float bwd = tw.x / 3.0;
+        // A ramp rising to each block's rear edge, the drop anti-aliased; mean 0.5.
+        float blk = smoothstep(0.1, 0.9, fb) * (1.0 - smoothstep(0.96 - 1.5 * bwd, 1.0, fb));
+        ringRim = mix(smoothstep(0.8, 0.92, fb) * (1.0 - smoothstep(0.96 - 1.5 * bwd, 1.0, fb)), 0.12, smoothstep(0.15, 0.35, bwd));
+        float bandW = (1.0 - tubeFade) * (1.0 - smoothstep(0.15, 0.35, bwd)) * (1.0 - smoothstep(0.2, 0.55, belly));
+        col *= 1.0 + 0.1 * (blk - 0.48) * bandW;
+      }
+      // Paravertebral scutes: two rows of enlarged keeled scutes either side of the spine (about
+      // 40 cm, as on monitors and crocodilians), pale keels down their middles. A faint grouping
+      // under the fine scales up close, the main structure of the back from the chase camera.
+      // (The ironback's osteoderms are geometry and take this role.)
+      if (breed != 3) {
+        vec2 mq = vec2(tq.x / 3.0, tq.y / 2.0);
+        vec2 mw = tw / vec2(3.0, 2.0);
+        float mrow = floor(mq.y);
+        float stag = 0.5 * mod(mrow, 2.0);
+        vec2 mf = vec2(fract(mq.y) - 0.5, fract(mq.x + stag));
+        float h = dwHash13(vec3(mrow, floor(mq.x + stag), 3.7));
+        float ex = abs(mf.x) * 2.0;
+        float aw = 2.0 * max(mw.x, mw.y);
+        float groove = smoothstep(0.8 - aw, 0.97 + aw, max(ex, abs(mf.y - 0.5) * 2.0));
+        float keel = (1.0 - smoothstep(0.0, 0.14 + aw, ex)) * smoothstep(0.15, 0.85, mf.y);
+        float rear = smoothstep(0.1, 0.95, mf.y);
+        float mv = ((0.94 + 0.12 * h) * (1.0 - 0.3 * groove) * (0.94 + 0.1 * rear) + 0.14 * keel) * 1.0770;
+        float rows = (1.0 - smoothstep(3.3, 4.0, abs(tq.y))) * smoothstep(0.55, 0.85, dorsal) * (1.0 - smoothstep(1.35, 1.75, bp.z)) * smoothstep(-4.8, -2.8, bp.z);
+        float mW = rows * mix(1.0, 0.3, tubeFade) * (1.0 - smoothstep(0.25, 0.5, aw));
+        col *= mix(1.0, mv, mW);
+      }
+#endif
+      giltRim = mix(ringRim, fineRim, tubeFade);
+    }
+#if DW_DETAIL >= 2
+    else if (region == 0 && scaleFade > 0.001) {
       // Head and limbs: small granular scales, softer.
       vec3 r2;
       vec4 cv = dwScaleCell(sq, r2);
       float w = scaleFade * (1.0 - smoothstep(0.2, 0.6, belly));
       float gap = 1.0 - smoothstep(0.0, 0.1, cv.w);
-      col *= mix(1.0, (1.0 - 0.16 * gap) * mix(0.95, 1.03, smoothstep(-0.35, 0.35, cv.z)), w);
+      col *= mix(1.0, (1.0 - 0.16 * gap) * mix(0.95, 1.03, smoothstep(-0.35, 0.35, cv.z)) * 1.0363, w);
+      giltRim = mix(0.07, gap * 0.8, scaleFade);
       // Relief: domed scales sloping back (z) into crevices between cells; analytic gradient in
       // the cell lattice, carried to body space.
       vec3 dw = cv.xyz / max(length(cv.xyz), 1e-4) - r2 / max(length(r2), 1e-4);
       vec3 gq = vec3(0.0, 0.0, -0.3 * dwDss(-0.35, 0.35, cv.z)) + 0.5 * dwDss(0.0, 0.2, cv.w) * dw;
-      float wr = w * (1.0 - smoothstep(0.08, 0.2, length(fwidth(sq))));
+      float wr = w * (1.0 - smoothstep(0.08, 0.2, length(bpw * vec3(11.0, 11.0, 8.0))));
       dwReliefBp = wr * gq * vec3(11.0, 11.0, 8.0) / uBodyScale;
+    }
+#endif
+    if (pat == 6) {
+      vec3 goldCol = vec3(0.86, 0.66, 0.27);
+      col *= 0.9;
+      col = mix(col, goldCol, clamp(giltRim, 0.0, 1.0) * gilt * 0.9);
+      gold = giltRim * gilt;
     }
     // Belly: a soft painterly boundary and faint transverse scutes. The pale ventral side takes
     // little rim (it faces down and away; a bright rim there read as a glowing tube).
@@ -423,19 +570,21 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
     // its free rear edge and a dark groove where the next one tucks under. Lines widen with their
     // on-screen size and fade to the plates' mean value, so they never alias or drift in value.
     float scF = s * 2.6;
-    float scW = fwidth(scF);
+    float scW = tw.x * 0.13 * 2.6;
     float scR = fract(scF);
     float scGroove = 1.0 - smoothstep(0.0, 0.05 + 1.5 * scW, min(scR, 1.0 - scR) - 0.01);
     float scFace = smoothstep(0.05, 0.85, scR);
     float scShade = (1.0 - 0.3 * scGroove) * (0.9 + 0.12 * scFace);
-    scShade = mix(0.93, scShade, 1.0 - smoothstep(0.12, 0.4, scW));
-    col = mix(col, uBelly * scShade * (0.96 + 0.06 * n2), bm);
+    scShade = mix(0.946, scShade, 1.0 - smoothstep(0.12, 0.4, scW));
+    col = mix(col, uBelly * scShade * (1.0 + 0.12 * (n2 - 0.5) * n2f), bm);
     if (region == 8) {
-      // Osteoderms: bony scutes in the secondary tone, their keels worn pale like old bone, the
-      // rims shading down into the gaps between them (aUv2.x: 0 on the keel, 1 at the rim).
-      vec3 plate = mix(uSecondary, uPrimary, 0.3) * (0.86 + 0.14 * n2);
-      plate = mix(plate, mix(uHorn, plate, 0.45), (1.0 - smoothstep(0.0, 0.3, vUv2.x)) * 0.6);
-      plate *= 1.0 - 0.3 * smoothstep(0.75, 1.0, vUv2.x);
+      // Osteoderms: bony scutes in the secondary tone, their keels worn pale like old bone (the
+      // ironback's signature, read from the chase camera), the rims shading down into the gaps
+      // between them (aUv2.x: 0 on the keel, 1 at the rim).
+      vec3 plate = mix(uSecondary, uPrimary, 0.3) * (0.93 + 0.14 * (n2 - 0.5) * n2f);
+      float kw = fwidth(vUv2.x);
+      plate = mix(plate, mix(uHorn, plate, 0.3), (1.0 - smoothstep(0.0, 0.3 + kw, vUv2.x)) * 0.8);
+      plate *= 1.0 - 0.3 * smoothstep(0.75 - kw, 1.0, vUv2.x);
       col = plate;
     }
     return col;
@@ -452,7 +601,7 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
     // Claws: dark keratin as on monitors and crocodilians, a worn horn tone at the base going
     // near-black at the tips (never the palest thing on the animal: an ivory near 0.9 read as LED
     // sparks at every foot, and even a mid horn out-shone the hide in the foot close-ups).
-    return mix(vec3(0.3, 0.25, 0.19), vec3(0.1, 0.085, 0.075), smoothstep(0.3, 0.95, vUv2.x));
+    return mix(vec3(0.22, 0.185, 0.14), vec3(0.09, 0.077, 0.068), smoothstep(0.3, 0.95, vUv2.x));
   }
   if (region == 13) {
     // Teeth: a dull, stained enamel, kept under the hide's value.
@@ -525,7 +674,7 @@ function matteOut(region: string): string {
 #endif`;
 }
 
-const MEMBRANE_PARS_FRAG = /* glsl */ `
+const MEMBRANE_PARS_FRAG = /* glsl */ `${DETAIL_DEFAULT}
 uniform vec3 uPrimary;
 uniform vec3 uSecondary;
 uniform vec3 uMembrane;
@@ -538,6 +687,7 @@ varying vec3 vBodyPos;
 varying vec4 vMat;
 varying vec2 vUv2;
 flat varying float vRegion;
+varying float vDwUp;
 ${NOISE_GLSL}
 
 // Albedo of membranes; also returns how much light passes through (0..1).
@@ -545,18 +695,33 @@ vec3 dwMembraneAlbedo(out float trans) {
   int region = int(vRegion + 0.5);
   float thin = vMat.y;
   float edge = vMat.z;
+#if DW_DETAIL >= 1
   float n = dwVnoise(vBodyPos * 3.0 / uBodyScale);
+#else
+  float n = 0.5;
+#endif
   if (region == 0) {
     // Wing membrane: veins fanning from the knuckle, skin-toned near the bones, a darker hem.
     float v = vUv2.y;
     float t = vUv2.x;
     float fv = fract(v * 3.0 + 0.06 * sin(t * 9.0 + v * 4.0));
-    float vein = (1.0 - smoothstep(0.0, 0.045, min(fv, 1.0 - fv))) * smoothstep(0.08, 0.3, t);
-    float bone = 1.0 - smoothstep(0.0, 0.07, min(fract(v), 1.0 - fract(v)));
+    float vw = fwidth(v * 3.0);
+    float vein = (1.0 - smoothstep(0.0, 0.045 + 1.5 * vw, min(fv, 1.0 - fv))) * smoothstep(0.08, 0.3, t);
+    // Veins fade to their mean as they shrink toward a pixel (no crawl at range).
+    vein = mix(vein, 0.1, smoothstep(0.08, 0.2, vw));
+    float bw = fwidth(v);
+    float bone = 1.0 - smoothstep(0.0, 0.07 + 1.5 * bw, min(fract(v), 1.0 - fract(v)));
     vec3 c = uMembrane * (0.92 + 0.12 * n);
     c = mix(c, mix(uMembrane, uSecondary, 0.6) * 0.8, vein * 0.55);
     c = mix(c, mix(uPrimary, uSecondary, 0.5), (1.0 - thin) * 0.45);
     c = mix(c, uSecondary * 0.7, smoothstep(0.93, 1.0, edge) * 0.6);
+    // The finger struts: a darker band along each bone, so the fan of the hand reads from behind.
+    c = mix(c, mix(uSecondary, uMembrane, 0.3) * 0.7, bone * 0.55);
+    // The upper face is darker and duller than the underside (bats, pterosaurs): the wing reads
+    // as a shape from the chase camera, and the backlit glow stands out against it.
+    float top = smoothstep(0.15, 0.6, gl_FrontFacing ? vDwUp : -vDwUp);
+    float cl = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = mix(c, mix(vec3(cl), c, 0.85) * 0.8, top);
     trans = clamp(thin * (1.0 - 0.75 * vein) * (1.0 - bone * 0.5), 0.0, 1.0);
     // Folded on the ground the membrane bunches into deep pleats along the bones: darker, banded
     // light and shade, little light through.
@@ -602,6 +767,8 @@ varying vec2 vUv2;
 // The region id must not be interpolated: across a triangle joining two regions (leather and
 // cloth, 4 and 6) it would pass through the ids between (5, gold) and paint a glinting seam.
 flat varying float vRegion;
+// Membranes: the bind-pose normal's up component (which face of the skin is its upper side).
+varying float vDwUp;
 uniform float uFlutter;
 uniform float uFlutterRate;
 uniform float uRipple;
@@ -622,6 +789,7 @@ vBodyPos = position;
 vMat = aMat;
 vUv2 = aUv2;
 vRegion = aMat.x;
+vDwUp = normal.y;
 {
   // Trailing-edge flutter (speed) plus a slow wind ripple for sails and fans.
   float ph = uTime * uFlutterRate - aUv2.x * 9.0 + aUv2.y * 5.0;
@@ -668,15 +836,29 @@ function creatureLight(frag: string): string {
 
 /**
  * Material options: `detail` 2 (close: full shading) … 0 (far: the cheapest pattern path), set
- * per LOD and quality. Accepted but not used yet (the LOD and shading work fills it in).
+ * per LOD and quality (DW_DETAIL):
+ *   2  everything: the keeled and granular scales and their relief, macro scutes, the detail
+ *      ladder, both octaves of the cellular patterns;
+ *   1  mid distance (LOD1): no fine scales or relief (they are faded out there anyway);
+ *   0  far and quality 'low' (LOD2): also no fine grain noise, macro scutes, ladder bands or
+ *      second pattern octaves: countershading, mantle, markings and the first pattern octave.
+ * Each level is its own program: create every material a wyvern may use at construction, so the
+ * boot shader warm-up compiles them.
  */
 export interface WyvernMaterialOptions {
   detail?: 0 | 1 | 2;
 }
 
+function detailOf(opts: WyvernMaterialOptions): 0 | 1 | 2 {
+  const d = opts.detail ?? 2;
+  return d <= 0 ? 0 : d >= 2 ? 2 : 1;
+}
+
 /** Opaque toon body with region colors and patterns. */
-export function createBodyMaterial(u: WyvernUniforms, _opts: WyvernMaterialOptions = {}): MeshToonMaterial {
+export function createBodyMaterial(u: WyvernUniforms, opts: WyvernMaterialOptions = {}): MeshToonMaterial {
+  const detail = detailOf(opts);
   const m = new MeshToonMaterial({ side: FrontSide });
+  m.defines = { DW_DETAIL: detail };
   applyPainterly(m, {
     rim: 1.1,
     onBeforeCompile: (shader) => {
@@ -685,7 +867,7 @@ export function createBodyMaterial(u: WyvernUniforms, _opts: WyvernMaterialOptio
       shader.fragmentShader = creatureLight(shader.fragmentShader)
         .replace('void main() {', BODY_PARS_FRAG + '\nvoid main() {')
         .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + matteOut('vRegion + 1.0'))
-        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + RELIEF_APPLY)
+        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n#if DW_DETAIL >= 2\n' + RELIEF_APPLY + '\n#endif')
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
@@ -710,14 +892,16 @@ export function createBodyMaterial(u: WyvernUniforms, _opts: WyvernMaterialOptio
         );
     },
   });
-  m.customProgramCacheKey = ((prev) => () => prev() + '-wyvern-body')(m.customProgramCacheKey.bind(m));
+  m.customProgramCacheKey = ((prev) => () => prev() + '-wyvern-body-d' + detail)(m.customProgramCacheKey.bind(m));
   m.userData.dwWyvern = 'body';
   return m;
 }
 
 /** Double-sided membrane with the backlit glow. */
-export function createMembraneMaterial(u: WyvernUniforms, _opts: WyvernMaterialOptions = {}): MeshToonMaterial {
+export function createMembraneMaterial(u: WyvernUniforms, opts: WyvernMaterialOptions = {}): MeshToonMaterial {
+  const detail = detailOf(opts);
   const m = new MeshToonMaterial({ side: DoubleSide, shadowSide: DoubleSide });
+  m.defines = { DW_DETAIL: detail };
   applyPainterly(m, {
     rim: 0.6,
     onBeforeCompile: (shader) => {
@@ -753,7 +937,7 @@ export function createMembraneMaterial(u: WyvernUniforms, _opts: WyvernMaterialO
         );
     },
   });
-  m.customProgramCacheKey = ((prev) => () => prev() + '-wyvern-membrane')(m.customProgramCacheKey.bind(m));
+  m.customProgramCacheKey = ((prev) => () => prev() + '-wyvern-membrane-d' + detail)(m.customProgramCacheKey.bind(m));
   m.userData.dwWyvern = 'membrane';
   return m;
 }
