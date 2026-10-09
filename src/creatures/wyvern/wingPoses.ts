@@ -241,6 +241,14 @@ export interface FlapStyle {
   readonly warp: Float32Array;
 }
 
+/**
+ * Where the tilted stroke plane sits on average (radians of shoulder sweep, − = forward of the
+ * shoulder's neutral): TILT_BACK < 0.5 puts most of the plane's sweep ahead of the shoulder.
+ */
+export function strokePlaneMean(style: FlapStyle): number {
+  return STROKE_TILT * (TILT_BACK - 0.5) * (style.humTop - style.humBot) * DEG;
+}
+
 /** A FlapStyle for a downstroke fraction, with its warp table. */
 export function flapStyle(down: number, s: Omit<FlapStyle, 'down' | 'warp'>): FlapStyle {
   const warp = new Float32Array(WARP_N + 1);

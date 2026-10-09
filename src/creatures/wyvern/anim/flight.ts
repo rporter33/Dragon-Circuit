@@ -30,6 +30,7 @@ import {
   flapPoseAt,
   loadPose,
   strokeLoad,
+  strokePlaneMean,
   wingAdjust,
   type FlapStyle,
   type WingPose,
@@ -45,6 +46,8 @@ export class FlightLayer {
   private readonly f: AnimFrame;
   /** The breed's wingbeat: stroke shape, fold, tip flex and downstroke fraction. */
   private readonly style: FlapStyle;
+  /** Where the stroke plane sits on average (rad of shoulder sweep, − = forward). */
+  private readonly planeMean: number;
   /** Air load on each wing (left, right), smoothed: bends the fingers, billows the membrane. */
   private readonly loadSpring: [Spring, Spring] = [new Spring(28), new Spring(28)];
   readonly wingLoad = [0, 0];
@@ -61,6 +64,7 @@ export class FlightLayer {
     this.a = a;
     this.f = a.frame;
     this.style = FLAP_STYLES[a.rig.props.breed];
+    this.planeMean = strokePlaneMean(this.style);
   }
 
   /** Heave, chest lift and lean, the flare's trunk pitch, and this frame's wing prelude. */
@@ -116,9 +120,10 @@ export class FlightLayer {
       fp[W.humEl] *= amp;
       fp[W.foreEl] *= amp;
       fp[W.handEl] *= amp;
-      // Flaring beats reach forward.
+      // Flaring beats reach 16° forward of the shoulder's neutral (the stroke plane already sits
+      // part of the way there: the flare adds the rest rather than stacking on it).
       if (flare > 0) {
-        fp[W.humSw] += -16 * DEG * flare;
+        fp[W.humSw] += (-16 * DEG - this.planeMean) * flare;
         fp[W.humTw] += -14 * DEG * flare;
       }
       blendPose(out, fp, flap, out);
