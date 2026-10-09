@@ -11,6 +11,7 @@
 // boundaries' bones, so the membrane folds like a fan when the fingers close.
 
 import { Vector3 } from 'three';
+import { smoothstep } from '../../../core/math';
 import { GeoBuilder, MREGION, REGION, Skin, ellipsoid, tube } from '../builder';
 import { SIDE_SIGN, innerTrailRoot, type RigDef } from '../rig';
 import { bodyChain } from './body';
@@ -467,9 +468,11 @@ function buildHand(b: GeoBuilder, rig: RigDef, res: Res, side: number, wr: Vecto
   const skin = Skin.of(rig.idx.wings[side].claw);
   const sh = rig.props.standHeight;
   const ground = WRIST_CLEARANCE * sh;
-  // Sole pad: soft and pale, a touch sunk into the ground when standing.
-  const pr: [number, number, number] = [0.2 * k, 0.12 * k, 0.24 * k];
-  const padC = wr.clone().add(new Vector3(0.02 * k * sx, -ground + 0.1 * k, 0.04 * k));
+  // Sole pad: a broad, flat cushion under the wrist, a touch sunk into the ground when standing.
+  // Only its sole is pale (like the belly); the sides take the hide, so the wrist reads as one
+  // limb ending in a foot rather than a pale mitten.
+  const pr: [number, number, number] = [0.17 * k, 0.1 * k, 0.22 * k];
+  const padC = wr.clone().add(new Vector3(0.02 * k * sx, -ground + 0.08 * k, 0.04 * k));
   b.begin(0);
   ellipsoid(
     b,
@@ -479,7 +482,7 @@ function buildHand(b: GeoBuilder, rig: RigDef, res: Res, side: number, wr: Vecto
     new Vector3(0, 0, 1),
     pr,
     () => skin,
-    (_p, nl) => ({ region: REGION.skin, belly: 0.6 + 0.3 * Math.max(0, -nl.y) }),
+    (_p, nl) => ({ region: REGION.skin, belly: 0.75 * smoothstep(0.2, 0.8, -nl.y) }),
     res.lod === 0 ? 5 : 3,
     res.lod === 0 ? 8 : 5,
   );

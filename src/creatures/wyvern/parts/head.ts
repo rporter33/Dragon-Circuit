@@ -311,23 +311,27 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
     ellipsoid(b, c, ax, ay, az, [rEye, rEye * 0.92, rEye * 1.08], () => headSkin, () => ({ region: REGION.eye }), res.eye[0], res.eye[1]);
     b.end();
     if (res.lids) {
-      // Scaly upper and lower lid rims where the eyeball leaves the socket: two arcs on the
-      // ball's surface, meeting at the corners (the lower lid is the mobile one in lizards).
-      const rc = c.clone().addScaledVector(ax, 0.42 * rEye);
-      const R = 0.95 * rEye;
-      for (const [a0, a1, r] of [
-        [-0.25, Math.PI + 0.25, 0.13],
-        [Math.PI - 0.25, 2 * Math.PI + 0.25, 0.11],
+      // Scaly upper and lower lids where the eyeball leaves the socket: two thick arcs hugging
+      // the ball, drawn in over its top and bottom so the opening reads as a reptile's almond
+      // rather than a disc, meeting at the corners (the lower lid is the mobile one in lizards).
+      for (const [a0, a1, r, cover] of [
+        [-0.2, Math.PI + 0.2, 0.2, 0.24],
+        [Math.PI - 0.2, 2 * Math.PI + 0.2, 0.16, 0.16],
       ] as const) {
         const pts: Vector3[] = [];
         for (let k = 0; k <= LID_SEGS; k++) {
           const f = a0 + ((a1 - a0) * k) / LID_SEGS;
-          pts.push(rc.clone().addScaledVector(az, Math.cos(f) * R * side).addScaledVector(ay, Math.sin(f) * R * 0.92));
+          const sf = Math.sin(f);
+          // Radius from the eye's axis: pulled in over the ball toward the arc's middle.
+          const rho = 0.98 * rEye * (1 - cover * sf * sf);
+          // On the ball's surface (a hair proud of it), never inside the skull's opening.
+          const along = Math.sqrt(Math.max(0, (1.05 * rEye) ** 2 - rho * rho));
+          pts.push(c.clone().addScaledVector(ax, along).addScaledVector(az, Math.cos(f) * rho * side).addScaledVector(ay, sf * rho * 0.92));
         }
         b.begin(0);
         tube(b, {
           points: pts,
-          radii: pts.map((_, k) => r * rEye * (0.55 + 0.45 * Math.sin((Math.PI * k) / LID_SEGS))),
+          radii: pts.map((_, k) => r * rEye * (0.5 + 0.5 * Math.sin((Math.PI * k) / LID_SEGS))),
           segments: 4,
           hint: ax,
           skin: () => headSkin,
@@ -337,7 +341,8 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
       }
     }
     if (res.lod === 2) continue;
-    // Nostril: a monitor-like slit on top of the boss, angled up and back.
+    // Nostril: a monitor-like slit on top of the boss, running along the snout and angled up
+    // and out: narrow and sunk, so it reads as a dark opening, not a pink bead.
     const nose = ringPoint(0.905, 0.45 * side, new Vector3());
     const nAx = new Vector3(0.62 * side, 0.62, 0.2).normalize();
     const nAz = new Vector3(0.12 * side, 0.3, 1).normalize();
@@ -347,11 +352,11 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
     b.begin(0);
     ellipsoid(
       b,
-      nose.addScaledVector(nAx, -0.01 * L),
+      nose.addScaledVector(nAx, -0.013 * L),
       nAx,
       nAy,
       nAz,
-      big ? [0.03 * L, 0.02 * L, 0.065 * L] : [0.015 * L, 0.02 * L, 0.04 * L],
+      big ? [0.02 * L, 0.0075 * L, 0.05 * L] : [0.016 * L, 0.008 * L, 0.035 * L],
       () => headSkin,
       () => ({ region: REGION.mouth, extra: zone(ZONE.nostril) }),
       big ? 4 : 3,

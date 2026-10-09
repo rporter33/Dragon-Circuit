@@ -504,12 +504,19 @@ describe('wing-walker hand and reptile foot (A5, A7)', () => {
       // the wrist.
       const tips: number[] = [];
       let pale = 0;
+      let paleAbove = 0;
+      const wristY = rig.bones[claw].pos.y;
       for (let v = 0; v < si.count; v++) {
         if (si.getComponent(v, 0) !== claw || sw.getComponent(v, 0) < 0.99) continue;
         if (Math.round(mat.getX(v)) === 9) tips.push(pos.getX(v));
-        else if (mat.getY(v) > 0.55) pale++;
+        else if (mat.getY(v) > 0.5) {
+          pale++;
+          if (pos.getY(v) > wristY) paleAbove++;
+        }
       }
-      expect(pale, `${breed} pad`).toBeGreaterThan(10);
+      // A pale sole under the wrist (the pad's sides and top take the hide).
+      expect(pale, `${breed} pad`).toBeGreaterThanOrEqual(6);
+      expect(paleAbove, `${breed} pad top`).toBe(0);
       const xs = [...new Set(tips.map((x) => Math.round(x * 20)))];
       expect(xs.length, breed).toBeGreaterThanOrEqual(3);
       g.dispose();
