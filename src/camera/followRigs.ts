@@ -324,7 +324,10 @@ export const ORBIT_CAM: Record<OrbitKind, {
   follow: number;
 }> = {
   foot: { dist: 5.2, orbitMin: -0.12, distSpan: 0, runExtra: 0.9, pitch: 0.14, pitchMin: -0.5, pitchMax: 1.15, shoulder: 0.55, radius: 0.35, follow: 1.0 },
-  mounted: { dist: 6.5, orbitMin: -0.1, distSpan: 0.6, runExtra: 1.5, pitch: 0.26, pitchMin: -0.45, pitchMax: 1.2, shoulder: 0, radius: 0.7, follow: 0.85 },
+  // Over the right shoulder: straight behind, the tail ran down the bottom centre of the frame
+  // through the prompt row (raising or pitching the camera can't clear it; the tail tip is only a
+  // few metres in front of the lens). Offset, it runs off to the lower left.
+  mounted: { dist: 6.5, orbitMin: -0.1, distSpan: 0.6, runExtra: 1.5, pitch: 0.26, pitchMin: -0.45, pitchMax: 1.2, shoulder: 2.0, radius: 0.7, follow: 0.85 },
 };
 
 /** Below this boom length (m) the orbit aims along its view rather than at the subject's head. */
