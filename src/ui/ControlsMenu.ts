@@ -79,6 +79,8 @@ export class ControlsMenu extends Panel {
       const block = div('dw-control-block', h('div', { class: 'dw-group-title', text: g.title.toUpperCase() }));
       for (const b of SCHEME) {
         if (b.context !== g.context) continue;
+        // Free look only exists for mouse steering; on a pad the right stick always looks.
+        if (b.action === 'freeLook' && dev !== 'keyboard') continue;
         const glyphs = dev === 'keyboard' ? bindingKeyboardHtml(b) : bindingPadHtml(b, dev);
         block.append(div('dw-control', h('span', { class: 'dw-control-l', text: controlLabel(b.label, dev) }), h('span', { class: 'dw-control-g', html: glyphs })));
       }

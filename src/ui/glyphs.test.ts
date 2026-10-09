@@ -17,6 +17,17 @@ describe('controlsFor', () => {
     expect(controlsFor('tuck', 'xbox').hold).toBe(true);
     expect(controlsFor('pitch', 'xbox').axis).toBe('↕');
   });
+  it('shows every control of a chord (tuck is LB + RB held together)', () => {
+    expect(controlsFor('tuck', 'xbox').pad).toEqual(['LB', 'RB']);
+    expect(controlsFor('flap', 'xbox').pad).toEqual(['RT']);
+    const html = glyphHtml('tuck', 'xbox');
+    expect(html).toContain('>LB<');
+    expect(html).toContain('>RB<');
+    expect(html).toContain('dw-glyph-sep">+<');
+    expect(bindingPadHtml(bindingFor('tuck')!, 'playstation')).toContain('dw-glyph-sep">+<');
+    // Alternatives still read as "or".
+    expect(bindingPadHtml(bindingFor('yaw')!, 'xbox')).toContain('dw-glyph-sep">/<');
+  });
   it('collapses left/right key variants', () => {
     expect(controlsFor('tuck', 'keyboard', true).keys).toEqual(['ShiftLeft']);
   });

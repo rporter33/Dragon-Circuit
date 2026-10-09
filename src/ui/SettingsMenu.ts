@@ -2,6 +2,7 @@
 // actions.applySettings, so you see (and hear) it while the menu is open.
 
 import type { Settings } from '../core/types';
+import type { GameView } from '../game/contracts';
 import { QUALITY } from '../render/quality';
 import { div, h } from './dom';
 import { Dialog } from './Dialog';
@@ -13,6 +14,7 @@ import {
   sliderFraction,
   sliderValueAt,
   stepSlider,
+  toggleValue,
   type ChoiceRow,
   type SettingRow,
   type SliderRow,
@@ -44,6 +46,9 @@ export class SettingsMenu extends Panel {
   private body: HTMLElement;
   /** Re-render functions for the visible rows (after a change or an external settings event). */
   private refreshers: (() => void)[] = [];
+  /** The Quality row, which says "Applying…" while a quality change links its shaders. */
+  private qualityRow: HTMLElement | null = null;
+  private applying = false;
 
   constructor(ctx: UiCtx, initialTab = 0) {
     super(ctx, 'dw-settings');
@@ -78,6 +83,13 @@ export class SettingsMenu extends Panel {
     for (const r of this.refreshers) r();
   }
 
+  override update(_dt: number, view: GameView): void {
+    const busy = !!view.renderer?.recompilingQuality;
+    if (busy === this.applying) return;
+    this.applying = busy;
+    this.qualityRow?.classList.toggle('is-applying', busy);
+  }
+
   private setTab(i: number, sound: boolean): void {
     if (sound && i !== this.tab) this.ctx.sound('tab');
     this.tab = i;
@@ -85,6 +97,8 @@ export class SettingsMenu extends Panel {
     this.body.replaceChildren();
     this.scope.clear();
     this.refreshers = [];
+    this.qualityRow = null;
+    this.applying = false;
     const rows = div('dw-rows');
     for (const row of SETTINGS_TABS[i].rows) rows.append(this.buildRow(row));
     this.body.append(rows);
@@ -116,6 +130,11 @@ export class SettingsMenu extends Panel {
   private buildRow(row: SettingRow): HTMLElement {
     const label = div('', h('div', { class: 'dw-row-label', text: row.label }), h('div', { class: 'dw-row-help', text: row.help }));
     const el = div('dw-row', label);
+    if (row.kind === 'choice' && row.key === 'quality') {
+      // New shaders take a moment to link; the view holds its last frame meanwhile.
+      label.append(h('div', { class: 'dw-row-applying', text: 'Applying… the view catches up in a moment' }));
+      this.qualityRow = el;
+    }
     switch (row.kind) {
       case 'choice':
         this.choice(el, row);
@@ -263,7 +282,7 @@ export class SettingsMenu extends Panel {
     const sw = div('dw-switch');
     const val = h('span', { class: 'dw-toggle-v' });
     el.append(div('dw-toggle', val, sw));
-    const get = () => this.ctx.settings()[row.key] as boolean;
+    const get = () => toggleValue(this.ctx.settings(), row);
     const refresh = () => {
       const on = get();
       sw.classList.toggle('is-on', on);

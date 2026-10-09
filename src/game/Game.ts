@@ -163,6 +163,7 @@ export class Game implements GameActions {
       weather: this.weather,
       camera: this.cameraRig,
       prompt: null,
+      renderer: this.renderer,
     };
 
     this.placeAtSpawn();

@@ -422,6 +422,12 @@ export interface GameView {
   camera: CameraSystem;
   /** Context prompt the HUD should show (e.g. "Hold LT to flare"), or null. */
   prompt: { action: PromptAction; text: string } | null;
+  /**
+   * Optional: what the settings screen shows of the renderer. A quality change can hold the view
+   * on its last frame for a few seconds while shaders link (recompilingQuality); the screen says
+   * "Applying…" meanwhile.
+   */
+  renderer?: { readonly recompilingQuality: boolean };
 }
 
 /**
