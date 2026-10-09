@@ -22,9 +22,13 @@
 // model advances the beat at flapRate, so thrust per SECOND is the peak × down/2 whatever the
 // rate: a slower beat is a longer, bigger surge for the same work. flapThrust/flapLift are the
 // stroke's peak, set so the cycle mean matches an even (down 0.5) stroke of the earlier tuning
-// (peak × 1/(2·down)); the table above held within ±1.5 % through the retime. Each downstroke
-// adds about thrust × down/2 ÷ rate per kg: galewing 5.4, harrier 4.8, ironback 4.1, skimmer
-// 4.0 m/s before drag.
+// (peak × 1/(2·down)). Against the 1.45/2.1/0.95/1.0 Hz even-stroke tuning: cruise, glide, dive,
+// roll and a hands-off thermal are unchanged; held-flap climb within ±0.8 %, endurance −1.4 to
+// +0.5 %, stamina drain per second unchanged, level flapping speed +0.2 %, a flapping thermal
+// climb +1 to +2 %; every breed still finishes every race course clean with a medal, 0.2–1.9 %
+// faster (a press now drives the downstroke at once, with no wind-up). Each downstroke adds
+// about thrust × down/2 ÷ rate per kg: galewing 5.4, harrier 4.8, ironback 4.1, skimmer 4.0 m/s
+// before drag.
 //
 // The 0..1 display ratings below are read off that table: speed (dive + top flapping speed),
 // agility (roll rate), glide (best glide ratio), power (sustained climb), stamina (seconds).
