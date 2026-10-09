@@ -7,7 +7,7 @@ import { DEG } from '../core/math';
 import { LAYOUT } from '../world/layout';
 import { Terrain } from '../world/terrain';
 import { BREEDS, BREED_ORDER } from './breeds';
-import { FlightModel } from './FlightModel';
+import { FlightModel, deriveFlight, strokeForce } from './FlightModel';
 import {
   SIM_DT,
   bankAngle,
@@ -343,26 +343,83 @@ describe('flaps and stamina', () => {
   });
 
   it('commits to a beat once started and fires the flap event at the bottom of the stroke', () => {
-    const events = new EventBus<GameEvents>();
-    const phases: number[] = [];
-    const m = launch(BREEDS.harrier, 24);
-    events.on('flap', () => phases.push(m.state.flapPhase));
-    const env = stillAir();
-    const input = neutralInput();
-    input.flap = 1;
-    m.step(SIM_DT, input, env, events);
-    // Let go immediately: the stroke still completes.
-    input.flap = 0;
-    let steps = 0;
-    while (m.flapping && steps < 1000) {
+    for (const id of BREED_ORDER) {
+      const b = BREEDS[id];
+      const D = b.downFrac!;
+      const events = new EventBus<GameEvents>();
+      const phases: number[] = [];
+      const m = launch(b, 24);
+      events.on('flap', () => phases.push(m.state.flapPhase));
+      const env = stillAir();
+      const input = neutralInput();
+      input.flap = 1;
       m.step(SIM_DT, input, env, events);
-      steps++;
+      // Let go immediately: the stroke still completes.
+      input.flap = 0;
+      let steps = 0;
+      while (m.flapping && steps < 1000) {
+        m.step(SIM_DT, input, env, events);
+        steps++;
+      }
+      expect(phases.length, id).toBe(1);
+      // The flap event marks the bottom: the end of the breed's downstroke.
+      expect(phases[0], id).toBeGreaterThanOrEqual(D);
+      expect(phases[0], id).toBeLessThan(D + 0.03);
+      // One whole beat at the breed's rate.
+      expect((steps + 1) * SIM_DT, id).toBeCloseTo(1 / b.flapRate, 1);
     }
-    expect(phases.length).toBe(1);
-    expect(phases[0]).toBeGreaterThanOrEqual(0.5);
-    expect(phases[0]).toBeLessThan(0.53);
-    expect(steps * SIM_DT).toBeGreaterThan(0.5 / BREEDS.harrier.flapRate);
   });
+
+  it('a press starts the downstroke on that very step (weighty, but no wind-up delay)', () => {
+    for (const id of BREED_ORDER) {
+      const b = BREEDS[id];
+      const m = launch(b, deriveFlight(b).vCruise);
+      const env = stillAir();
+      const input = neutralInput();
+      // A long glide first: the wings are idle.
+      for (let i = 0; i < 2 / SIM_DT; i++) m.step(SIM_DT, input, env);
+      expect(m.flapping).toBe(false);
+      input.flap = 1;
+      const r = m.step(SIM_DT, input, env);
+      expect(r.beatStarted, id).toBe(true);
+      // Already into the downstroke (phase 0 is the top of the stroke).
+      expect(m.state.flapPhase, id).toBeGreaterThan(0);
+      expect(m.state.flapPhase, id).toBeLessThan(b.flapRate * SIM_DT * 1.01);
+      // ...and pushing within a tenth of the downstroke.
+      expect(strokeForce(m.state.flapPhase + 0.1 * b.downFrac!, b.downFrac!)).toBeGreaterThan(0.09);
+    }
+  });
+
+  it('the power curve: sin² over the downstroke [0, D), a small loss on the recovery', () => {
+    for (const D of [0.5, 0.54, 0.57, 0.6, 0.62]) {
+      let mean = 0;
+      let down = 0;
+      const N = 20000;
+      for (let i = 0; i < N; i++) {
+        const f = strokeForce(i / N, D);
+        mean += f / N;
+        if (i / N < D) down += f / N;
+        if (i / N >= D) expect(f).toBeLessThanOrEqual(0);
+      }
+      expect(strokeForce(D / 2, D)).toBeCloseTo(1, 9);
+      expect(down).toBeCloseTo(D / 2, 3);
+      expect(mean).toBeCloseTo(D / 2 - (0.1 * (1 - D) * 2) / Math.PI, 3);
+    }
+  });
+
+  it('a slower, longer stroke delivers the same per second: beat timing never changes the climb', () => {
+    // The flight model advances the phase at flapRate, so thrust per second is set by the
+    // cycle-mean of the power curve (peak × D/2), never by the rate. A breed's numbers keep the
+    // mean: peak thrust and lift × 1/(2D) against an even (D = 0.5) stroke.
+    for (const id of ['harrier', 'ironback'] as const) {
+      const b = BREEDS[id];
+      const D = b.downFrac!;
+      const even = { ...b, flapRate: b.flapRate * 1.3, downFrac: 0.5, flapThrust: b.flapThrust * 2 * D, flapLift: b.flapLift * 2 * D };
+      const a = measureClimb(b).climb;
+      const c = measureClimb(even).climb;
+      expect(Math.abs(a - c) / c, id).toBeLessThan(0.03);
+    }
+  }, 120_000);
 
   it('a lighter trigger makes a weaker, cheaper beat', () => {
     const run = (flap: number) => {

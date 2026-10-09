@@ -8,7 +8,8 @@
 //   lift   = ½ρV²·S·CL(α)    perpendicular to the airflow and the wingspan
 //   drag   = ½ρV²·(body + S·cd0 + S·K·CL² + flare + stall + folded wings)   — the induced term
 //            K·CL² is why a hard turn bleeds speed
-//   flap   = a committed wingbeat: a power curve on the downstroke adds thrust + lift
+//   flap   = a committed wingbeat: a power curve on the downstroke (the first `downFrac` of the
+//            beat) adds thrust + lift; the recovery loses a little lift
 //   gravity
 // Energy is never invented: a dive trades height for speed and a zoom trades it back, minus drag.
 //
@@ -29,6 +30,7 @@ import type { BreedStats, ContactInfo, FlightEnvironment, FlightInput, FlightSta
 import type { GameEventBus } from '../core/events';
 import { clamp, clamp01, damp, DEG, lerp, smoothstep } from '../core/math';
 import { SOFT_PUSH } from '../world/colliders';
+import { DEFAULT_DOWN_FRAC } from './breeds';
 
 export const GRAVITY = 9.81;
 export const AIR_DENSITY = 1.1;
@@ -228,8 +230,6 @@ export const FLIGHT_TUNING = {
   launchThrust: 1.6,
   /** Upstroke recovery: a small fraction of peak lift lost. */
   upstrokeLoss: 0.1,
-  /** A beat started from a glide begins this far through the upstroke (a short wind-up). */
-  windupPhase: 0.82,
   /** Seconds after the last beat before stamina starts to come back. */
   regenDelay: 0.55,
   /**
@@ -333,6 +333,21 @@ export function deriveFlight(b: BreedStats): FlightDerived {
     qRef: 0.5 * AIR_DENSITY * T.authoritySpeed * T.authoritySpeed,
     vFlapMax: vCruise * T.flapMaxSpeedFactor,
   };
+}
+
+/**
+ * The power curve of one beat at phase 0..1 (peak 1): a rounded sin² pulse over the downstroke
+ * [0, down), then a small lift loss while the wing feathers up through the recovery. The wing
+ * animation (creatures/wyvern/wingPoses.ts) runs on the same clock, so the membrane loads and
+ * the wing drives down exactly while this pushes. Averages down/2 − upstrokeLoss·(1 − down)·2/π.
+ */
+export function strokeForce(phase: number, down: number): number {
+  const p = phase - Math.floor(phase);
+  if (p < down) {
+    const sn = Math.sin((Math.PI * p) / down);
+    return sn * sn;
+  }
+  return -T.upstrokeLoss * Math.sin((Math.PI * (p - down)) / (1 - down));
 }
 
 export interface FlightStepResult {
@@ -443,8 +458,6 @@ export class FlightModel {
   private vDotSmooth = 0;
   /** Seconds the roll stick has rested near center (for the auto-level). */
   private rollRest = 0;
-  /** The current beat began with a wind-up (wings rising) and still owes its downstroke. */
-  private windup = false;
   private hitCooldown = 0;
   private brushCooldown = 0;
   private smoothG = 1;
@@ -498,7 +511,6 @@ export class FlightModel {
     this.backwingBeat = false;
     this.backwing = 0;
     this.beatStrength = 0;
-    this.windup = false;
     this.vDotSmooth = 0;
     this.stallRaw = 0;
     this.sinceStall = 99;
@@ -540,7 +552,6 @@ export class FlightModel {
     this.beatActive = true;
     this.backwingBeat = false;
     this.beatStrength = clamp01(strength) * this.effort;
-    this.windup = false;
     s.flapPhase = 0;
     this.sinceBeat = 0;
     this.beats++;
@@ -763,16 +774,17 @@ export class FlightModel {
     }
 
     // --- Flapping: committed strokes ---------------------------------------------------------
+    // A press starts the downstroke at once (the wings rise from the glide as they begin to drive
+    // down, so there is no wind-up delay); the 'flap' event marks the bottom of the stroke.
     this.sinceBeat += dt;
-    let strokeForce = 0;
+    let strokeF = 0;
+    const down = b.downFrac ?? DEFAULT_DOWN_FRAC;
     const wantsBackwing = this.backwinging > 0.2;
     if (!this.beatActive && (wantsBeat || wantsBackwing)) {
       this.beatActive = true;
       this.backwingBeat = !wantsBeat;
       this.beatStrength = wantsBeat ? flapIn * this.effort : this.backwinging;
-      // From a glide the wings rise briefly before the first downstroke.
-      this.windup = this.sinceBeat > 0.15;
-      s.flapPhase = this.windup ? T.windupPhase : 0;
+      s.flapPhase = 0;
       if (wantsBeat) {
         this.beats++;
         r.beatStarted = true;
@@ -783,16 +795,13 @@ export class FlightModel {
       // Backwing strokes are short and quick; real ones follow the breed's rhythm.
       s.flapPhase += b.flapRate * (this.backwingBeat ? 1.4 : 1) * dt;
       // Pressing harder mid-downstroke deepens the beat; easing off doesn't cancel it.
-      if (s.flapPhase < 0.5 && !this.backwingBeat) this.beatStrength = Math.max(this.beatStrength, flapIn * this.effort);
-      if (prev < 0.5 && s.flapPhase >= 0.5) {
+      if (s.flapPhase < down && !this.backwingBeat) this.beatStrength = Math.max(this.beatStrength, flapIn * this.effort);
+      if (prev < down && s.flapPhase >= down) {
         events?.emit('flap', { strength: this.beatStrength, position: s.position.clone() });
       }
       if (s.flapPhase >= 1) {
         s.flapPhase -= 1;
-        if (this.windup) {
-          // The wind-up is over; the committed downstroke follows whatever the trigger does.
-          this.windup = false;
-        } else if (wantsBeat) {
+        if (wantsBeat) {
           this.backwingBeat = false;
           this.beatStrength = flapIn * this.effort;
           this.beats++;
@@ -807,10 +816,7 @@ export class FlightModel {
         }
       }
       if (this.beatActive && !this.backwingBeat) {
-        // Power curve: a rounded pulse over the downstroke, a small loss on the upstroke.
-        const ph = s.flapPhase;
-        const sn = Math.sin(ph * 2 * Math.PI);
-        strokeForce = (ph < 0.5 ? sn * sn : T.upstrokeLoss * sn) * this.beatStrength;
+        strokeF = strokeForce(s.flapPhase, down) * this.beatStrength;
         s.stamina = Math.max(0, s.stamina - (this.beatStrength * dt) / (b.staminaSeconds * this.capacity));
         this.sinceBeat = 0;
       }
@@ -819,15 +825,15 @@ export class FlightModel {
     const speed01 = clamp01(V / d.vCruise);
     const liftScale = Math.max(lerp(T.flapLiftAtRest, 1, speed01), lerp(T.flapLiftLaunch, 1, speed01) * graceT);
     const spreadLift = 0.35 + 0.65 * s.wingSpread;
-    // The sin² downstroke averages 1/4 of its peak over a whole beat.
-    this.flapLiftMean = this.beatActive && !this.backwingBeat ? 0.25 * b.flapLift * this.beatStrength * spreadLift * liftScale : 0;
-    if (strokeForce !== 0) {
+    // The sin² downstroke averages half its peak over the downstroke, down/2 over a whole beat.
+    this.flapLiftMean = this.beatActive && !this.backwingBeat ? 0.5 * down * b.flapLift * this.beatStrength * spreadLift * liftScale : 0;
+    if (strokeF !== 0) {
       const slow = lerp(T.flapSlowThrust, 1, Math.max(graceT, speed01));
       const thrustFade = slow * clamp01(1 - Math.max(0, vf) / d.vFlapMax);
-      const thrust = b.flapThrust * Math.max(0, strokeForce) * thrustFade * lerp(1, T.launchThrust, graceT);
+      const thrust = b.flapThrust * Math.max(0, strokeF) * thrustFade * lerp(1, T.launchThrust, graceT);
       // Stroke plane tilted up: thrust along forward-and-up, lift along the body's up.
       force.addScaledVector(fwd, thrust * Math.cos(T.flapTiltUp)).addScaledVector(up, thrust * Math.sin(T.flapTiltUp));
-      const flapLift = b.flapLift * strokeForce * liftScale * spreadLift;
+      const flapLift = b.flapLift * strokeF * liftScale * spreadLift;
       force.addScaledVector(up, flapLift);
     }
     if (!this.beatActive && this.sinceBeat > T.regenDelay) {

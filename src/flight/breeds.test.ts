@@ -49,3 +49,15 @@ describe('breed ratings tell the truth', () => {
     }
   });
 });
+
+describe('wingbeat timing (FANIM-02)', () => {
+  it('drives down for longer than it recovers, longest on the big and heavy breeds', () => {
+    for (const id of BREED_ORDER) {
+      expect(BREEDS[id].downFrac, id).toBeGreaterThanOrEqual(0.54);
+      expect(BREEDS[id].downFrac, id).toBeLessThanOrEqual(0.65);
+    }
+    expect(BREEDS.ironback.downFrac!).toBeGreaterThan(BREEDS.harrier.downFrac!);
+    expect(BREEDS.galewing.downFrac!).toBeGreaterThan(BREEDS.harrier.downFrac!);
+    expect(BREEDS.harrier.downFrac!).toBeGreaterThan(BREEDS.skimmer.downFrac!);
+  });
+});

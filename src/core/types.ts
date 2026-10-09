@@ -128,6 +128,12 @@ export interface BreedStats {
   flapLift: number;
   /** Wingbeats per second while flapping. */
   flapRate: number;
+  /**
+   * Fraction of each beat spent on the downstroke (the power stroke), 0.5–0.65: big flyers drive
+   * down for longer than they recover. The flight model's power curve and 'flap' event and the
+   * wing animation share it. Optional: DEFAULT_DOWN_FRAC (flight/breeds.ts) when absent.
+   */
+  downFrac?: number;
   /** Stamina seconds of continuous flapping from full. */
   staminaSeconds: number;
   /** Stamina regained per second while not flapping (fraction of max). */
@@ -163,7 +169,7 @@ export interface FlightState {
   stamina: number;
   /** True while the stamina meter is exhausted and refilling; flaps are refused. */
   winded: boolean;
-  /** 0..1 position within the current wingbeat; 0 = wings high, 0.5 = bottom of downstroke. */
+  /** 0..1 position within the current wingbeat; 0 = wings high, BreedStats.downFrac = bottom of the downstroke. */
   flapPhase: number;
   /** 0..1 how strong the current beat is (0 when gliding). Smoothed for animation. */
   flapStrength: number;
