@@ -6,6 +6,7 @@ import type { InputFrame } from '../core/types';
 import type { Game } from '../game/Game';
 import { FIXED_DT } from '../game/Game';
 import type { RenderStats, WarmupStats } from '../render/renderer';
+import { wyvernPenetration, type Penetration } from '../creatures/wyvern/collision';
 
 export interface BootTimings {
   /** ms since navigation start. */
@@ -31,6 +32,8 @@ export interface DebugHandle {
   stats(): RenderStats;
   /** Boot phase timings (filled in by main.ts). */
   boot: Partial<BootTimings>;
+  /** The player's wyvern's deepest self-penetration per part pair as last posed (m; Q17). */
+  wyvernPenetration(): Penetration | null;
 }
 
 export function installDebugHooks(game: Game): DebugHandle {
@@ -60,6 +63,9 @@ export function installDebugHooks(game: Game): DebugHandle {
     },
     stats() {
       return game.renderer.stats;
+    },
+    wyvernPenetration() {
+      return wyvernPenetration(game.wyvern);
     },
   };
   (window as unknown as { __dw: DebugHandle }).__dw = handle;

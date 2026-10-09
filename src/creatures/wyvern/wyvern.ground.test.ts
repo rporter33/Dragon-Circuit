@@ -12,6 +12,7 @@ import { Wyvern } from './Wyvern';
 import { aimRotation, solveTwoBone } from './ik';
 import { Gait, footPhase, type GaitContext } from './gait';
 import { beat, boneWorld, gliding, look, standing } from './wyvern.testkit';
+import { PEN_PAIRS, type Penetration, wyvernPenetration } from './collision';
 
 const _p = new Vector3();
 const _q = new Vector3();
@@ -350,6 +351,110 @@ describe('pure helpers', () => {
     expect(swings).toBeGreaterThan(20);
     expect(footPhase(0.1, 0, 0.6).swing).toBe(false);
     expect(footPhase(0.7, 0, 0.6).swing).toBe(true);
+  });
+});
+
+/** A pose over time: the starting pose and a step per frame (frame index, breed). */
+type PoseRun = { base: (breed: BreedId) => WyvernPose; frames: number; step?: (p: WyvernPose, i: number, breed: BreedId) => void };
+
+const SELF_POSES: Record<string, PoseRun> = {
+  stand: { base: standing, frames: 150 },
+  // Looking back over its shoulder (the head and neck past the folded wing).
+  lookback: { base: standing, frames: 150, step: (p) => p.lookTarget.set(8, 12, -6) },
+  kneel: {
+    base: standing,
+    frames: 150,
+    step: (p, i, b) => {
+      p.kneel = Math.min(1, i / 24);
+      p.lookTarget.set(BREEDS[b].standHeight * 0.55 + 1.3, 11.6, 0.6);
+    },
+  },
+  glide: { base: () => gliding(), frames: 90, step: (p) => { p.position.z += 0.4; p.lookTarget.z += 0.4; } },
+  flap: {
+    base: () => gliding(),
+    frames: 200,
+    step: (p, i, b) => {
+      p.flapStrength = 1;
+      p.flapPhase = ((i / 60) * BREEDS[b].flapRate) % 1;
+      p.position.z += 0.4;
+      p.lookTarget.z += 0.4;
+    },
+  },
+  flare: { base: () => gliding(), frames: 90, step: (p) => { p.flare = 1; p.position.z += 0.25; p.lookTarget.z += 0.25; } },
+  bank: {
+    base: () => gliding(),
+    frames: 90,
+    step: (p) => {
+      p.orientation.setFromAxisAngle(new Vector3(0, 0, 1), 0.7);
+      p.angularVelocity.set(0, -0.6, 0.3);
+      p.position.z += 0.4;
+      p.lookTarget.z += 0.4;
+    },
+  },
+};
+
+/** The deepest self-penetration per part pair over a pose run (sampled every 6th frame after a second). */
+function selfPenetration(breed: BreedId, saddle: string, run: PoseRun): Penetration {
+  const w = new Wyvern(look(breed, { saddle }));
+  const p = run.base(breed);
+  const max = {} as Penetration;
+  for (const k of PEN_PAIRS) max[k] = 0;
+  const pen = {} as Penetration;
+  for (let i = 0; i < run.frames; i++) {
+    run.step?.(p, i, breed);
+    w.update(1 / 60, p);
+    if ((i >= 60 && i % 6 === 0) || i === run.frames - 1) {
+      wyvernPenetration(w, pen);
+      for (const k of PEN_PAIRS) max[k] = Math.max(max[k], pen[k]);
+    }
+  }
+  w.dispose();
+  return max;
+}
+
+describe('no clipping: the wyvern never passes through itself (Q17, C16)', { timeout: 600000 }, () => {
+  // Self-collision proxies (collision.ts): every wing vertex against the leg capsules and the
+  // torso's cross-sections, the neck and head against the wing, the tail against the legs. At
+  // most 2 cm anywhere, as the capture harness's penetration report measures it.
+  for (const breed of BREED_ORDER) {
+    it(`${breed}: standing, looking back, kneeling, gliding, a full wingbeat, flaring, banking; every saddle`, () => {
+      for (const saddle of ['rider', 'racing', 'royal', 'nomad']) {
+        for (const [name, run] of Object.entries(SELF_POSES)) {
+          if (saddle !== 'rider' && name !== 'stand' && name !== 'flap') continue;
+          const pen = selfPenetration(breed, saddle, run);
+          for (const k of PEN_PAIRS) expect(pen[k], `${breed} ${saddle} ${name} ${k}`).toBeLessThan(0.02);
+        }
+      }
+    });
+  }
+});
+
+describe('environment awareness (C16): the folded wings keep off walls', () => {
+  it('draws the folded wing in against the body when a rock face is at its elbow, and only that one', () => {
+    for (const breed of BREED_ORDER) {
+      const elbows = (wallX: number | null) => {
+        const terrain = {
+          groundAt: (_x: number, _z: number, _y: number, out?: GroundHit) => {
+            const h = out ?? { y: 0, normal: new Vector3(0, 1, 0), islandId: 0, surface: 'grass' as const };
+            h.y = 10;
+            return h;
+          },
+          // A sheer face beside the wyvern's left flank (x = wallX), open everywhere else.
+          distance: (p: Vector3) => (wallX === null ? 50 : wallX - p.x),
+        };
+        const w = new Wyvern(look(breed), { terrain });
+        const pose = standing(breed);
+        for (let i = 0; i < 150; i++) w.update(1 / 60, pose);
+        const out = [boneWorld(w, 'forearmL'), boneWorld(w, 'forearmR')];
+        w.dispose();
+        return out;
+      };
+      const open = elbows(null);
+      // The wall 5 cm off the open-ground elbow's surface (about 0.25 m out from its bone).
+      const wall = elbows(open[0].x + 0.3);
+      expect(wall[0].x, `${breed} left elbow drawn in`).toBeLessThan(open[0].x - 0.05);
+      expect(Math.abs(wall[1].x - open[1].x), `${breed} right elbow unchanged`).toBeLessThan(0.01);
+    }
   });
 });
 

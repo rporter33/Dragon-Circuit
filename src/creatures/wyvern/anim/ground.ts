@@ -102,19 +102,33 @@ export const FOLD = {
    * a point on the elbow's inner face: across (x), up and down (y) and fore and aft (z).
    */
   helperX: 0.2,
-  helperY: 0.85,
+  helperY: 0.75,
   helperZ: 0.6,
   /** ...across about this share of the shoulders' half-width at most. */
   helperFlank: 1,
   /** Outer finger segments turned out from straight back (rad). */
   tipOut: 0.04,
+  /** The finger bundle's clearance from the flank (× the arm's radius scale: a finger's thickness). */
+  fingerClear: 0.12,
+  /**
+   * How much the finger bundle holds its own line (body up, leaning back by bundleLean) rather than
+   * following the forearm as it swings through a stride (0 = always along the forearm).
+   */
+  bundleHold: 0.6,
+  bundleLean: 0.35,
+  /** A wall closer than this to the folded elbow's surface (m) draws the wing in, by at most wallMax. */
+  wallReach: 0.25,
+  wallMax: 0.35,
 };
+
+/** What the ground layer asks of the terrain: the ground under a foot, and optionally walls. */
+export type GroundTerrain = Pick<TerrainQuery, 'groundAt'> & Partial<Pick<TerrainQuery, 'distance'>>;
 
 export class GroundLayer {
   private readonly a: WyvernAnimator;
   private readonly f: AnimFrame;
   private readonly rig: RigDef;
-  private readonly terrain?: Pick<TerrainQuery, 'groundAt'>;
+  private readonly terrain?: GroundTerrain;
   readonly gait: Gait;
   /** Where each foot is now (world): hind feet under the ball of the foot, fore at the claw. */
   readonly footWorld: Vector3[] = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
@@ -136,12 +150,22 @@ export class GroundLayer {
   /** Reused terrain query result. */
   private readonly hit: GroundHit = { y: 0, normal: new Vector3(), islandId: -1, surface: 'grass' };
   /**
-   * Per side and finger: sin and cos of half the angle (about the bind wing normal) that turns the
-   * finger's bind direction onto the innermost finger's, which closes the fan in the fold.
+   * Per side and finger: the angle (about the bind wing normal) that turns the finger's bind
+   * direction onto straight back (a little out), which closes the fan in the fold.
    */
-  private readonly fanClose = new Float64Array(12);
-  /** The outer finger segments' lengths. */
+  private readonly fanClose = new Float64Array(6);
+  /** The finger segments' lengths (inner, outer). */
+  private readonly fingerA: Float64Array;
   private readonly fingerB: Float64Array;
+  /**
+   * The torso's cross-sections for clearance checks (bind, every ~0.1 m from the neck base to the
+   * tail base): z, centre height, half-width, upper and lower half-heights, squareness (6 each).
+   */
+  private readonly torso: Float64Array;
+  /** torsoClear's result: how far a point must move out to clear the flank (m, 0 when clear). */
+  private readonly clear = new Float64Array(1);
+  /** Where the folded fingertips stop short of the thigh: its front (z) and its top (y), body frame. */
+  private readonly hipGuard = new Float64Array(2);
   /** The body's centreline height and upper half-height at the folded elbow. */
   private readonly flankMid = new Float64Array(2);
   /** Where the folded elbow tucks against the flank (left side, body frame). */
@@ -159,6 +183,11 @@ export class GroundLayer {
   /** Which side the rider is on for the kneel: +1 the wyvern's left … −1 its right (smoothed). */
   private kneelSide = 1;
   /**
+   * How far each folded wing is drawn in against the body because a wall or rock face is at the
+   * elbow (m, smoothed; left, right). Only with a terrain that has a distance field.
+   */
+  readonly wallPull = new Float64Array(2);
+  /**
    * Per side (12 each), for trailRoll: the innermost finger's bind direction (3); the offset of
    * the inner panel's trailing-edge midpoint from that finger's outer joint, across the finger (3);
    * that offset along the finger; the midpoint's bind x; the trailing root's bind x; the outer
@@ -166,7 +195,7 @@ export class GroundLayer {
    */
   private readonly trailBind = new Float64Array(24);
 
-  constructor(a: WyvernAnimator, terrain?: Pick<TerrainQuery, 'groundAt'>) {
+  constructor(a: WyvernAnimator, terrain?: GroundTerrain) {
     this.a = a;
     this.f = a.frame;
     this.rig = a.rig;
@@ -200,8 +229,7 @@ export class GroundLayer {
         const tx = Math.sin(o);
         const tz = -Math.cos(o);
         const ang = Math.atan2(d.z * tx - d.x * tz, d.x * tx + d.z * tz);
-        this.fanClose[side * 6 + f * 2] = Math.sin(ang / 2);
-        this.fanClose[side * 6 + f * 2 + 1] = Math.cos(ang / 2);
+        this.fanClose[side * 3 + f] = ang;
       }
     }
     this.armR = armScale(rig);
@@ -229,7 +257,23 @@ export class GroundLayer {
       }
     }
     this.metaAngle = rig.props.shape.legAngles.meta;
+    this.fingerA = new Float64Array(rig.props.arm.fingers.map((f) => f[0]));
     this.fingerB = new Float64Array(rig.props.arm.fingers.map((f) => f[1]));
+    {
+      const plan = rig.plan;
+      const s0 = plan.keyS[plan.marks.neckBase];
+      const s1 = plan.keyS[plan.marks.tailBase];
+      const n = Math.max(8, Math.round((s1 - s0) / 0.1));
+      const t = new Float64Array((n + 1) * 6);
+      for (let i = 0; i <= n; i++) {
+        const st = plan.station(s0 + ((s1 - s0) * i) / n);
+        t.set([st.center.z, st.center.y, st.halfWidth, st.upper, st.lower, st.squareness], i * 6);
+      }
+      this.torso = t;
+      const R = rig.props.shape.thighRadius;
+      this.hipGuard[0] = rig.props.hip[2] + 1.1 * R;
+      this.hipGuard[1] = rig.props.hip[1] + 1.1 * R;
+    }
     this.legRestDir = [0, 1].map((side) => {
       const l = rig.idx.legs[side];
       const m = (v: Vector3) => new Vector3(v.x * SIDE_SIGN[side], v.y, v.z);
@@ -445,13 +489,15 @@ export class GroundLayer {
     // elbow). Level, so it never lines up with the near-vertical shoulder-to-wrist line as the
     // forefoot swings through a stride.
     const ea = this.elbowAt;
-    const pOut = (ea.x - S.x * sx) * T.poleOut;
+    const pOut = (ea.x - this.wallPull[side] - S.x * sx) * T.poleOut;
     const pBack = S.z - ea.z;
     _v4.x = outG.x * pOut - fwdG.x * pBack;
     _v4.y = outG.y * pOut - fwdG.y * pBack;
     _v4.z = outG.z * pOut - fwdG.z * pBack;
     const E = _v5;
     solveTwoBoneAt(S, this.lens, 0, Wt, _v4, E);
+    // A wall at the elbow: tuck the wing in against the body (next frame's pole, smoothed).
+    this.wallProbe(side, E);
     const hum = _hum.subVectors(E, S);
     const fore = _fore.subVectors(Wt, E);
     // Every wing bone keeps its dorsal face turned out from the body: the membrane between them
@@ -473,14 +519,48 @@ export class GroundLayer {
     _fd.normalize();
     aimRotation(rest[2], UP, _fd, outG, _q);
     a.setModelBlend(w.hand, _q);
+    // The finger bundle rises from the knuckle up the forearm's line as it stands, but only partly
+    // follows the forearm's swing through a stride: a reaching or trailing forefoot would otherwise
+    // sweep the folded fingers into the chest or back over the thigh.
+    const hold = T.bundleHold;
+    const bx = back.x * (1 - hold) + (up.x - fwdG.x * T.bundleLean) * hold;
+    const by = back.y * (1 - hold) + (up.y - fwdG.y * T.bundleLean) * hold;
+    const bz = back.z * (1 - hold) + (up.z - fwdG.z * T.bundleLean) * hold;
     for (let f = 0; f < 3; f++) {
       // Inner segment: up beside the forearm, bundled on its inner side and a little behind it.
       const out = T.fingerOut + T.fingerOutStep * f;
       const behind = -T.fingerBack - T.fingerBackStep * f;
-      _fd.x = back.x + outG.x * out + fwdG.x * behind;
-      _fd.y = back.y + outG.y * out + fwdG.y * behind;
-      _fd.z = back.z + outG.z * out + fwdG.z * behind;
+      _fd.x = bx + outG.x * out + fwdG.x * behind;
+      _fd.y = by + outG.y * out + fwdG.y * behind;
+      _fd.z = bz + outG.z * out + fwdG.z * behind;
       _fd.normalize();
+      // Kept out of the body: where the segment ends (its outer joint) must clear the torso by the
+      // finger's own thickness, or the bundle swings out to clear it.
+      const kn = a.pivot(w.fingers[f][0]);
+      const la = this.fingerA[f];
+      // (Along it too: a kneeling body comes down onto the bundle.) The swing out it takes, as a
+      // push at the segment's end.
+      let need = 0;
+      for (let q = 1; q <= 3; q++) {
+        const u = q / 3;
+        _tv1.x = kn.x + _fd.x * la * u;
+        _tv1.y = kn.y + _fd.y * la * u;
+        _tv1.z = kn.z + _fd.z * la * u;
+        this.torsoClear(_tv1, side);
+        need = Math.max(need, this.clear[0] / u);
+      }
+      this.clear[0] = need;
+      // ...and it stays ahead of the thigh below the thigh's top, however far a trailing forefoot
+      // carries the knuckle back.
+      const behindHip = this.hipGuard[0] - _tv1.z;
+      const fwdNeed = _tv1.y < this.hipGuard[1] && behindHip > 0 ? behindHip / la : 0;
+      if (this.clear[0] > 0 || fwdNeed > 0) {
+        const k = this.clear[0] / la;
+        _fd.x += outG.x * k + fwdG.x * fwdNeed;
+        _fd.y += outG.y * k + fwdG.y * fwdNeed;
+        _fd.z += outG.z * k + fwdG.z * fwdNeed;
+        _fd.normalize();
+      }
       aimRotation(rest[3 + f], UP, _fd, outG, _q);
       a.setModelBlend(w.fingers[f][0], _q);
       // Outer segment: folded back along the flank, tips toward the tail. The fan closes in the
@@ -492,19 +572,39 @@ export class GroundLayer {
       // Pitched up just enough to bring the tip to its height on the flank.
       const pv = a.pivot(w.fingers[f][1]);
       const tipY = this.flankMid[0] + (f === 0 ? T.tipH0 : T.tipH - T.tipHStep * (f - 1)) * this.flankMid[1];
-      const sinR = (tipY - pv.y) / this.fingerB[f];
-      const rise = sinR >= 1 ? T.riseMax : sinR <= -1 ? T.riseMin : clamp(Math.asin(sinR), T.riseMin, T.riseMax);
+      const lb = this.fingerB[f];
+      const sinR = (tipY - pv.y) / lb;
+      let rise = sinR >= 1 ? T.riseMax : sinR <= -1 ? T.riseMin : clamp(Math.asin(sinR), T.riseMin, T.riseMax);
+      // ...and steeper still if the tip would reach back over the thigh below its top: the folded
+      // fingertips ride ahead of or above the hind leg, never into it.
+      const hipZ = this.hipGuard[0];
+      if (pv.y + Math.sin(rise) * lb < this.hipGuard[1] && pv.z - Math.cos(rise) * lb < hipZ) {
+        const c = (pv.z - hipZ) / lb;
+        rise = Math.max(rise, c >= 1 ? 0 : c <= -1 ? Math.PI * 0.5 : Math.min(Math.PI * 0.5, Math.acos(c)));
+      }
       const sxh = Math.sin(rise * 0.5);
       const cxh = Math.cos(rise * 0.5);
-      const close = this.fanClose;
-      const syh = close[side * 6 + f * 2];
-      const cyh = close[side * 6 + f * 2 + 1];
-      const qa = _qa;
-      qa[0] = sxh * cyh;
-      qa[1] = cxh * syh;
-      qa[2] = sxh * syh;
-      qa[3] = cxh * cyh;
-      _q.fromArray(qa);
+      let yaw = this.fanClose[side * 3 + f];
+      for (let pass = 0; pass < 2; pass++) {
+        const syh = Math.sin(yaw * 0.5);
+        const cyh = Math.cos(yaw * 0.5);
+        const qa = _qa;
+        qa[0] = sxh * cyh;
+        qa[1] = cxh * syh;
+        qa[2] = sxh * syh;
+        qa[3] = cxh * cyh;
+        _q.fromArray(qa);
+        if (pass === 1) break;
+        // The tip clears the flank too: turned out from it as far as it needs.
+        _tv3.copy(rest[3 + f]).applyQuaternion(_q);
+        _tv1.x = pv.x + _tv3.x * lb;
+        _tv1.y = pv.y + _tv3.y * lb;
+        _tv1.z = pv.z + _tv3.z * lb;
+        this.torsoClear(_tv1, side);
+        if (!(this.clear[0] > 0)) break;
+        // (Turning about +Y by +a swings a backward-pointing tip toward -X.)
+        yaw -= sx * Math.min(0.35, Math.atan2(this.clear[0], lb));
+      }
       if (f === 2) this.trailRoll(side, _q);
       a.setModelBlend(w.fingers[f][1], _q);
     }
@@ -574,6 +674,58 @@ export class GroundLayer {
   }
 
   /**
+   * Environment awareness for the folded wing (C16): the distance from the elbow (body frame `E`)
+   * to the nearest solid; within reach, the wing is drawn in toward the body (wallPull, eased),
+   * and lets go again in open ground. One distance query per wing per frame, and only for a
+   * wyvern given a terrain with a distance field (the player's own).
+   */
+  private wallProbe(side: number, E: Vector3): void {
+    const t = this.terrain;
+    const f = this.f;
+    let target = 0;
+    if (t && t.distance) {
+      const r = 0.17 * this.armR;
+      const d = t.distance(this.a.toWorld(E, _tv4)) - r;
+      target = d < FOLD.wallReach ? Math.min(FOLD.wallMax, FOLD.wallReach - d) : 0;
+    }
+    const w = this.wallPull;
+    w[side] += (target - w[side]) * clamp01(f.dt * 6);
+  }
+
+  /**
+   * How far a body-frame point on `side` must move out from the body to clear the torso's flank by
+   * a finger's thickness (into this.clear[0]; 0 when clear). The trunk is taken as the root carries
+   * it (the spine's small bends ignored).
+   */
+  private torsoClear(p: Vector3, side: number): void {
+    const a = this.a;
+    // Into the root's frame.
+    const rq = a.modelQ[this.rig.idx.root];
+    const rp = a.modelP[this.rig.idx.root];
+    _tv2.subVectors(p, rp).applyQuaternion(_qr.copy(rq).invert());
+    const T = this.torso;
+    const n = T.length / 6;
+    // Nearest section by z (they are in order, front to back).
+    let best = 0;
+    let bd = Infinity;
+    for (let i = 0; i < n; i++) {
+      const d = Math.abs(T[i * 6] - _tv2.z);
+      if (d < bd) {
+        bd = d;
+        best = i;
+      }
+    }
+    const o = best * 6;
+    const dy = _tv2.y - T[o + 1];
+    const hv = dy > 0 ? T[o + 3] : T[o + 4];
+    const sq = T[o + 5];
+    const ty = Math.min(1, Math.abs(dy) / hv);
+    const width = bd > 0.3 ? 0 : T[o + 2] * Math.pow(Math.max(0, 1 - Math.pow(ty, sq)), 1 / sq);
+    const need = width + FOLD.fingerClear * this.armR - _tv2.x * SIDE_SIGN[side];
+    this.clear[0] = need > 0 && width > 0 ? need : 0;
+  }
+
+  /**
    * The fold helpers' transforms this frame (body frame, composed onto their rest hold by
    * Wyvern): with the wings folded on the ground the inner panel's interior is drawn in toward the
    * folded arm, so the membrane bunches into a narrow pleated bundle beside it instead of
@@ -592,10 +744,10 @@ export class GroundLayer {
         continue;
       }
       const sx = SIDE_SIGN[side];
-      // About the folded elbow (fore and aft, up and down), and across about the flank or the
-      // elbow's inner face, whichever is further in.
+      // About the folded elbow (fore and aft, up and down), and across about the elbow's inner
+      // face or the shoulders' flank, whichever is further out (never drawn into the body).
       const el = a.modelP[this.rig.idx.wings[side].forearm];
-      const px = sx * Math.min(el.x * sx - r, this.flankX * T.helperFlank);
+      const px = sx * Math.max(el.x * sx - r, this.flankX * T.helperFlank);
       const kx = 1 + (T.helperX - 1) * fold;
       const ky = 1 + (T.helperY - 1) * fold;
       const kz = 1 + (T.helperZ - 1) * fold;

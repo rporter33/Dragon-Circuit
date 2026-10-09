@@ -35,7 +35,7 @@ import type { WyvernUniforms } from './materials';
 import type { Bone } from 'three';
 import { AnimFrame, LEFT, UP } from './anim/frame';
 import { FlightLayer } from './anim/flight';
-import { GroundLayer } from './anim/ground';
+import { GroundLayer, type GroundTerrain } from './anim/ground';
 import type { Gait } from './gait';
 import { LifeLayer, type IdleCue } from './anim/life';
 import { TailLayer } from './anim/tail';
@@ -123,7 +123,11 @@ export class WyvernAnimator {
   /** Trunk Euler angles this frame: root, spine, chest, pelvis (x, y, z each). */
   private readonly trunkAng = new Float64Array(12);
 
-  constructor(rig: RigDef, terrain?: Pick<TerrainQuery, 'groundAt'>) {
+  /**
+   * `terrain`: ground under the feet (groundAt) and, for the player's own wyvern, the solids' distance
+   * field (distance) so the folded wings keep off walls; ghosts and showcase stand-ins pass none.
+   */
+  constructor(rig: RigDef, terrain?: GroundTerrain) {
     this.rig = rig;
     this.heft = heftOf(BREEDS[rig.props.breed].mass);
     const B = rig.bones;
