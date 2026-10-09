@@ -55,13 +55,14 @@ describe('proportions', { timeout: 30000 }, () => {
     }
   });
 
-  it('is about 14 m nose to tail for the harrier, smaller for the skimmer', () => {
+  it('is about 11 m nose to tail for the harrier (a flier: the wings outspan the body), smaller for the skimmer', () => {
     const len = (b: BreedId) => {
       const r = buildRig(b);
       return r.mouth.z - r.tailTip.z;
     };
-    expect(len('harrier')).toBeGreaterThan(12.5);
-    expect(len('harrier')).toBeLessThan(15.5);
+    expect(len('harrier')).toBeGreaterThan(10.5);
+    expect(len('harrier')).toBeLessThan(12.5);
+    for (const b of BREED_ORDER) expect(len(b)).toBeLessThan(BREEDS[b].wingspan);
     expect(len('skimmer')).toBeLessThan(len('harrier'));
     expect(len('galewing')).toBeGreaterThan(len('skimmer'));
   });

@@ -14,6 +14,7 @@
 import { Vector3 } from 'three';
 import { clamp, lerp, smoothstep } from '../../core/math';
 import { LEG_ANGLES, azDir, computeProportions, type WyvernProportions } from './proportions';
+import { keyed } from './parts/shape';
 import type { BreedId } from '../../core/types';
 
 export interface BoneDef {
@@ -76,6 +77,9 @@ export interface BodyStation {
 
 export const SIDE_SIGN = [1, -1] as const;
 
+/** Half-width (m) of the window the body tube's section frames are smoothed over. */
+const TANGENT_WINDOW = 0.45;
+
 export const NECK_BONES = 6;
 /**
  * Saddle seat along the torso (fraction of torso length ahead of the body center): over the
@@ -137,7 +141,7 @@ export class BodyPlan {
   readonly keyS: number[] = [];
   readonly length: number;
   /** Named key indices for the parts of the tube. */
-  readonly marks: { neckTop: number; neckBase: number; chest: number; mid: number; rear: number; tailBase: number; tip: number };
+  readonly marks: { neckTop: number; neckBase: number; shoulder: number; chest: number; mid: number; rear: number; tailBase: number; tip: number };
   private keys: PlanKey[];
   private samples: Vector3[] = [];
   private sampleS: number[] = [];
@@ -186,7 +190,10 @@ export class BodyPlan {
   /** Full cross-section frame at arc length s. */
   station(s: number): BodyStation {
     const center = this.point(s, new Vector3());
-    const e = Math.min(0.05, this.length * 0.001);
+    // Cross-sections face a tangent smoothed over about a body radius: where the centreline
+    // bends tighter than the section is deep (neck base, shoulders, throat), sections normal to
+    // the local tangent would fan out and fold the inner side of the bend over itself.
+    const e = TANGENT_WINDOW;
     const a = this.point(Math.max(0, s - e), new Vector3());
     const b = this.point(Math.min(this.length, s + e), new Vector3());
     const tangent = b.sub(a).normalize();
@@ -281,6 +288,17 @@ function catmull(pts: Vector3[], i: number, t: number, out: Vector3): Vector3 {
 // ---------------------------------------------------------------------------------------------
 
 const v = (a: [number, number, number] | number[]) => new Vector3(a[0], a[1], a[2]);
+
+/** Tail radius over its length (fraction of the base radius at arc-length fraction t). */
+export function tailTaper(t: number): number {
+  return Math.max(0.06, keyed(TAIL_TAPER, t));
+}
+const TAIL_TAPER: [number, number][] = [
+  [0, 1],
+  [0.25, 0.86],
+  [0.6, 0.45],
+  [1, 0.06],
+];
 
 const rigCache = new Map<BreedId, RigDef>();
 
@@ -402,7 +420,8 @@ export function buildRig(breed: BreedId): RigDef {
   const hw = S.torsoHalfWidth;
   const hh = S.torsoHalfHeight;
   const nk = (i: number) => bones[neck[i]].pos;
-  const neckR = (t: number) => lerp(S.neckTopRadius, S.neckBaseRadius, Math.pow(t, 1.4));
+  // The neck's mass sits at its base, flowing into the shoulders; the upper neck stays lean.
+  const neckR = (t: number) => lerp(S.neckTopRadius, S.neckBaseRadius, Math.pow(t, 2.2));
   const keys: PlanKey[] = [];
   keys.push({ p: headPos.clone().add(new Vector3(0, -0.05 * S.headHalfHeight, 0.18 * L)), hw: 0.7 * S.neckTopRadius, hu: 0.85 * S.neckTopRadius, hl: 0.85 * S.neckTopRadius, sq: 2 });
   keys.push({ p: headPos.clone(), hw: S.neckTopRadius * 0.95, hu: S.neckTopRadius * 1.05, hl: S.neckTopRadius * 1.08, sq: 2 });
@@ -412,26 +431,38 @@ export function buildRig(breed: BreedId): RigDef {
     const r = neckR(t);
     keys.push({ p: nk(i).clone(), hw: r * 0.95, hu: r, hl: r * 1.12, sq: 2 });
   }
-  keys.push({ p: nk(0).clone().add(new Vector3(0, -0.08 * hh, -0.02 * T)), hw: S.neckBaseRadius * 1.18, hu: S.neckBaseRadius * 1.05, hl: S.neckBaseRadius * 1.45, sq: 2.1 });
+  keys.push({ p: nk(0).clone().add(new Vector3(0, -0.08 * hh, -0.02 * T)), hw: S.neckBaseRadius * 1.18, hu: S.neckBaseRadius * 1.05, hl: S.neckBaseRadius * 1.6, sq: 2.1 });
   const neckBaseKey = keys.length - 1;
-  keys.push({ p: new Vector3(0, 0.06 * hh, 0.26 * T), hw: hw * 0.95, hu: hh * 0.92, hl: hh * 1.02 + S.keel, sq: 2.2 });
+  // Shoulder girdle: the flight muscles make the shoulders the broadest, deepest part of the
+  // body (as in every bird, bat and pterosaur), with the sternal keel deepest under them; the
+  // ribcage behind narrows a little, and the belly rises toward the hips like a flier's waist.
+  // (The centreline rides high here so it bends gently out of the neck base: a sharp bend would
+  // fan the cross-sections and fold the back over itself. Top and keel line are what matter.)
+  keys.push({ p: new Vector3(0, 0.17 * hh, 0.3 * T), hw: hw * 1.12, hu: hh * 0.91, hl: hh * 1.14 + S.keel * 1.3, sq: 2.4 });
+  const shoulderKey = keys.length - 1;
+  keys.push({ p: new Vector3(0, 0.06 * hh, 0.14 * T), hw: hw * 1.05, hu: hh * 0.92, hl: hh + S.keel, sq: 2.25 });
   const chestKey = keys.length - 1;
-  keys.push({ p: new Vector3(0, 0.0, 0.0), hw, hu: hh * 0.95, hl: hh * 1.0 + S.keel * 0.5, sq: 2.25 });
+  keys.push({ p: new Vector3(0, 0.0, 0.0), hw: hw * 0.94, hu: hh * 0.95, hl: hh * 0.92 + S.keel * 0.3, sq: 2.25 });
   const midKey = keys.length - 1;
-  keys.push({ p: new Vector3(0, 0.02 * hh, -0.3 * T), hw: hw * 0.86, hu: hh * 0.86, hl: hh * 0.8, sq: 2.2 });
+  // Hindquarters: the thigh muscles blend into a massive tail root (the caudofemoralis that
+  // drives the legs), and the tail stays thick through its first quarter, then flattens side to
+  // side into a crocodilian rudder, taller than it is wide.
+  keys.push({ p: new Vector3(0, 0.02 * hh, -0.3 * T), hw: hw * 0.95, hu: hh * 0.86, hl: hh * 0.8, sq: 2.2 });
   const rearKey = keys.length - 1;
-  keys.push({ p: tailBase.clone(), hw: S.tailBaseRadius * 1.12, hu: S.tailBaseRadius * 1.08, hl: S.tailBaseRadius, sq: 2.05 });
+  keys.push({ p: tailBase.clone(), hw: S.tailBaseRadius * 1.22, hu: S.tailBaseRadius * 1.08, hl: S.tailBaseRadius, sq: 2.05 });
   const tailBaseKey = keys.length - 1;
+  // Bone positions are spaced by a geometric ratio, so key the profile by arc length (t).
   for (let i = 1; i < TAIL_BONES; i++) {
-    const t = i / TAIL_BONES;
-    const r = S.tailBaseRadius * Math.max(0.06, Math.pow(1 - t, 0.68));
-    keys.push({ p: bones[tail[i]].pos.clone(), hw: r * 1.08, hu: r, hl: r * 0.92, sq: 2 });
+    const t = (tailBase.distanceTo(bones[tail[i]].pos)) / S.tailLength;
+    const r = S.tailBaseRadius * tailTaper(t);
+    keys.push({ p: bones[tail[i]].pos.clone(), hw: r * (1.05 - 0.35 * t), hu: r * (1 + 0.3 * t), hl: r * (0.95 + 0.2 * t), sq: 2 });
   }
   const tipR = S.tailBaseRadius * 0.05;
   keys.push({ p: tailTip.clone(), hw: tipR, hu: tipR, hl: tipR, sq: 2 });
   const plan = new BodyPlan(keys, {
     neckTop: neckTopKey,
     neckBase: neckBaseKey,
+    shoulder: shoulderKey,
     chest: chestKey,
     mid: midKey,
     rear: rearKey,
