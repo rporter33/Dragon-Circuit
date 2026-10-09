@@ -593,14 +593,7 @@ describe('no clipping: the wyvern never passes through itself (Q17, C16)', { tim
         for (const [name, run] of Object.entries(SELF_POSES)) {
           if (saddle !== 'rider' && name !== 'stand' && name !== 'flap') continue;
           const pen = selfPenetration(breed, saddle, run);
-          for (const k of PEN_PAIRS) {
-            // KNOWN GAP (B8 regression, temporary): B8 lengthened the whole arm 16-19%, and the
-            // longer folded forearm's elbow now rests into the haunch standing and kneeling. A13
-            // returns the humerus and forearm to their old lengths (the span goes into the hand);
-            // then this allowance goes and every pair is held to 2 cm here too (C3c).
-            const groundFold = (name === 'stand' || name === 'lookback' || name === 'kneel') && (k === 'wing-leg' || k === 'wing-body');
-            expect(pen[k], `${breed} ${saddle} ${name} ${k}`).toBeLessThan(groundFold ? 0.3 : 0.02);
-          }
+          for (const k of PEN_PAIRS) expect(pen[k], `${breed} ${saddle} ${name} ${k}`).toBeLessThan(0.02);
         }
       }
     });
@@ -693,11 +686,10 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
         // From the side it leans forward from the elbow tucked back against the flank, like a
         // bat's or a pterosaur's on the ground. (How far is geometry: an arm this long for the
         // shoulder's height must fold, and with the elbow held against the flank the fold can only
-        // go back. B8's 18% longer arms put the long-armed breeds, skimmer and galewing, at 38.5-
-        // 39 deg at best with the wrist under the shoulder and the humerus clear of a seated rider's
-        // stirrup foot; it was 36 deg before.)
+        // go back. With the arm at its own length again (A13: the span is in the wingtip finger's
+        // outer phalanx) it is 9-35 deg.)
         expect(s.foreSideDeg, `${breed} forearm from the side`).toBeGreaterThan(0);
-        expect(s.foreSideDeg, `${breed} forearm from the side`).toBeLessThan(42);
+        expect(s.foreSideDeg, `${breed} forearm from the side`).toBeLessThan(38);
         expect(Math.abs(s.elbow.x) - f.maxHalfWidth, `${breed} elbow tucked in`).toBeLessThan(0.3);
       }
       // Seen from the front, the hand-wing panels stay within 0.35 m of the body's silhouette (the

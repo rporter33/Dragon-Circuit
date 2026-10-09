@@ -31,11 +31,11 @@ export const KNEEL = {
   pitch: 7 * DEG,
   roll: 5 * DEG,
   /** The keel's clearance above the ground at a full kneel (× standHeight), and the depth's bounds. */
-  clear: 0.06,
+  clear: 0.17,
   minDepth: 0.3,
   maxDepth: 0.7,
   /** The forefeet's rest spots: forward (× forearm), and out (m; the near side's extra). */
-  fwd: 0.55,
+  fwd: 0.75,
   out: 0.1,
   nearOut: 0.3,
   /** The metatarsus's angle from vertical at a full kneel (rad): nearly flat, the heels down. */
