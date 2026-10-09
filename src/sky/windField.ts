@@ -29,7 +29,7 @@ export interface WindState {
 }
 
 /** Thermal core (fraction of radius) that blows at full strength. */
-export const THERMAL_CORE = 0.45;
+export const THERMAL_CORE = 0.55;
 /** Beyond this fraction of the radius a thermal does nothing. */
 export const THERMAL_EDGE = 1.2;
 /** Height over which a thermal ramps in above its base, and the fraction of the column it fades over at the top. */

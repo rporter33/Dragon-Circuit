@@ -147,8 +147,13 @@ export interface AutopilotTuning {
   lookAheadMax: number;
   /** Dive with folded wings when the line is this steep (rad, negative). */
   tuckBelow: number;
-  /** Orbit radius when circling in a thermal (m). */
+  /**
+   * Orbit radius when circling in a thermal (m): at least this, and wide enough that the breed
+   * circles at its slow circling speed without banking past `orbitBank` (a heavy wyvern
+   * flies a wider circle than a light one, as a steep bank would sink it out of the lift).
+   */
   orbitRadius: number;
+  orbitBank: number;
   /** Flap to hold at least this airspeed (m/s). */
   paceSpeed: number;
 }
@@ -159,7 +164,8 @@ export const AUTOPILOT_DEFAULTS: AutopilotTuning = {
   lookAheadMin: 35,
   lookAheadMax: 100,
   tuckBelow: -22 * DEG,
-  orbitRadius: 26,
+  orbitRadius: 45,
+  orbitBank: 42 * DEG,
   paceSpeed: 40,
 };
 
@@ -180,12 +186,14 @@ export class Autopilot {
   /** Height progress check while circling: give up on a thermal that has stopped working. */
   private circleCheckT = 0;
   private circleCheckY = 0;
+  debugVLimit = 0;
 
   constructor(
     readonly path: CoursePath,
     tuning: Partial<AutopilotTuning> = {},
   ) {
     this.tuning = { ...AUTOPILOT_DEFAULTS, ...tuning };
+    (globalThis as { __ap?: unknown }).__ap = this; // DEBUG
   }
 
   /** Progress can't run past this (the next ring not yet flown through, plus a little). */
@@ -235,7 +243,13 @@ export class Autopilot {
           this.circlingNode = i;
           this.circleCheckT = 0;
           this.circleCheckY = p.y;
-        } else this.climbed.add(i);
+        } else {
+          // High enough already: no need for this thermal. Cut the corner toward the next node
+          // instead of flying the hook the line makes around it (that hook is shaped for
+          // circling, which turns the wyvern round anyway).
+          this.climbed.add(i);
+          if (process.env.CUT && i + 1 < path.nodes.length) this.s = Math.max(this.s, path.nodeS[i] + 0.3 * (path.nodeS[i + 1] - path.nodeS[i]));
+        }
       }
     }
   }
@@ -268,15 +282,23 @@ export class Autopilot {
     let gammaCmd = 0;
     let vLimit = Infinity;
     if (circling) {
-      // Orbit the thermal core in a left-hand turn (heading increasing), pulled in toward the
-      // orbit radius: the tangent of that orbit at radial direction u is (u.z, −u.x).
+      // Orbit the thermal core in a left-hand turn by pure pursuit of a carrot on the orbit circle,
+      // a little ahead of the wyvern's bearing from the center: from inside the core it spirals
+      // out onto the circle, from outside it heads in, and on the circle it holds it. Heavy breeds
+      // fly a wider circle so they needn't bank steeply.
       const c = path.nodes[this.circlingNode].position;
       const rx = p.x - c.x;
       const rz = p.z - c.z;
-      const r = Math.max(1e-3, Math.hypot(rx, rz));
-      const tangent = Math.atan2(rz / r, -rx / r);
-      const desired = tangent + clamp((r - T.orbitRadius) * 0.03, -0.9, 0.9);
-      turnRate = clamp(wrapAngle(desired - heading) * 1.6 + V / Math.max(T.orbitRadius, r), -1.2, 1.2);
+      const vCircle = (1.25 * derived.vStall) / Math.sqrt(Math.cos(T.orbitBank));
+      const orbit = Math.max(T.orbitRadius, (vCircle * vCircle) / (9.81 * Math.tan(T.orbitBank)));
+      const phi = Math.atan2(rz, rx) - 0.75;
+      const cx = c.x + Math.cos(phi) * orbit;
+      const cz = c.z + Math.sin(phi) * orbit;
+      const dx = cx - p.x;
+      const dz = cz - p.z;
+      const dh = Math.max(1, Math.hypot(dx, dz));
+      const err = wrapAngle(Math.atan2(dx, dz) - heading);
+      turnRate = clamp((2 * V * Math.sin(err)) / dh, -1.2, 1.2);
     } else {
       // Pure pursuit of a carrot on the line ahead (or of the point to come back to).
       const L = clamp(V * T.lookAheadTime, T.lookAheadMin, T.lookAheadMax);
@@ -292,34 +314,50 @@ export class Autopilot {
       const surplus = clamp01((V - 0.95 * derived.vCruise) / (0.8 * derived.vCruise));
       const climbable = 3 * DEG + 30 * DEG * surplus + (canFlap ? 6 * DEG : 0);
       gammaCmd = clamp(Math.atan2(_carrot.y - p.y, dh), -50 * DEG, climbable);
-      // Slow down for the tightest bend in the next few seconds.
-      const k = path.maxCurvature(this.s, this.s + Math.max(60, V * 3.5));
-      if (k > 1e-4) vLimit = Math.sqrt((9.81 * Math.tan(T.maxBank * 0.8)) / k);
+      // Slow down for the tightest bend in the next few seconds — further ahead for a breed that
+      // takes its time to roll from one bank into the other.
+      const k = path.maxCurvature(this.s, this.s + Math.max(60, V * (3.5 + 1.2 / maxRollRate)));
+      // A slow-rolling breed also needs the time to reverse its bank: it takes bends slower.
+      if (k > 1e-4) vLimit = Math.sqrt((9.81 * Math.tan(T.maxBank * 0.8)) / k) * clamp(maxRollRate / 1.6, 0.75, 1);
+      this.debugVLimit = vLimit;
     }
-    const maxTurn = (9.81 * Math.tan(T.maxBank)) / V;
+    // Circling, a steep bank only sinks the wyvern out of the lift: stay near the orbit's bank.
+    const bankLimit = circling ? Math.min(T.maxBank, T.orbitBank + 8 * DEG) : T.maxBank;
+    const maxTurn = (9.81 * Math.tan(bankLimit)) / V;
     turnRate = clamp(turnRate, -maxTurn, maxTurn);
 
     // Lateral: coordinated bank for the turn rate (positive bank = right; right turns lower the
     // heading), leading the bank by the roll rate so heavy breeds don't overshoot and wallow.
-    const bankCmd = clamp(-Math.atan((turnRate * V) / 9.81), -T.maxBank, T.maxBank);
+    const bankCmd = clamp(-Math.atan((turnRate * V) / 9.81), -bankLimit, bankLimit);
     const bankLead = bank + state.angularVelocity.z * 0.45;
     out.roll = clamp((2.0 * (bankCmd - bankLead)) / maxRollRate, -1, 1);
     out.yaw = 0;
 
     // Longitudinal.
+    let brake = 0;
     const loadFF = 0.38 * (1 / Math.max(0.35, Math.cos(bank)) - 1);
     if (circling) {
       // Hold a slow, efficient airspeed and let the rising air do the climbing.
       // Rising air swings the angle of attack, so damp the flight-path rate as well.
       const vTarget = (1.25 * derived.vStall) / Math.sqrt(Math.max(0.35, Math.cos(bank)));
       const gammaRate = this.prevGamma === null ? 0 : (gamma - this.prevGamma) / dt;
-      out.pitch = clamp(0.14 * (state.airspeed - vTarget) + loadFF - 0.5 * gammaRate - 1.5 * Math.max(0, gamma - 0.3), -0.6, 0.85);
+      // Arriving fast (a heavy breed that flapped its way in): don't zoom out of the core trying
+      // to slow down; hold the turn and air-brake the excess off.
+      const excess = state.airspeed - vTarget;
+      // Sinking hard in the turn means it isn't pulling enough to hold the circle (heavy breeds).
+      const sinking = 0.07 * Math.max(0, -state.velocity.y - 1);
+      out.pitch = clamp(0.14 * Math.min(excess, 4) + loadFF + sinking - 0.5 * gammaRate - 1.5 * Math.max(0, gamma - 0.3), -0.6, 0.85);
+      brake = clamp01((excess - 5) / 10) * 0.7;
       this.gammaInt = 0;
     } else {
+      // Far too fast for a hairpin ahead on a level stretch: air-brake, pushing against the
+      // flare's lift so the line stays put. (Not on a descending line: easing off the flaps is
+      // enough there, and a flare would throw the wyvern above the next ring.)
+      if (gammaCmd > -6 * DEG && vLimit < 0.65 * state.airspeed) brake = clamp01((state.airspeed - vLimit - 6) / 10) * 0.35;
       const err = gammaCmd - gamma;
       this.gammaInt = clamp(this.gammaInt + err * dt, -0.6, 0.6);
       const gammaRate = this.prevGamma === null ? 0 : (gamma - this.prevGamma) / dt;
-      out.pitch = clamp(2.2 * err + 0.6 * this.gammaInt - 0.5 * gammaRate + loadFF, -1, 0.9);
+      out.pitch = clamp(2.2 * err + 0.6 * this.gammaInt - 0.5 * gammaRate + loadFF - 1.4 * brake, -1, 0.9);
     }
     this.prevGamma = gamma;
     const slow = state.airspeed < 1.2 * derived.vStall;
@@ -330,14 +368,15 @@ export class Autopilot {
     if (state.winded || state.stamina < 0.12) this.resting = true;
     else if (state.stamina > 0.45) this.resting = false;
     const wantSpeed = state.airspeed < Math.min(T.paceSpeed, vLimit);
-    const needClimb = gammaCmd > gamma - 2 * DEG && gammaCmd > -4 * DEG;
+    // (Not when already too fast for a bend ahead: the climb can come from that speed.)
+    const needClimb = gammaCmd > gamma - 2 * DEG && gammaCmd > -4 * DEG && state.airspeed < vLimit + 3;
     // Circling, the thermal does the work: beats only keep the speed up.
     out.flap = circling ? (state.airspeed < 1.1 * derived.vStall && !state.winded ? 1 : 0) : (!this.resting && (wantSpeed || needClimb)) || (slow && !state.winded) ? 1 : 0;
 
-    // Tuck into steep dives while no bend is coming. (No air-braking: a flare's extra lift would
-    // throw the line upward; easing off the flaps is how it slows for bends.)
+    // Tuck into steep dives while no bend is coming. (No air-braking on the line: a flare's extra
+    // lift would throw it upward; easing off the flaps is how it slows for bends.)
     out.tuck = !circling && gammaCmd < T.tuckBelow && state.airspeed < Math.min(80, vLimit - 5) && Math.abs(bankCmd - bank) < 0.35 ? 1 : 0;
-    out.flare = 0;
+    out.flare = brake;
     return out;
   }
 }

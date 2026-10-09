@@ -3,7 +3,10 @@ import { Vector3 } from 'three';
 import { LAYOUT, type IslandDef, type WorldLayout } from '../world/layout';
 import { BOUNDARY_PUSH, THERMAL_CORE, THERMAL_EDGE, WindField } from './windField';
 import { BREEDS } from '../flight/breeds';
-import { SIM_DT, launch, neutralInput, stillAir } from '../flight/telemetry';
+import { SIM_DT, launch, neutralInput, stillAir, yawQuat } from '../flight/telemetry';
+import { FlightModel } from '../flight/FlightModel';
+import { BREED_ORDER } from '../flight/breeds';
+import { Autopilot, CoursePath } from '../race/autopilot';
 
 /** A lonely island and a lonely thermal far apart, so each effect can be measured on its own. */
 function testLayout(): WorldLayout {
@@ -229,4 +232,42 @@ describe('flying the field', () => {
   it('without it the same glide sinks', () => {
     expect(glide(0)).toBeLessThan(-5);
   });
+});
+
+describe('circling the real thermals', () => {
+  /** Climb rate (m/s) of a breed circling one of the layout's thermals with the race autopilot. */
+  function circle(breedId: (typeof BREED_ORDER)[number], thermal: number): number {
+    const th = LAYOUT.thermals[thermal];
+    const field = new WindField({ ...LAYOUT, thermals: [th] });
+    field.state.wind.set(0, 0, 0);
+    field.state.gust = 0;
+    const env = { windAt: (p: Vector3, out: Vector3) => field.windAt(p, out), terrain: stillAir().terrain };
+    const m = new FlightModel(BREEDS[breedId]);
+    m.reset(new Vector3(th.x, 300, th.z - 160), yawQuat(0), new Vector3(0, 0, m.derived.vCruise));
+    const pilot = new Autopilot(
+      new CoursePath([
+        { position: new Vector3(th.x, 300, th.z - 160), tangent: new Vector3(0, 0, 1) },
+        { position: new Vector3(th.x, 300, th.z), tangent: new Vector3(0, 0, 1), climbTo: 3000 },
+        { position: new Vector3(th.x, 300, th.z + 400), tangent: new Vector3(0, 0, 1) },
+      ]),
+    );
+    const input = neutralInput();
+    let y0 = NaN;
+    for (let i = 0; i < 70 / SIM_DT; i++) {
+      pilot.steer(m.state, m.derived, BREEDS[breedId].maxRollRate, SIM_DT, input);
+      m.step(SIM_DT, input, env);
+      if (i === Math.round(15 / SIM_DT)) y0 = m.state.position.y;
+    }
+    return (m.state.position.y - y0) / 55;
+  }
+
+  // Cores wider than any wyvern's circling turn: a thermal is a real way up.
+  it('a harrier circling thermal 0 climbs over 2 m/s without a wingbeat', () => {
+    expect(circle('harrier', 0)).toBeGreaterThan(2);
+  });
+
+  it('even the ironback climbs over 1 m/s in the 12 m/s thermal, and every breed in every one of the first four', () => {
+    expect(circle('ironback', 3)).toBeGreaterThan(1);
+    for (const id of BREED_ORDER) for (let t = 0; t < 4; t++) expect(circle(id, t), `${id} thermal ${t}`).toBeGreaterThan(0.5);
+  }, 60_000);
 });
