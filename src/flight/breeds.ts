@@ -10,14 +10,25 @@
 // the 1 g stall speed. Climb is a held-flap climb; stamina is seconds of full flapping (×1.4 when
 // Rested), and an empty meter still gives weak beats.
 //
-//              cruise  stall  best glide  tucked dive  roll rate  roll in/out  climb    stamina  beat
-//   harrier    24 m/s  14.5   8.9 : 1     89 m/s       1.76 r/s   0.34/0.19 s  5.0 m/s  13.5 s   1.45 Hz
-//   skimmer    22      13.3   7.8         82           2.53       0.33/0.17    5.5      10       2.1
-//   galewing   22      13.3   12.3        83           1.01       0.62/0.31    3.4      16.5     0.95
-//   ironback   27      16.4   8.3         98           1.16       0.48/0.28    3.4      12       1.0
+//              cruise  stall  best glide  tucked dive  roll rate  roll in/out  climb    stamina  beat     down
+//   harrier    24 m/s  14.5   8.9 : 1     89 m/s       1.76 r/s   0.34/0.19 s  5.0 m/s  13.5 s   1.15 Hz  0.57
+//   skimmer    22      13.3   7.8         82           2.53       0.33/0.17    5.5      10       1.6      0.54
+//   galewing   22      13.3   12.3        83           1.01       0.62/0.31    3.4      16.5     0.75     0.60
+//   ironback   27      16.4   8.3         98           1.16       0.48/0.28    3.3      12       1.0      0.62
 //
-// Big breeds beat slowly, and each downstroke is a bigger surge (thrust ÷ rate per kg: galewing
-// 16.9, ironback 16.3, harrier 15.2, skimmer 12.2 N·s/kg).
+// Wingbeats are size-true (FANIM-04: Pennycuick's scaling for each breed's mass, span and area
+// gives 0.6–0.9 Hz; the skimmer stays the quick-winged breed). `down` is the share of each beat
+// spent on the power stroke (big flyers drive down for longer than they recover). The flight
+// model advances the beat at flapRate, so thrust per SECOND is the peak × down/2 whatever the
+// rate: a slower beat is a longer, bigger surge for the same work. flapThrust/flapLift are the
+// stroke's peak, set so the cycle mean matches an even (down 0.5) stroke of the earlier tuning
+// (peak × 1/(2·down)). Against the 1.45/2.1/0.95/1.0 Hz even-stroke tuning: cruise, glide, dive,
+// roll and a hands-off thermal are unchanged; held-flap climb within ±0.8 %, endurance −1.4 to
+// +0.5 %, stamina drain per second unchanged, level flapping speed +0.2 %, a flapping thermal
+// climb +1 to +2 %; every breed still finishes every race course clean with a medal, 0.2–1.9 %
+// faster (a press now drives the downstroke at once, with no wind-up). Each downstroke adds
+// about thrust × down/2 ÷ rate per kg: galewing 5.4, harrier 4.8, ironback 4.1, skimmer 4.0 m/s
+// before drag.
 //
 // The 0..1 display ratings below are read off that table: speed (dive + top flapping speed),
 // agility (roll rate), glide (best glide ratio), power (sustained climb), stamina (seconds).
@@ -29,6 +40,9 @@ function inducedK(span: number, area: number, oswald = 0.8): number {
   const ar = (span * span) / area;
   return 1 / (Math.PI * oswald * ar);
 }
+
+/** Downstroke fraction of a beat for a breed that doesn't give its own (BreedStats.downFrac). */
+export const DEFAULT_DOWN_FRAC = 0.5;
 
 export const BREEDS: Record<BreedId, BreedStats> = {
   harrier: {
@@ -44,10 +58,10 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     stallAngle: 17 * DEG,
     cd0: 0.0285,
     inducedK: inducedK(13, 38),
-    flapThrust: 14300,
-    flapLift: 6500,
-    flapRate: 1.45,
-    downFrac: 0.5,
+    flapThrust: 12540,
+    flapLift: 5700,
+    flapRate: 1.15,
+    downFrac: 0.57,
     staminaSeconds: 13.5,
     staminaRegen: 0.12,
     rollAuthority: 5.6,
@@ -72,10 +86,10 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     stallAngle: 18 * DEG,
     cd0: 0.036,
     inducedK: inducedK(11.2, 30),
-    flapThrust: 12000,
-    flapLift: 4800,
-    flapRate: 2.1,
-    downFrac: 0.5,
+    flapThrust: 11110,
+    flapLift: 4440,
+    flapRate: 1.6,
+    downFrac: 0.54,
     staminaSeconds: 10,
     staminaRegen: 0.16,
     rollAuthority: 8.5,
@@ -100,10 +114,10 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     stallAngle: 15 * DEG,
     cd0: 0.024,
     inducedK: inducedK(17.5, 46, 0.85),
-    flapThrust: 10300,
-    flapLift: 7000,
-    flapRate: 0.95,
-    downFrac: 0.5,
+    flapThrust: 8580,
+    flapLift: 5830,
+    flapRate: 0.75,
+    downFrac: 0.6,
     staminaSeconds: 16.5,
     staminaRegen: 0.1,
     rollAuthority: 1.9,
@@ -128,10 +142,10 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     stallAngle: 16 * DEG,
     cd0: 0.031,
     inducedK: inducedK(13.5, 42, 0.78),
-    flapThrust: 15000,
-    flapLift: 10500,
+    flapThrust: 12100,
+    flapLift: 8470,
     flapRate: 1.0,
-    downFrac: 0.5,
+    downFrac: 0.62,
     staminaSeconds: 12,
     staminaRegen: 0.14,
     rollAuthority: 2.3,

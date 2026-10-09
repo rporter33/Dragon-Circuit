@@ -22,7 +22,7 @@ import { SIDE_SIGN, type RigDef } from '../rig';
 import { LEG_ANGLES } from '../proportions';
 import { Bouncy, aimRotation, solveTwoBone } from '../ik';
 import { Gait, type GaitContext } from '../gait';
-import { WING_CHANNELS, blendPose, flapPose, type WingPose } from '../wingPoses';
+import { FLAP_STYLES, WING_CHANNELS, blendPose, flapPose, type WingPose } from '../wingPoses';
 import type { WyvernAnimator } from '../animator';
 import { BASK, FOLDED, SETTLE } from './groundPoses';
 import { FWD, LEFT, UP, bump, type AnimFrame } from './frame';
@@ -196,7 +196,7 @@ export class GroundLayer {
   /** The ground FK wing pose (settle/shuffle/brace, raised for the takeoff, spread to bask). */
   groundWingPose(out: WingPose): void {
     const f = this.f;
-    if (f.takeoffCrouch) blendPose(SETTLE, flapPose(0, 0, this.flapTmp, f.heft), f.openAmt, out);
+    if (f.takeoffCrouch) blendPose(SETTLE, flapPose(0, 0, this.flapTmp, FLAP_STYLES[this.rig.props.breed]), f.openAmt, out);
     else blendPose(FOLDED, SETTLE, clamp01(f.openAmt * 1.4 + f.shuffle * 0.8 + f.brace), out);
     if (f.bask > 0.001) blendPose(out, BASK, f.bask, out);
   }

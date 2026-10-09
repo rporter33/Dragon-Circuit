@@ -501,7 +501,7 @@ export class Player implements PlayerSystem {
     }
     if (this.flapQueued > 0) {
       this.queueAge += dt;
-      if (this.model.beats !== this.beatsAtQueue || this.queueAge > 1.2) this.flapQueued = 0;
+      if (this.model.beats !== this.beatsAtQueue || this.queueAge > Math.max(1.2, 0.15 + 1 / this.breed.flapRate)) this.flapQueued = 0;
     }
     fi.flap = Math.max(this.flapQueued, launch);
   }
