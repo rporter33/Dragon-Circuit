@@ -2,7 +2,8 @@
 // waterfalls, and of every building, tree, deck and gate (all collider kinds); the flight line
 // between rings clear; the Eye of the Gale threaded with room to
 // spare; medals ordered; and every course actually flown with the autopilot and the real flight
-// model to prove it can be finished inside the medal times.
+// model, through the world the game flies in (rock plus every building, tree, deck and start
+// gate), to prove it can be finished inside the medal times with every breed's wingtips clear.
 
 import { describe, expect, it } from 'vitest';
 import { Scene, Vector3 } from 'three';
@@ -10,7 +11,8 @@ import { LAYOUT } from '../world/layout';
 import { Terrain } from '../world/terrain';
 import { QUALITY } from '../render/quality';
 import { Dressing } from '../world/dressing/Dressing';
-import { BREEDS } from '../flight/breeds';
+import { BREEDS, BREED_ORDER } from '../flight/breeds';
+import { FLIGHT_TUNING } from '../flight/FlightModel';
 import type { BreedId } from '../core/types';
 import { COSMETICS } from '../cosmetics/catalog';
 import { COURSES, courseVia } from './courses';
@@ -25,14 +27,48 @@ const SLOW = 240_000;
 const terrain = new Terrain(LAYOUT);
 const dressing = new Dressing({ scene: new Scene(), terrain, quality: QUALITY.low, asyncStreaming: false });
 const field = new ClearanceField({ terrain, roots: dressing.rootPlan, falls: dressing.water.plansList });
+/** Every collider the game adds to the world: buildings, trees, decks and every course's start gate. */
+const SOLIDS = [...dressing.colliders, ...dressing.forest.colliders, ...dressing.decks.map(deckCollider), ...COURSES.flatMap(gateColliders)];
+/** The world the game flies in (Game registers the same sources), for the autopilot's flights. */
+const world = new Terrain(LAYOUT);
+world.colliders.addAll(SOLIDS);
 
-const flights = new Map<string, FlyResult>();
-function fly(id: string, breed: BreedId): FlyResult {
+interface Flight extends FlyResult {
+  /** The closest either wingtip came to anything solid (m, past the flight model's tip probe). */
+  tipClear: number;
+  tipAt: string;
+}
+const flights = new Map<string, Flight>();
+const _left = new Vector3();
+const _tip = new Vector3();
+function fly(id: string, breed: BreedId): Flight {
   const key = `${id}/${breed}`;
   let r = flights.get(key);
   if (!r) {
     const def = COURSES.find((c) => c.id === id)!;
-    r = flyCourse(def, { breed: BREEDS[breed], env: thermalAir(LAYOUT.thermals, terrain), via: courseVia(id), maxSeconds: 420 });
+    let tipClear = Infinity;
+    let tipAt = '';
+    const res = flyCourse(def, {
+      breed: BREEDS[breed],
+      env: thermalAir(LAYOUT.thermals, world),
+      via: courseVia(id),
+      maxSeconds: 420,
+      onStep: (m, t) => {
+        // The flight model's own wingtip probes (spread wings only), measured instead of collided.
+        if (m.state.wingSpread <= 0.45) return;
+        _left.set(1, 0, 0).applyQuaternion(m.state.orientation);
+        const reach = m.derived.halfSpan * FLIGHT_TUNING.tipSpanFactor * m.state.wingSpread;
+        for (let side = 1; side >= -1; side -= 2) {
+          _tip.copy(m.state.position).addScaledVector(_left, side * reach);
+          const d = world.distance(_tip) - FLIGHT_TUNING.tipRadius;
+          if (d < tipClear) {
+            tipClear = d;
+            tipAt = `${t === null ? 'run-up' : `${t.toFixed(1)} s`} at ${_tip.toArray().map(Math.round)}`;
+          }
+        }
+      },
+    });
+    r = { ...res, tipClear, tipAt };
     flights.set(key, r);
   }
   return r;
@@ -92,7 +128,7 @@ describe('the seven courses', () => {
     // with the index's signed distance, plus every start gate's own solid parts.
     const hard = new ColliderIndex();
     const soft = new ColliderIndex();
-    for (const c of [...dressing.colliders, ...dressing.forest.colliders, ...dressing.decks.map(deckCollider), ...COURSES.flatMap(gateColliders)]) (c.soft ? soft : hard).add(c);
+    for (const c of SOLIDS) (c.soft ? soft : hard).add(c);
     const p = new Vector3();
     for (const c of COURSES) {
       c.rings.forEach((r, i) => {
@@ -221,5 +257,19 @@ describe('flying the courses with the autopilot (real flight model, thermals, te
       }
     }
     expect(missed).toEqual([]);
+  }, SLOW * 3);
+
+  it('keeps every breed’s wingtips 4 m clear of rock, buildings, trees, decks and every gate, its own included', () => {
+    // The margin the tight passages keep (the archways, the roots, each start gate): a wing that
+    // passes closer is a line a player can't trust. (The Long Drift's line once ran past the
+    // Lantern Dash's gate and every breed's wingtip brushed its pillar tops.)
+    const close: string[] = [];
+    for (const c of COURSES) {
+      for (const b of BREED_ORDER) {
+        const r = fly(c.id, b);
+        if (r.hits > 0 || r.tipClear < 4) close.push(`${b} on ${c.id}: ${r.hits} hits, a wingtip ${r.tipClear.toFixed(2)} m from a solid (${r.tipAt})`);
+      }
+    }
+    expect(close).toEqual([]);
   }, SLOW * 3);
 });
