@@ -631,7 +631,9 @@
       const s2 = [...a].sort((x, y) => x - y);
       return s2.length ? s2[Math.floor(s2.length / 2)] : null;
     };
-    if (ext) {
+    // Software rasterizers expose the extension but report 0 ns: time them on the wall clock.
+    info.software = /swiftshader|llvmpipe|software/i.test(String(info.renderer));
+    if (ext && !info.software) {
       const wait = () => new Promise((r) => setTimeout(r, 4));
       const timeFrame = async (withW) => {
         setWyv(withW);
@@ -690,7 +692,10 @@
         m.onBeforeRender = b;
         m.onAfterRender = a;
       }
-      return { ...info, method: 'timer-query', frameMs: median(on), frameWithoutWyvernsMs: median(off), wyvernMs: on.length && off.length ? +(median(on) - median(off)).toFixed(3) : null, mainPassDrawsMs: +median(per).toFixed(3) };
+      // A driver that answers every query with 0 has no usable timer: fall back to the wall clock.
+      if (median(on) > 0) {
+        return { ...info, method: 'timer-query', frameMs: median(on), frameWithoutWyvernsMs: median(off), wyvernMs: on.length && off.length ? +(median(on) - median(off)).toFixed(3) : null, mainPassDrawsMs: +median(per).toFixed(3) };
+      }
     }
     const px = new Uint8Array(4);
     const timeFrame = (withW) => {
