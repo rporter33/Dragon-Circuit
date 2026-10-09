@@ -89,7 +89,10 @@ export class Player implements PlayerSystem {
   mode: PlayerMode = 'flying';
   breed: BreedStats;
   readonly model: FlightModel;
-  readonly wyvernPose: WyvernPose = createWyvernPose();
+  readonly wyvernPose: WyvernPose = Object.assign(createWyvernPose(), {
+    control: { pitch: 0, roll: 0, yaw: 0 },
+    gust: { l: 0, r: 0 },
+  });
   readonly riderPose: RiderPose = createRiderPose();
   readonly riderPosition = new Vector3();
   readonly prevPosition = new Vector3();
@@ -1270,6 +1273,15 @@ export class Player implements PlayerSystem {
     wp.ruffle = this.ruffleT >= 0 ? clamp01(this.ruffleT / P.ruffleTime) : 0;
     wp.groundSpeed = this.airborne ? 0 : this.groundSpeed;
     wp.groundY = this.groundY;
+    // The stick and the air at the wingtips, for the animation's leads and gust response.
+    const inAir = this.mode === 'flying' || this.mode === 'respawning';
+    const ctl = wp.control!;
+    ctl.pitch = inAir ? this.flightIn.pitch : 0;
+    ctl.roll = inAir ? this.flightIn.roll : 0;
+    ctl.yaw = inAir ? this.flightIn.yaw : 0;
+    const tips = this.model.tipUpdraft;
+    wp.gust!.l = inAir ? tips.l : 0;
+    wp.gust!.r = inAir ? tips.r : 0;
     if (this.lookFresh) {
       this.lookSmooth.copy(this.lookTarget);
       this.lookFresh = false;

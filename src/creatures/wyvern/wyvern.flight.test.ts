@@ -1,20 +1,94 @@
-// Flight motion: the wingbeat as the player sees it. Each breed's stroke is sampled on the real
-// model (rig, animator, skinning bones) over one beat at its own beat rate, and measured the way
-// the capture sheets are read: the wingtip's elevation from the shoulder in front view, its
-// fore-aft travel in side view, how far apart the tips are over the rider, and when the tip is
-// lowest against the flight model's 'flap' event.
+// Wyvern flight motion: the wingbeat, heave, air load and turns (stream B).
+//
+// The wingbeat as the player sees it: each breed's stroke is sampled on the real model (rig,
+// animator, skinning bones) over one beat at its own beat rate, and measured the way the capture
+// sheets are read: the wingtip's elevation from the shoulder in front view, its fore-aft travel
+// in side view, how far apart the tips are over the rider, and when the tip is lowest against the
+// flight model's 'flap' event. Shared poses and helpers (beat(), the per-beat heights probe):
+// wyvern.testkit.ts.
 
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
-import type { BreedId, WyvernLook } from '../../core/types';
+import type { BreedId } from '../../core/types';
 import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { strokeForce } from '../../flight/FlightModel';
-import { DEFAULT_WYVERN } from '../../cosmetics/catalog';
 import { createWyvernPose } from '../../player/poses';
 import { Wyvern } from './Wyvern';
 import { FLAP_STYLES, W, flapPose, strokeLoad, strokePhase, strokeTravel, strokeWarp } from './wingPoses';
+import { beat, gliding, look } from './wyvern.testkit';
 
-const look = (breed: BreedId): WyvernLook => ({ ...DEFAULT_WYVERN, breed });
+const _p = new Vector3();
+const _q = new Vector3();
+
+describe('accessors', () => {
+  it('reports wingtips about a span apart in a glide and close together in a tuck', () => {
+    for (const breed of BREED_ORDER) {
+      const w = new Wyvern(look(breed));
+      const pose = gliding();
+      for (let i = 0; i < 30; i++) w.update(1 / 60, pose);
+      const l = new Vector3();
+      const r = new Vector3();
+      w.getWingtips(l, r);
+      const span = BREEDS[breed].wingspan;
+      expect(l.distanceTo(r)).toBeGreaterThan(0.85 * span);
+      expect(l.distanceTo(r)).toBeLessThan(1.01 * span);
+      // Left wing is +X in body space.
+      expect(l.x).toBeGreaterThan(r.x);
+      pose.wingSpread = 0.25;
+      pose.airspeed = 60;
+      for (let i = 0; i < 60; i++) w.update(1 / 60, pose);
+      w.getWingtips(l, r);
+      expect(l.distanceTo(r)).toBeLessThan(0.45 * span);
+      w.dispose();
+    }
+  });
+});
+
+describe('weight and life (client direction: a big, heavy dragon)', { timeout: 60000 }, () => {
+  it('heaves the saddle up through the downstroke and lets it sink on the recovery; heavier breeds heave more', () => {
+    const h = beat('harrier');
+    // Highest around the bottom of the stroke (phase 0.5), lowest near the top.
+    expect(h.saddlePeak).toBeGreaterThan(0.35);
+    expect(h.saddlePeak).toBeLessThan(0.65);
+    expect(h.saddleRange).toBeGreaterThan(0.15);
+    expect(h.saddleRange).toBeLessThan(0.6);
+    expect(beat('ironback').saddleRange).toBeGreaterThan(beat('skimmer').saddleRange * 1.4);
+  });
+
+  it('works the outer wing harder in a banked turn', () => {
+    const w = new Wyvern(look('harrier'));
+    const pose = gliding();
+    pose.flapStrength = 1;
+    // Banked 35° right and turning right: the left wing (+X) is the outer one.
+    pose.orientation.setFromAxisAngle(new Vector3(0, 0, 1), 0.6);
+    pose.angularVelocity.set(0, -0.5, 0.1);
+    let hiL = -Infinity;
+    let loL = Infinity;
+    let hiR = -Infinity;
+    let loR = Infinity;
+    let loadL = 0;
+    let loadR = 0;
+    for (let i = 0; i < 300; i++) {
+      pose.flapPhase = ((i / 60) * 1.6) % 1;
+      w.update(1 / 60, pose);
+      if (i < 120) continue;
+      w.getWingtips(_p, _q);
+      // Tip heights in the body frame.
+      const inv = pose.orientation.clone().invert();
+      const l = _p.clone().sub(pose.position).applyQuaternion(inv).y;
+      const r = _q.clone().sub(pose.position).applyQuaternion(inv).y;
+      hiL = Math.max(hiL, l);
+      loL = Math.min(loL, l);
+      hiR = Math.max(hiR, r);
+      loR = Math.min(loR, r);
+      loadL = Math.max(loadL, w.uniforms.uWingLoad.value.x);
+      loadR = Math.max(loadR, w.uniforms.uWingLoad.value.y);
+    }
+    expect(hiL - loL).toBeGreaterThan((hiR - loR) * 1.1);
+    expect(loadL).toBeGreaterThan(loadR * 1.15);
+    w.dispose();
+  });
+});
 
 interface Sample {
   phase: number;
@@ -71,7 +145,7 @@ function sampleBeat(breed: BreedId): Sample[] {
 }
 
 const beats = new Map<BreedId, Sample[]>();
-const beat = (b: BreedId) => {
+const stroke = (b: BreedId) => {
   let s = beats.get(b);
   if (!s) beats.set(b, (s = sampleBeat(b)));
   return s;
@@ -101,7 +175,7 @@ const TOP_MAX: Record<BreedId, number> = { skimmer: 70, harrier: 60, galewing: 4
 describe('wingbeat: a stroke true to each breed (FANIM-01..03)', { timeout: 60000 }, () => {
   it('never claps over the back: tip elevation at the top within each breed’s limit, the tips apart over the rider', () => {
     for (const b of BREED_ORDER) {
-      const { s, iTop, top } = stats(beat(b));
+      const { s, iTop, top } = stats(stroke(b));
       expect(top, b).toBeLessThanOrEqual(TOP_MAX[b]);
       // Well above level at the top: it is still a real wingbeat.
       expect(top, b).toBeGreaterThan(20);
@@ -112,7 +186,7 @@ describe('wingbeat: a stroke true to each breed (FANIM-01..03)', { timeout: 6000
   });
 
   it('beats differently by breed: shallow galewing, deep skimmer, deep heavy ironback', () => {
-    const r = Object.fromEntries(BREED_ORDER.map((b) => [b, stats(beat(b))])) as Record<BreedId, ReturnType<typeof stats>>;
+    const r = Object.fromEntries(BREED_ORDER.map((b) => [b, stats(stroke(b))])) as Record<BreedId, ReturnType<typeof stats>>;
     // The galewing glider beats through a far shallower arc than anything else.
     for (const b of ['skimmer', 'harrier', 'ironback'] as const) expect(r.galewing.range, b).toBeLessThan(r[b].range - 25);
     // Every pair of breeds differs in its top elevation or in its arc.
@@ -131,7 +205,7 @@ describe('wingbeat: a stroke true to each breed (FANIM-01..03)', { timeout: 6000
 
   it('drives down for most of the beat and reverses briskly at the top (no hang)', () => {
     for (const b of BREED_ORDER) {
-      const { s, iTop, iBot, top10 } = stats(beat(b));
+      const { s, iTop, iBot, top10 } = stats(stroke(b));
       const down = (s[iBot].phase - s[iTop].phase + 1) % 1;
       expect(down, b).toBeGreaterThanOrEqual(0.54);
       expect(top10, b).toBeLessThanOrEqual(0.15);
@@ -140,14 +214,14 @@ describe('wingbeat: a stroke true to each breed (FANIM-01..03)', { timeout: 6000
 
   it('the flap event (the end of the power stroke) lands on the wingtip’s lowest point', () => {
     for (const b of BREED_ORDER) {
-      const { s, iBot } = stats(beat(b));
+      const { s, iBot } = stats(stroke(b));
       expect(phaseDist(s[iBot].phase, BREEDS[b].downFrac!), b).toBeLessThanOrEqual(0.03);
     }
   });
 
   it('the wing is well into its travel when the stroke pushes hardest', () => {
     for (const b of BREED_ORDER) {
-      const { s, top, range } = stats(beat(b));
+      const { s, top, range } = stats(stroke(b));
       const D = BREEDS[b].downFrac!;
       // strokeForce peaks at D/2.
       const at = s.reduce((a, c) => (phaseDist(c.phase, D / 2) < phaseDist(a.phase, D / 2) ? c : a));
@@ -158,7 +232,7 @@ describe('wingbeat: a stroke true to each breed (FANIM-01..03)', { timeout: 6000
 
   it('traces a tilted loop in side view: back at the top, ahead of the shoulder at the bottom', () => {
     for (const b of BREED_ORDER) {
-      const { s, iTop, iBot, top, bottom } = stats(beat(b));
+      const { s, iTop, iBot, top, bottom } = stats(stroke(b));
       expect(s[iBot].z, b).toBeGreaterThan(0.3);
       expect(s[iTop].z, b).toBeLessThan(-0.3);
       // Stroke plane 20–28° from the body's vertical (down and forward).
@@ -184,7 +258,7 @@ describe('wingbeat: a stroke true to each breed (FANIM-01..03)', { timeout: 6000
 
   it('bows the membrane on the power stroke and lets it go slack on the recovery', () => {
     for (const b of BREED_ORDER) {
-      const s = beat(b);
+      const s = stroke(b);
       const D = BREEDS[b].downFrac!;
       const down = Math.max(...s.filter((x) => x.phase > 0.25 * D && x.phase < D).map((x) => x.load));
       const up = Math.max(...s.filter((x) => x.phase > D + 0.4 * (1 - D) && x.phase < 0.98).map((x) => x.load));
