@@ -11,6 +11,7 @@
 //   ?manual=1               no rAF loop: drive frames with window.__dw.advance(seconds)
 //   ?debug=1                install window.__dw in a production build (dev builds always do)
 //   ?warmup=1               run the boot shader warmup under ?manual=1 (skipped by default)
+//   ?starglints=1           night sky: glinting starfield (0 classic .. 1; see SkyDome STAR_GLINTS)
 
 import type { QualityLevel, WeatherKind } from '../core/types';
 
@@ -29,6 +30,8 @@ export interface DebugParams {
   manual: boolean;
   /** Free-form string for module-specific showcases (e.g. view=wyvern). */
   view?: string;
+  /** Night-sky star glints, 0 (classic) .. 1 (glinting). */
+  starGlints?: number;
 }
 
 function vec3(v: string | null): [number, number, number] | undefined {
@@ -55,5 +58,6 @@ export function readDebugParams(search = typeof location !== 'undefined' ? locat
     freeze: q.get('freeze') === '1',
     manual: q.get('manual') === '1',
     view: q.get('view') ?? undefined,
+    starGlints: num('starglints'),
   };
 }
