@@ -791,6 +791,22 @@ describe('reptile hide', { timeout: 60000 }, () => {
     h.dispose();
   });
 
+  it('paints every triangle in one material region (no seams of the ids in between)', () => {
+    for (const saddle of ['rider', 'royal', 'nomad', 'racing']) {
+      const w = new Wyvern(look('ironback', { saddle }));
+      const g = w.skinnedMesh!.geometry;
+      const mat = g.getAttribute('aMat');
+      const idx = g.index!.array;
+      let mixed = 0;
+      for (let t = 0; t < idx.length; t += 3) {
+        const r0 = mat.getX(idx[t]);
+        if (mat.getX(idx[t + 1]) !== r0 || mat.getX(idx[t + 2]) !== r0) mixed++;
+      }
+      expect(mixed, saddle).toBe(0);
+      w.dispose();
+    }
+  });
+
   it('tells the body shader the angle around the tube for its rows of keeled scales', () => {
     const w = new Wyvern(look('harrier'));
     const geo = w.skinnedMesh!.geometry;
