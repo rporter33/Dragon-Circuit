@@ -20,6 +20,15 @@ export interface RootStats {
   farTriangles: number;
 }
 
+/** The three root materials (created up front so the boot warmup compiles them, see constructor). */
+function rootMaterials() {
+  return {
+    solid: dressMaterial({ sway: 'root' }),
+    cards: dressMaterial({ sway: 'root', doubleSide: true, keepNormals: true }),
+    glow: dressMaterial({ sway: 'root', glow: true, glowDay: 0.2, glowNight: 3.2 }),
+  };
+}
+
 /** Islands farther than this (m from their rim, at 'high') draw their roots at far detail. */
 const FAR_DIST: Record<QualityProfile['level'], number> = { low: 160, medium: 260, high: 380, ultra: 520 };
 
@@ -195,6 +204,7 @@ export class HangingRoots {
   /** Thin strands (vines, glow threads, slim roots) kept at this quality. */
   private thinKeep: number;
   private lean: boolean;
+  private materials = rootMaterials();
 
   /**
    * Builds one island per deferred task (Rootfall alone is a few hundred thousand triangles), in
@@ -213,6 +223,18 @@ export class HangingRoots {
     };
     islands.sort((a, b) => dist(a) - dist(b));
     for (const id of islands) defer(() => this.buildIsland(terrain, plan, id));
+    // Islands are built by deferred tasks, after the boot shader warmup: one hidden, empty mesh
+    // per material (built like the real ones, so the programs match) gets them compiled now.
+    for (const mat of Object.values(this.materials)) {
+      const b = new GeoBuilder();
+      b.addTriangles([0, 0, 0, 0, 0, 0.01, 0.01, 0, 0], {});
+      const m = new Mesh(b.build(true), mat);
+      m.geometry.setDrawRange(0, 0);
+      m.name = `${mat.name}-warmup`;
+      m.visible = false;
+      m.matrixAutoUpdate = false;
+      this.group.add(m);
+    }
   }
 
   private buildIsland(terrain: Terrain, plan: RootPlan, id: number): void {
@@ -244,9 +266,10 @@ export class HangingRoots {
         if (!far) this.stats.curtains++;
       }
       const into = far ? entry.far : entry.near;
-      this.addMesh(into, solid, dressMaterial({ sway: 'root' }), `roots-${id}${far ? '-far' : ''}`, far);
-      this.addMesh(into, cards, dressMaterial({ sway: 'root', doubleSide: true, keepNormals: true }), `moss-${id}${far ? '-far' : ''}`, far);
-      this.addMesh(into, glow, dressMaterial({ sway: 'root', glow: true, glowDay: 0.2, glowNight: 3.2 }), `glowroots-${id}${far ? '-far' : ''}`, far);
+      const mats = this.materials;
+      this.addMesh(into, solid, mats.solid, `roots-${id}${far ? '-far' : ''}`, far);
+      this.addMesh(into, cards, mats.cards, `moss-${id}${far ? '-far' : ''}`, far);
+      this.addMesh(into, glow, mats.glow, `glowroots-${id}${far ? '-far' : ''}`, far);
     }
     farDetail = false;
     leanNear = false;

@@ -125,6 +125,17 @@ export class GrassField {
     this.flowerBase = flowerGeometry();
     this.scratch = this.allocScratch();
     this.uniforms.uDwRadius.value = quality.grassRadius;
+    // Chunks stream in after the boot shader warmup; empty, hidden stand-ins make the warmup
+    // compile the field programs now (compile() walks hidden objects too) instead of on the
+    // first frames of play.
+    for (const [base, mat, name] of [
+      [this.tuftBase, this.grassMat, 'grass-warmup'],
+      [this.flowerBase, this.flowerMat, 'flower-warmup'],
+    ] as const) {
+      const layer = this.makeLayer(base, mat, 1, name);
+      layer.mesh.visible = false;
+      this.group.add(layer.mesh);
+    }
   }
 
   private allocScratch(): FieldChunkData {
