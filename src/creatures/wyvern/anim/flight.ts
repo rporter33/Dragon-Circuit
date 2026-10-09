@@ -27,9 +27,10 @@ import {
   WING_CHANNELS,
   adjustPose,
   blendPose,
-  flapPose,
+  flapPoseAt,
   loadPose,
   strokeLoad,
+  wingAdjust,
   type FlapStyle,
   type WingPose,
 } from '../wingPoses';
@@ -48,6 +49,8 @@ export class FlightLayer {
   private readonly loadSpring: [Spring, Spring] = [new Spring(28), new Spring(28)];
   readonly wingLoad = [0, 0];
   private readonly flapSide = new Float32Array(WING_CHANNELS);
+  /** adjustPose's inputs for the wing being posed (a record: no doubles through call arguments). */
+  private readonly adj = wingAdjust();
   private readonly legSwing = new Bouncy(5, 0.35);
   // This frame's wing prelude (flightTrunk → flightWingPose).
   private asymBase = 0;
@@ -107,7 +110,7 @@ export class FlightLayer {
     blendPose(GLIDE, TUCK, tuck, out);
     blendPose(out, FLARE, flare * (1 - tuck), out);
     if (flap > 0.001) {
-      const fp = flapPose(f.phase, f.fatigue, this.flapSide, this.style);
+      const fp = flapPoseAt(f, this.flapSide, this.style);
       // The outer wing of a turn takes the bigger stroke.
       const amp = clamp(1 + 0.3 * asym, 0.72, 1.32);
       fp[W.humEl] *= amp;
@@ -125,7 +128,13 @@ export class FlightLayer {
     const shake = buffet > 0;
     const bf = shake ? buffet * noise1(f.stallT * 9 + side * 7.3, 10 + side) : 0;
     const bt = shake ? buffet * noise1(f.stallT * 11 + side * 3.1, 20 + side) : 0;
-    adjustPose(out, f.gLoad, asym, bf + buffet * 0.4 * sgn * Math.sin(f.stallT * 1.7), bt, f.spreadAir);
+    const adj = this.adj;
+    adj.gLoad = f.gLoad;
+    adj.asym = asym;
+    adj.buffet = bf + buffet * 0.4 * sgn * Math.sin(f.stallT * 1.7);
+    adj.buffetTw = bt;
+    adj.spread = f.spreadAir;
+    adjustPose(out, adj);
     const loadT = airW * (this.glideLoad + this.beatLoad) * (1 + 0.35 * clamp(asym, -1, 1));
     const load = this.loadSpring[side].step(loadT, f.dt);
     this.wingLoad[side] = load;

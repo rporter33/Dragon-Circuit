@@ -294,6 +294,25 @@ const _tw = new Float64Array(2);
  * Allocation-free.
  */
 export function flapPose(beatPhase: number, labor: number, out: WingPose, style: FlapStyle = FLAP_STYLES.harrier): WingPose {
+  _beatIn.phase = beatPhase;
+  _beatIn.fatigue = labor;
+  return flapPoseAt(_beatIn, out, style);
+}
+
+/** What flapPoseAt reads: the beat phase and the labor (fatigue, 0..1). AnimFrame is one. */
+export interface BeatInput {
+  readonly phase: number;
+  readonly fatigue: number;
+}
+const _beatIn = { phase: 0.5, fatigue: 0.5 };
+
+/**
+ * flapPose for the per-frame path: the phase and labor are read from a record (the animator's
+ * frame) rather than passed as arguments, so no double is boxed on the way in.
+ */
+export function flapPoseAt(beat: BeatInput, out: WingPose, style: FlapStyle): WingPose {
+  const beatPhase = beat.phase;
+  const labor = beat.fatigue;
   const D = style.down;
   const fold = style.fold;
   const lut = style.warp;
@@ -382,16 +401,37 @@ export function loadPose(out: WingPose, load: number): void {
   }
 }
 
+/** The per-frame inputs of adjustPose (a record the caller keeps: doubles passed as call arguments are boxed). */
+export interface WingAdjust {
+  /** Load factor (g). */
+  gLoad: number;
+  /** Turn asymmetry, −1..1: > 0 means this wing is the outer/rising one. */
+  asym: number;
+  /** Stall buffet in elevation and in twist (noisy, about −1..1 × the buffet weight). */
+  buffet: number;
+  buffetTw: number;
+  /** How spread the wing is for the air load (1 glide … 0 tucked). */
+  spread: number;
+}
+
+/** A WingAdjust record (fields start as doubles so later writes never change their representation). */
+export function wingAdjust(): WingAdjust {
+  return { gLoad: 1.5, asym: 0.5, buffet: 0.5, buffetTw: 0.5, spread: 0.5 };
+}
+
 /**
  * Per-frame adjustments on top of a blended pose:
  *  - g-load bends the outer wing up (dihedral grows, tips flex),
  *  - roll/turn asymmetry: the rising (outer) wing reaches forward with more angle of attack,
  *    the inner wing sweeps a little and unloads,
  *  - stall buffet: noisy shudder in elevation and twist.
- * `asym` > 0 means this wing is the outer/rising one.
  */
-export function adjustPose(out: WingPose, gLoad: number, asym: number, buffet: number, buffetTw: number, spreadAmt: number): void {
-  const g = clamp(gLoad - 1, -1.5, 4) * spreadAmt;
+export function adjustPose(out: WingPose, adj: Readonly<WingAdjust>): void {
+  const asym = adj.asym;
+  const buffet = adj.buffet;
+  const buffetTw = adj.buffetTw;
+  const spreadAmt = adj.spread;
+  const g = clamp(adj.gLoad - 1, -1.5, 4) * spreadAmt;
   out[W.humEl] += g * 1.6 * DEG;
   out[W.foreEl] += g * 1.2 * DEG;
   out[W.handEl] += g * 1.0 * DEG;
