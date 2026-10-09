@@ -864,3 +864,56 @@ describe('seat', () => {
     }
   });
 });
+
+describe('debug capture hooks (scripts/dragon-capture.mjs)', () => {
+  const tongueOf = (w: Wyvern) => (w as unknown as { animator: { tongueExt: number } }).animator.tongueExt;
+
+  it('holds the natural idle events off, then plays each cued one', () => {
+    const w = new Wyvern(look('harrier'));
+    const pose = standing('harrier');
+    w.cueIdle(null, 1e4);
+    const peak = { lid: 0, nict: 0, tongue: 0 };
+    const run = (seconds: number) => {
+      peak.lid = peak.nict = peak.tongue = 0;
+      for (let i = 0; i < seconds * 60; i++) {
+        w.update(1 / 60, pose);
+        peak.lid = Math.max(peak.lid, w.uniforms.uBlink.value);
+        peak.nict = Math.max(peak.nict, w.uniforms.uNictitate.value);
+        peak.tongue = Math.max(peak.tongue, tongueOf(w));
+      }
+    };
+    run(12);
+    expect(peak).toEqual({ lid: 0, nict: 0, tongue: 0 });
+    w.cueIdle('blink');
+    run(0.5);
+    expect(peak.lid).toBeGreaterThan(0.9);
+    expect(peak.nict + peak.tongue).toBe(0);
+    w.cueIdle('nictitate');
+    run(0.5);
+    expect(peak.nict).toBeGreaterThan(0.9);
+    w.cueIdle('tongue');
+    run(0.5);
+    expect(peak.tongue).toBeGreaterThan(0.01);
+    w.dispose();
+  });
+
+  it('resetAnimation makes a re-staged wyvern move exactly like a new one', () => {
+    const a = new Wyvern(look('ironback'));
+    const b = new Wyvern(look('ironback'));
+    const pose = standing('ironback');
+    for (let i = 0; i < 150; i++) a.update(1 / 60, gliding());
+    a.resetAnimation();
+    for (let i = 0; i < 45; i++) {
+      a.update(1 / 60, pose);
+      b.update(1 / 60, pose);
+    }
+    const ba = a.skinnedMesh!.skeleton.bones;
+    const bb = b.skinnedMesh!.skeleton.bones;
+    for (let i = 0; i < ba.length; i++) {
+      expect(ba[i].quaternion.angleTo(bb[i].quaternion)).toBeLessThan(1e-6);
+      expect(ba[i].position.distanceTo(bb[i].position)).toBeLessThan(1e-9);
+    }
+    a.dispose();
+    b.dispose();
+  });
+});

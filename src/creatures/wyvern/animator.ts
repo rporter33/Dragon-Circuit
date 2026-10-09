@@ -317,6 +317,22 @@ export class WyvernAnimator {
     this.prevRuffle = o.prevRuffle;
   }
 
+  /**
+   * Debug captures only (?view=wyvern blink= nict= tongue=): start an idle event on the next
+   * update through its own timer, so it plays exactly like a natural one; or, with `event` null,
+   * hold every natural idle event off for `hold` seconds so only cued ones play.
+   */
+  cueIdle(event: 'blink' | 'nictitate' | 'tongue' | null, hold = 0): void {
+    if (event === 'blink') this.blinkTimer = 0;
+    else if (event === 'nictitate') this.nictTimer = 0;
+    else if (event === 'tongue') this.tongueTimer = 0;
+    else {
+      this.blinkTimer = Math.max(this.blinkTimer, hold);
+      this.nictTimer = Math.max(this.nictTimer, hold);
+      this.tongueTimer = Math.max(this.tongueTimer, hold);
+    }
+  }
+
   private groundHeight(x: number, z: number, y: number): number {
     const fallback = this.groundRef;
     if (this.terrain) {

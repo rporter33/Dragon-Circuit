@@ -113,6 +113,19 @@ export class Wyvern implements WyvernRenderable {
     return out.copy(this.info.saddle.seat).applyAxisAngle(X_AXIS, STAND_ROOT_PITCH);
   }
 
+  /**
+   * Debug captures only: restart the procedural animation from rest (fresh springs, timers and
+   * gait, as after a build), so a re-staged showcase does not depend on what was staged before.
+   */
+  resetAnimation(): void {
+    this.animator = new WyvernAnimator(this.rig, this.terrain);
+  }
+
+  /** Debug captures only: cue an idle event now, or hold natural ones off (see WyvernAnimator.cueIdle). */
+  cueIdle(event: 'blink' | 'nictitate' | 'tongue' | null, hold = 0): void {
+    this.animator.cueIdle(event, hold);
+  }
+
   dispose(): void {
     this.disposeMesh();
     for (const m of this.materials) m.dispose();
