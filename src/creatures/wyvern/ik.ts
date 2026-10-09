@@ -22,26 +22,42 @@ export function aimRotation(restDir: Vector3, restRef: Vector3, dir: Vector3, re
   const m31 = A[2] * B[0] + A[5] * B[3] + A[8] * B[6];
   const m32 = A[2] * B[1] + A[5] * B[4] + A[8] * B[7];
   const m33 = A[2] * B[2] + A[5] * B[5] + A[8] * B[8];
-  // Quaternion from a rotation matrix (as Quaternion.setFromRotationMatrix).
+  // Quaternion from a rotation matrix (as Quaternion.setFromRotationMatrix). Written through an
+  // array (fromArray), not set(x, y, z, w): doubles passed into a call the JIT doesn't inline are
+  // boxed on the heap, and this runs ~60 times a frame.
+  const q = _qa;
   const tr = m11 + m22 + m33;
   if (tr > 0) {
     const s = 0.5 / Math.sqrt(tr + 1.0);
-    return out.set((m32 - m23) * s, (m13 - m31) * s, (m21 - m12) * s, 0.25 / s);
-  }
-  if (m11 > m22 && m11 > m33) {
+    q[0] = (m32 - m23) * s;
+    q[1] = (m13 - m31) * s;
+    q[2] = (m21 - m12) * s;
+    q[3] = 0.25 / s;
+  } else if (m11 > m22 && m11 > m33) {
     const s = 2.0 * Math.sqrt(1.0 + m11 - m22 - m33);
-    return out.set(0.25 * s, (m12 + m21) / s, (m13 + m31) / s, (m32 - m23) / s);
-  }
-  if (m22 > m33) {
+    q[0] = 0.25 * s;
+    q[1] = (m12 + m21) / s;
+    q[2] = (m13 + m31) / s;
+    q[3] = (m32 - m23) / s;
+  } else if (m22 > m33) {
     const s = 2.0 * Math.sqrt(1.0 + m22 - m11 - m33);
-    return out.set((m12 + m21) / s, 0.25 * s, (m23 + m32) / s, (m13 - m31) / s);
+    q[0] = (m12 + m21) / s;
+    q[1] = 0.25 * s;
+    q[2] = (m23 + m32) / s;
+    q[3] = (m13 - m31) / s;
+  } else {
+    const s = 2.0 * Math.sqrt(1.0 + m33 - m11 - m22);
+    q[0] = (m13 + m31) / s;
+    q[1] = (m23 + m32) / s;
+    q[2] = 0.25 * s;
+    q[3] = (m21 - m12) / s;
   }
-  const s = 2.0 * Math.sqrt(1.0 + m33 - m11 - m22);
-  return out.set((m13 + m31) / s, (m23 + m32) / s, 0.25 * s, (m21 - m12) / s);
+  return out.fromArray(q);
 }
 
 const _b0 = new Float64Array(9);
 const _b1 = new Float64Array(9);
+const _qa = new Float64Array(4);
 
 /** Orthonormal basis (a = dir, b = ref made perpendicular, a × b) as three columns. */
 function basis(dir: Vector3, ref: Vector3, out: Float64Array): void {
@@ -123,7 +139,9 @@ export function solveTwoBone(root: Vector3, l1: number, l2: number, target: Vect
     el = ex * ex + ey * ey + ez * ez;
   }
   el = Math.sqrt(el) || 1;
-  outMid.set(root.x + dx * a + (ex / el) * h, root.y + dy * a + (ey / el) * h, root.z + dz * a + (ez / el) * h);
+  outMid.x = root.x + dx * a + (ex / el) * h;
+  outMid.y = root.y + dy * a + (ey / el) * h;
+  outMid.z = root.z + dz * a + (ez / el) * h;
   return Math.max(0, dist - maxReach);
 }
 
@@ -138,11 +156,10 @@ export function rotateAbout(v: Vector3, axis: Vector3, angle: number): Vector3 {
   const vy = v.y;
   const vz = v.z;
   const k = (ax * vx + ay * vy + az * vz) * (1 - c);
-  return v.set(
-    vx * c + (ay * vz - az * vy) * s + ax * k,
-    vy * c + (az * vx - ax * vz) * s + ay * k,
-    vz * c + (ax * vy - ay * vx) * s + az * k,
-  );
+  v.x = vx * c + (ay * vz - az * vy) * s + ax * k;
+  v.y = vy * c + (az * vx - ax * vz) * s + ay * k;
+  v.z = vz * c + (ax * vy - ay * vx) * s + az * k;
+  return v;
 }
 
 /** Mirror a left-side rotation to the right side (reflection across the YZ plane). */
@@ -203,16 +220,18 @@ export class Bouncy {
   }
 }
 
-/** Smooth 1D value noise in [-1, 1] (for buffets and idle fidgets). */
+/**
+ * Smooth 1D value noise in [-1, 1] (for buffets and idle fidgets). The lattice hash is written out
+ * twice rather than called: a double returned from a call the JIT doesn't inline is boxed.
+ */
 export function noise1(x: number, seed = 0): number {
   const i = Math.floor(x);
   const f = x - i;
   const u = f * f * (3 - 2 * f);
-  return hash1(i, seed) * (1 - u) + hash1(i + 1, seed) * u;
-}
-
-/** Hash of an integer lattice point to [-1, 1] (module-level: no closure per call). */
-function hash1(n: number, seed: number): number {
-  const s = Math.sin((n + seed * 17.13) * 127.1 + seed * 311.7) * 43758.5453;
-  return (s - Math.floor(s)) * 2 - 1;
+  // Hash of the lattice points i and i + 1 to [-1, 1].
+  const s0 = Math.sin((i + seed * 17.13) * 127.1 + seed * 311.7) * 43758.5453;
+  const s1 = Math.sin((i + 1 + seed * 17.13) * 127.1 + seed * 311.7) * 43758.5453;
+  const h0 = (s0 - Math.floor(s0)) * 2 - 1;
+  const h1 = (s1 - Math.floor(s1)) * 2 - 1;
+  return h0 * (1 - u) + h1 * u;
 }

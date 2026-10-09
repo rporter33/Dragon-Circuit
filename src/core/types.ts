@@ -128,6 +128,11 @@ export interface BreedStats {
   flapLift: number;
   /** Wingbeats per second while flapping. */
   flapRate: number;
+  /**
+   * Fraction of the wingbeat cycle spent in the downstroke (0.5 = symmetric). Big animals spend
+   * longer driving down than recovering. Absent: 0.5.
+   */
+  downFrac?: number;
   /** Stamina seconds of continuous flapping from full. */
   staminaSeconds: number;
   /** Stamina regained per second while not flapping (fraction of max). */
@@ -301,6 +306,15 @@ export type PlayerMode =
 export type WyvernGait = 'idle' | 'walk' | 'run' | 'takeoff' | 'landing' | 'jump';
 
 /**
+ * One-shot behaviours the wyvern can be cued to play (WyvernPose.cue, or Wyvern.cue directly):
+ *   greet    a called arrival: the head comes down to the rider with a nictitating blink and a
+ *            tongue burst toward them
+ *   display  show the wings (the Stable, on a breed or colour change)
+ *   present  wings half open, head turned to the rider (the title)
+ */
+export type WyvernCueKind = 'greet' | 'display' | 'present';
+
+/**
  * Everything the wyvern renderer needs to pose and animate the model. Interpolated for render.
  * `position` is ALWAYS the body's center (center of mass, roughly under the saddle), airborne or
  * not; standing, it sits `BreedStats.standHeight` above the ground.
@@ -340,6 +354,27 @@ export interface WyvernPose {
    * a landing); 0 or absent when not playing.
    */
   ruffle?: number;
+
+  // Optional animation inputs (presentation only: ghosts and saves never record them; every one
+  // defaults to "absent" = the value noted).
+
+  /** The flight stick this frame (−1..1; + = nose up, roll right, yaw right). Absent: derived from the body's motion. */
+  control?: { pitch: number; roll: number; yaw: number };
+  /** Rising air at each wingtip (m/s, left and right; FlightModel.tipUpdraft). Absent: 0. */
+  gust?: { l: number; r: number };
+  /** 0..1 how far the wyvern has lowered itself for its rider to climb on or off. Absent: 0. */
+  kneel?: number;
+  /** A one-shot behaviour: plays once each time `id` changes. Absent: none. */
+  cue?: { kind: WyvernCueKind; id: number };
+  /**
+   * What the wyvern's idle behaviour reacts to: daylight 0 (night) … 1 (full sun), and the rider's
+   * distance (m; 0 while mounted, Infinity when unknown). Absent: daylight 1, rider unknown.
+   */
+  idle?: { daylight: number; riderDist: number };
+  /** Amplitude of this wingbeat (× the stroke; fatigue makes beats uneven). Absent: 1. */
+  beatAmp?: number;
+  /** Phase lag of the right wing behind the left (cycles; a tired, ragged beat). Absent: 0. */
+  sideLag?: number;
 }
 
 export type RiderAction =
