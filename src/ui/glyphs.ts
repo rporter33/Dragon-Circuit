@@ -30,7 +30,8 @@ export function controlsFor(
   const keys = [...new Set(b.keys.map((k) => normalizeKey(k)))];
   const axis = b.xbox.includes('↕') ? '↕' : b.xbox.includes('↔') ? '↔' : '';
   return {
-    pad: dev === 'keyboard' ? [] : all ? pad : pad.slice(0, 1),
+    // A chord (LB + RB held together) is one control: prompts show all of it.
+    pad: dev === 'keyboard' ? [] : all || b.chord ? pad : pad.slice(0, 1),
     keys: dev === 'keyboard' ? (all ? keys : keys.slice(0, 1)) : [],
     hold: !!b.hold,
     axis,
@@ -233,6 +234,15 @@ function keyWordGlyph(word: string): string {
 }
 
 const SEP = '<span class="dw-glyph-sep">/</span>';
+/** Between the controls of a chord, pressed together. */
+const PLUS = '<span class="dw-glyph-sep">+</span>';
+
+/** An action's first control as plain words for text-only places (notices): "R", "View", "Options". */
+export function controlName(action: ControlAction, dev: GlyphDevice): string {
+  const c = controlsFor(action, dev);
+  if (dev === 'keyboard') return c.keys.length ? keyLabel(c.keys[0]) : '';
+  return c.pad.map((p) => padLabel(p, dev)).join(' + ');
+}
 
 /** Glyph markup for an action on a device: one control for prompts, all for the controls screen. */
 export function glyphHtml(action: ControlAction, dev: GlyphDevice, all = false): string {
@@ -240,10 +250,13 @@ export function glyphHtml(action: ControlAction, dev: GlyphDevice, all = false):
   if (action === 'navigate' && !all) return dev === 'keyboard' ? keyGlyph('ArrowUp') + keyGlyph('ArrowDown') : padGlyph('DPad', dev);
   const c = controlsFor(action, dev, all);
   if (dev === 'keyboard') {
-    if (all) return bindingKeyboardHtml(bindingFor(action));
+    const b = bindingFor(action);
+    if (all) return bindingKeyboardHtml(b);
+    // A cluster the scheme names as one word ("WASD") reads better than its first key ("W").
+    if (b && /^[A-Z]{3,5}$/.test(b.keyboard)) return keyWordGlyph(b.keyboard);
     return c.keys.map(keyGlyph).join(SEP);
   }
-  return c.pad.map((p) => padGlyph(p, dev, c.axis)).join(SEP);
+  return c.pad.map((p) => padGlyph(p, dev, c.axis)).join(bindingFor(action)?.chord ? PLUS : SEP);
 }
 
 /** The controls screen's keyboard column: the scheme's display text, as keycaps where possible. */
@@ -263,6 +276,27 @@ export function bindingKeyboardHtml(b: Binding | undefined): string {
 /** The controls screen's gamepad column for a binding. */
 export function bindingPadHtml(b: Binding, style: PadStyle): string {
   const axis = b.xbox.includes('↕') ? '↕' : b.xbox.includes('↔') ? '↔' : '';
-  const glyphs = [...new Set(b.pad)].map((p) => padGlyph(p, style, axis)).join(SEP);
+  const glyphs = [...new Set(b.pad)].map((p) => padGlyph(p, style, axis)).join(b.chord ? PLUS : SEP);
   return b.xbox.includes('(hold)') ? `${glyphs}<span class="dw-glyph-note">hold</span>` : glyphs;
+}
+
+/** Pad controls a label might mention (a note that only makes sense with a controller). */
+const PAD_WORDS = /\b(L3|R3|LS|RS|LB|RB|LT|RT|D-pad|stick|trigger|pull harder)\b/i;
+
+/**
+ * A control's description for one device: notes that name gamepad controls are dropped on the
+ * keyboard page ("Run (hold, or click L3 to keep running)" → "Run (hold)").
+ */
+export function controlLabel(label: string, dev: GlyphDevice): string {
+  if (dev !== 'keyboard') return label;
+  return label
+    .replace(/\s*\(([^)]*)\)/g, (_all, inner: string) => {
+      const parts = inner.split(/\s*([,;])\s*/);
+      // parts: [clause, sep, clause, sep, ...]; keep the clauses that make sense on a keyboard.
+      const kept: string[] = [];
+      for (let i = 0; i < parts.length; i += 2) if (!PAD_WORDS.test(parts[i])) kept.push(parts[i]);
+      const joined = kept.join(inner.includes(';') ? '; ' : ', ');
+      return joined ? ` (${joined})` : '';
+    })
+    .trim();
 }

@@ -1,7 +1,9 @@
 // The Stable: customize the wyvern and the rider. The panel takes the left 40% of the screen
 // (STABLE_UI_FRACTION — the camera frames the subject in the other 60% with a lens shift).
-// Picks preview live through actions.setWyvernLook / setRiderLook; Save keeps them, Back puts
-// back the look you walked in with. Locked options stay visible with what they ask of you.
+// Picks are previews (actions.previewWyvernLook / previewRiderLook): the models and the flight
+// breed change, the save does not. Save & leave keeps them (setWyvernLook / setRiderLook);
+// Revert, or leaving any other way, puts back the look you walked in with. Locked options stay
+// visible with what they ask of you.
 
 import type { BreedId, InputPresses, RiderLook, WyvernLook } from '../core/types';
 import { PALETTES, cosmeticsFor, type CosmeticOption } from '../cosmetics/catalog';
@@ -34,6 +36,8 @@ export class Stable extends Panel {
   private markers: (() => void)[] = [];
   private saveBtn!: HTMLElement;
   private revertBtn!: HTMLElement;
+  /** Save & leave ran: the look is kept. */
+  private committed = false;
 
   constructor(
     ctx: UiCtx,
@@ -129,8 +133,39 @@ export class Stable extends Panel {
 
   private saveAndLeave(): void {
     this.ctx.sound('select');
+    const a = this.ctx.actions;
+    if (looksDiffer(this.wyvern, this.entryWyvern)) a.setWyvernLook(this.wyvern);
+    if (looksDiffer(this.rider, this.entryRider)) a.setRiderLook(this.rider);
+    this.committed = true;
     this.ctx.view.save.flush();
     this.onLeave();
+  }
+
+  /** Show a pick without keeping it (falls back to keeping it on games without previews). */
+  private previewWyvern(look: WyvernLook): void {
+    const a = this.ctx.actions;
+    if (a.previewWyvernLook) a.previewWyvernLook(look);
+    else a.setWyvernLook(look);
+  }
+
+  private previewRider(look: RiderLook): void {
+    const a = this.ctx.actions;
+    if (a.previewRiderLook) a.previewRiderLook(look);
+    else a.setRiderLook(look);
+  }
+
+  /** Put back the look you walked in with. */
+  private revert(): void {
+    if (looksDiffer(this.wyvern, this.entryWyvern)) this.previewWyvern(this.entryWyvern);
+    if (looksDiffer(this.rider, this.entryRider)) this.previewRider(this.entryRider);
+    this.wyvern = { ...this.entryWyvern };
+    this.rider = { ...this.entryRider };
+  }
+
+  override dispose(): void {
+    // Closed without Save (title, a screen change...): previews never outlive the Stable.
+    if (!this.committed) this.revert();
+    super.dispose();
   }
 
   private requestRevert(): void {
@@ -147,10 +182,7 @@ export class Stable extends Panel {
         {
           label: 'Revert',
           run: () => {
-            this.wyvern = { ...this.entryWyvern };
-            this.rider = { ...this.entryRider };
-            this.ctx.actions.setWyvernLook(this.wyvern);
-            this.ctx.actions.setRiderLook(this.rider);
+            this.revert();
             this.onLeave();
           },
         },
@@ -278,7 +310,7 @@ export class Stable extends Panel {
           }
           this.ctx.sound('select');
           this.wyvern = withBreed(this.wyvern, id);
-          this.ctx.actions.setWyvernLook(this.wyvern);
+          this.previewWyvern(this.wyvern);
           this.refreshMarks();
           show(id);
         },
@@ -307,7 +339,7 @@ export class Stable extends Panel {
           this.ctx.sound('select');
           if (this.rider.build === b.value) return;
           this.rider = { ...this.rider, build: b.value };
-          this.ctx.actions.setRiderLook(this.rider);
+          this.previewRider(this.rider);
           this.refreshMarks();
         },
       });
@@ -343,10 +375,10 @@ export class Stable extends Panel {
           if (current() === opt.id) return;
           if (s.target === 'wyvern') {
             this.wyvern = { ...this.wyvern, [s.key]: opt.id };
-            this.ctx.actions.setWyvernLook(this.wyvern);
+            this.previewWyvern(this.wyvern);
           } else {
             this.rider = { ...this.rider, [s.key]: opt.id };
-            this.ctx.actions.setRiderLook(this.rider);
+            this.previewRider(this.rider);
           }
           this.refreshMarks();
         },
@@ -406,10 +438,10 @@ export class Stable extends Panel {
           if (current() === hex.toLowerCase()) return;
           if (s.target === 'wyvern') {
             this.wyvern = { ...this.wyvern, [s.key]: hex };
-            this.ctx.actions.setWyvernLook(this.wyvern);
+            this.previewWyvern(this.wyvern);
           } else {
             this.rider = { ...this.rider, [s.key]: hex };
-            this.ctx.actions.setRiderLook(this.rider);
+            this.previewRider(this.rider);
           }
           this.refreshMarks();
         },

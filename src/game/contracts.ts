@@ -276,6 +276,11 @@ export interface RaceSystem {
   fixedUpdate(dt: number, player: PlayerSystem): void;
   update(dt: number, camera: PerspectiveCamera, player: PlayerSystem): void;
   setShowGhost(on: boolean): void;
+  /**
+   * Optional: forget everything remembered about past runs after the save was erased (bests, the
+   * in-memory best ghost) and stand down any race. Game.resetProgress calls it.
+   */
+  resetProgress?(): void;
 }
 
 export interface SaveData {
@@ -294,6 +299,11 @@ export interface SaveData {
   playTime: number;
   /** Whether the first-flight tutorial prompts have been dismissed. */
   tutorialDone: boolean;
+  /**
+   * Optional: ids of the onboarding tips already shown or learned (the UI's tutor; see
+   * ui/tutor.ts). tutorialDone turns true once every first-flight tip is in here.
+   */
+  tips?: string[];
   /** Research journal: recorded entry ids and points per branch (absent in older saves). */
   research?: { entries: string[]; points: Record<ResearchBranch, number> };
   /** The guided opening with Quintus: finished or skipped (absent = not yet). */
@@ -383,8 +393,16 @@ export interface GameActions {
   beginRace(raceId: string): void;
   restartRace(): void;
   quitRace(): void;
+  /** Keep this look: applies it, stores it in the save and persists. */
   setWyvernLook(look: WyvernLook): void;
   setRiderLook(look: RiderLook): void;
+  /**
+   * Optional: show a look without keeping it (Stable picks before Save): the models and the flight
+   * breed change, the save does not. Commit with setWyvernLook / setRiderLook, or preview the
+   * saved look again to put it back.
+   */
+  previewWyvernLook?(look: WyvernLook): void;
+  previewRiderLook?(look: RiderLook): void;
   applySettings(s: Settings): void;
   resetProgress(): void;
   /** Optional: leave play (abandoning any race) and return to the title screen. */
@@ -404,11 +422,18 @@ export interface GameView {
   camera: CameraSystem;
   /** Context prompt the HUD should show (e.g. "Hold LT to flare"), or null. */
   prompt: { action: PromptAction; text: string } | null;
+  /**
+   * Optional: what the settings screen shows of the renderer. A quality change can hold the view
+   * on its last frame for a few seconds while shaders link (recompilingQuality); the screen says
+   * "Applying…" meanwhile.
+   */
+  renderer?: { readonly recompilingQuality: boolean };
 }
 
 /**
- * The control a prompt asks for (the HUD draws its glyph). 'rest' asks for no button at all
- * (glide or land to recover stamina): draw a stamina/wing mark or nothing.
+ * What the prompt's glyph shows. Most are buttons (drawn from the control scheme for the active
+ * device). 'rest' is advice with no button to press (winded: glide or land to recover); the HUD
+ * draws the wing emblem for it. Any action without a scheme binding is drawn that way.
  */
 export type PromptAction = 'flap' | 'flare' | 'tuck' | 'interact' | 'mount' | 'dismount' | 'jump' | 'restart' | 'stable' | 'rest';
 

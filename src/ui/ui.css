@@ -737,7 +737,8 @@
   opacity: 0;
 }
 
-/* Stamina gauge + readouts, bottom right. */
+/* Stamina gauge + readouts, bottom right. A soft shade sits behind them so the numbers hold their
+   contrast over bright cloud without a hard box. */
 .dw-flightinfo {
   position: absolute;
   right: 2.2em;
@@ -745,6 +746,172 @@
   display: flex;
   align-items: center;
   gap: 1em;
+  isolation: isolate;
+}
+.dw-flightinfo::before {
+  content: '';
+  position: absolute;
+  inset: -2.4em -2.2em -2.2em -3.2em;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(24, 16, 11, 0.3), rgba(24, 16, 11, 0.15) 50%, transparent);
+  opacity: 0;
+  transition: opacity 0.9s var(--ease);
+}
+.dw-flightinfo.is-shaded::before {
+  opacity: 1;
+}
+/* Small notes above the readouts: "Rising air", "Glide or land to rest". */
+.dw-flightinfo-notes {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: 0.5em;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  white-space: nowrap;
+}
+/* Each note is a small smoked-glass pill (it must read over white cloud as well as blue sky),
+   and a note that is off takes no room, so the ones showing stack neatly over the emblem. */
+.dw-lift,
+.dw-restnote,
+.dw-restcap {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.88em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  padding: 0 0.75em;
+  border-radius: 1em;
+  background: linear-gradient(180deg, rgba(38, 27, 20, 0.6), rgba(24, 17, 13, 0.66));
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(232, 187, 95, 0.24);
+  box-shadow: 0 0.2em 0.8em rgba(10, 6, 3, 0.18);
+  text-shadow: none;
+  max-height: 0;
+  margin-top: 0;
+  overflow: hidden;
+  border-width: 0;
+  opacity: 0;
+  transform: translateY(0.3em);
+  transition:
+    opacity 0.5s var(--ease),
+    transform 0.5s var(--ease),
+    max-height 0.4s var(--ease),
+    padding 0.4s var(--ease),
+    margin 0.4s var(--ease);
+}
+.dw-lift.is-on,
+.dw-restnote.is-on,
+.dw-restcap.is-on {
+  opacity: 1;
+  transform: none;
+  max-height: 2.2em;
+  padding: 0.26em 0.75em;
+  margin-top: 0.35em;
+  border-width: 1px;
+}
+.dw-lift {
+  color: var(--gold-hi);
+}
+.dw-lift::before {
+  content: '';
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-right: 0.45em;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff3c9, rgba(255, 196, 102, 0.2));
+  box-shadow: 0 0 0.6em rgba(255, 196, 102, 0.9);
+  vertical-align: 0.05em;
+}
+.dw-lift.is-on::before {
+  animation: dw-lift-pulse 1.4s ease-in-out infinite;
+}
+@keyframes dw-lift-pulse {
+  50% {
+    transform: translateY(-0.18em) scale(1.25);
+  }
+}
+.dw-lift-v {
+  margin-left: 0.5em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  color: #fff3c9;
+}
+/* Riding into a thermal: one warm bloom behind the note, so the moment registers. */
+.dw-lift.is-pulse {
+  animation: dw-lift-enter 1.2s var(--ease);
+}
+@keyframes dw-lift-enter {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 210, 120, 0.85);
+    transform: scale(0.94);
+  }
+  35% {
+    box-shadow: 0 0 1.1em 0.25em rgba(255, 210, 120, 0.55);
+    transform: scale(1.06);
+  }
+  100% {
+    box-shadow: 0 0.2em 0.8em rgba(10, 6, 3, 0.18);
+    transform: none;
+  }
+}
+.dw-restnote {
+  color: #ffe2b8;
+  font-style: italic;
+  font-weight: 600;
+}
+/* "Sun-warmed" / "Rested": names the warm ring for a few seconds when the bonus begins. */
+.dw-restcap {
+  gap: 0.4em;
+  letter-spacing: 0.06em;
+  color: #ffd9a8;
+  border-color: rgba(255, 179, 107, 0.4);
+}
+.dw-restcap-i {
+  display: inline-grid;
+  width: 1.1em;
+  height: 1.1em;
+  color: #ffb36b;
+  filter: drop-shadow(0 0 0.35em rgba(255, 150, 80, 0.8));
+}
+.dw-restcap-i .dw-icon {
+  width: 100%;
+  height: 100%;
+}
+/* Speed over the ground: only near the edge of the world, when the headwind holds you back. */
+.dw-readout-gs {
+  display: none;
+  align-items: baseline;
+  gap: 0.35em;
+  margin: -0.1em 0 0.15em;
+  font-size: 0.82em;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #cfe3ff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(20, 12, 6, 0.7);
+}
+.dw-readout-gs.is-on {
+  display: flex;
+}
+.dw-readout-gs b {
+  font-weight: 800;
+  font-size: 1.2em;
+  color: #eef5ff;
+}
+/* While the stamina tip is up beside the emblem, it says this already. */
+.dw-ui.is-gauge-tip .dw-restnote,
+.dw-ui.is-gauge-tip .dw-restcap {
+  opacity: 0;
+  max-height: 0;
+  padding: 0 0.75em;
+  margin-top: 0;
+  border-width: 0;
 }
 .dw-readouts {
   display: flex;
@@ -763,6 +930,9 @@
   font-size: 2.35em;
   line-height: 1;
   letter-spacing: 0.01em;
+  text-shadow:
+    0 0.03em 0.06em rgba(20, 12, 6, 0.75),
+    0 0 0.22em rgba(20, 12, 6, 0.55);
 }
 .dw-readout-u {
   font-weight: 700;
@@ -843,51 +1013,84 @@
   transform: translateX(0.05em);
   filter: drop-shadow(0 0 0.3em rgba(255, 200, 110, 0.45));
 }
+/* Low and winded read as "time to rest", not failure: warm ambers and a slow breath, no red. */
 .dw-gauge.is-low .dw-gauge-fill {
   stroke: #ffb24d;
 }
 .dw-gauge.is-winded .dw-gauge-fill {
-  stroke: #e46a4a;
+  stroke: #e7a35c;
   filter: none;
+  opacity: 0.85;
+}
+.dw-gauge.is-winded .dw-gauge-face {
+  animation: dw-breathe-face 2.4s ease-in-out infinite;
 }
 .dw-gauge.is-winded .dw-gauge-face .dw-icon {
-  color: #f0a58a;
+  color: #f6cfa0;
 }
+@keyframes dw-breathe-face {
+  50% {
+    transform: scale(0.94);
+    box-shadow: 0 0 0.9em rgba(255, 176, 92, 0.35);
+  }
+}
+/* Rested: a warm outer ring that runs down as the bonus is used, and a glow in the emblem. */
+.dw-gauge-rest {
+  fill: none;
+  stroke: url(#dw-rest-grad);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  opacity: 0;
+  filter: drop-shadow(0 0 3px rgba(255, 130, 80, 0.95));
+  transition: opacity 0.6s var(--ease);
+}
+.dw-gauge.is-rested .dw-gauge-rest {
+  opacity: 1;
+}
+.dw-gauge.is-rested .dw-gauge-face {
+  background:
+    radial-gradient(circle at 50% 45%, rgba(255, 170, 90, 0.32), transparent 70%),
+    radial-gradient(circle at 50% 40%, rgba(60, 44, 32, 0.6), rgba(25, 18, 14, 0.62));
+  border-color: rgba(255, 186, 110, 0.55);
+}
+.dw-gauge.is-rested.is-full {
+  opacity: 0.8;
+  transform: none;
+}
+/* A refused wingbeat: a gentle nudge (amber), never an alarm. */
 .dw-gauge.is-pulse {
   animation: dw-shake 0.45s ease-out;
 }
 .dw-gauge.is-pulse .dw-gauge-face {
-  animation: dw-flash-red 0.6s ease-out;
+  animation: dw-flash-amber 0.7s ease-out;
 }
 @keyframes dw-shake {
   0%,
   100% {
     transform: none;
   }
-  20% {
-    transform: translateX(-0.18em) scale(1.06);
+  25% {
+    transform: scale(1.07);
   }
-  45% {
-    transform: translateX(0.16em) scale(1.04);
-  }
-  70% {
-    transform: translateX(-0.08em);
+  55% {
+    transform: scale(0.98);
   }
 }
-@keyframes dw-flash-red {
+@keyframes dw-flash-amber {
   0% {
-    box-shadow: 0 0 0 0 rgba(255, 100, 70, 0.9);
+    box-shadow: 0 0 0 0 rgba(255, 176, 92, 0.85);
   }
   100% {
-    box-shadow: 0 0 0 1em rgba(255, 100, 70, 0);
+    box-shadow: 0 0 0 1em rgba(255, 176, 92, 0);
   }
 }
 
-/* Context prompt, bottom center. */
+/* Context prompt, bottom center: low enough to clear the wyvern's feet when it stands mounted
+   (the landed camera frames them down to ~85% of the height). */
 .dw-prompt {
   position: absolute;
   left: 50%;
-  bottom: 9.5vh;
+  bottom: 6.8vh;
   transform: translate(-50%, 0.4em);
   display: flex;
   align-items: center;
@@ -918,12 +1121,33 @@
   border-color: rgba(255, 150, 90, 0.6);
   color: #ffe0c8;
 }
+/* Advice without a button ('rest'): the wing emblem in a soft disc. */
+.dw-prompt .dw-prompt-emblem {
+  display: grid;
+  place-items: center;
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 200, 130, 0.28), rgba(232, 187, 95, 0.06));
+  border: 1px solid rgba(232, 187, 95, 0.45);
+  color: var(--gold-hi);
+}
+.dw-prompt .dw-prompt-emblem .dw-icon {
+  width: 0.62em;
+  height: 0.62em;
+}
+.dw-prompt.is-calm {
+  border-color: rgba(255, 196, 120, 0.45);
+  color: #fff0dc;
+}
 
-/* "Click to look around". */
+/* "Click to look around": at the foot of the screen, under the prompt row and clear of the
+   wyvern and rider (the chase camera frames the mount's tail down to ~80% of the height); it
+   shows for a few seconds, then steps aside until the mouse moves again. */
 .dw-pointer-hint {
   position: absolute;
   left: 50%;
-  top: 58%;
+  bottom: 1.4vh;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -937,8 +1161,7 @@
   transition: opacity 0.4s;
 }
 .dw-pointer-hint.is-on {
-  opacity: 1;
-  animation: dw-breathe 2.6s ease-in-out infinite;
+  opacity: 0.92;
 }
 .dw-pointer-hint .dw-g {
   font-size: 1.5em;
@@ -1069,12 +1292,143 @@
 .dw-toast--relic .dw-toast-icon {
   color: #ffc7a8;
 }
+/* A streak (feathers in a row) updates the notice in place: a small bump says "again". */
+.dw-toast.is-bump .dw-toast-icon {
+  animation: dw-bump 0.45s var(--ease);
+}
+@keyframes dw-bump {
+  40% {
+    transform: scale(1.22);
+    box-shadow: 0 0 0.9em rgba(255, 214, 140, 0.6);
+  }
+}
 
-/* Center banners: discovery, race armed, countdown. */
+/* ---------------------------------------------------------------------------------------------
+   Onboarding tips: a card on the left (clear of the wyvern, the prompt and the readouts), and a
+   callout beside the stamina emblem for stamina lessons.
+   ------------------------------------------------------------------------------------------- */
+.dw-tips {
+  text-shadow: none;
+}
+.dw-tip {
+  position: absolute;
+  left: 2.2em;
+  bottom: calc(6.8vh + 1em);
+  width: 21em;
+  padding: 0.85em 1.15em 0.95em;
+  border-radius: 0.6em;
+  background: linear-gradient(180deg, rgba(40, 29, 22, 0.8), rgba(26, 19, 14, 0.78));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(232, 187, 95, 0.34);
+  border-left: 3px solid var(--gold);
+  box-shadow: 0 0.6em 1.8em rgba(10, 6, 3, 0.3);
+  opacity: 0;
+  transform: translateX(-1.2em);
+  transition:
+    opacity 0.45s var(--ease),
+    transform 0.55s var(--ease);
+}
+.dw-tip.is-on {
+  opacity: 1;
+  transform: none;
+}
+.dw-tip-kicker {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 0.66em;
+  letter-spacing: 0.3em;
+  color: var(--gold);
+  margin-bottom: 0.2em;
+}
+.dw-tip-title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.12em;
+  letter-spacing: 0.04em;
+  color: #fff3dc;
+  margin-bottom: 0.3em;
+}
+.dw-tip-body {
+  font-size: 0.98em;
+  line-height: 1.45;
+  color: var(--parch);
+}
+.dw-tip-body .dw-tip-g {
+  display: inline-flex;
+  vertical-align: middle;
+  margin: -0.15em 0.12em 0;
+  font-size: 1.4em;
+}
+.dw-tip-body .dw-tip-g .dw-key {
+  font-size: 0.62em;
+}
+.dw-tip-check {
+  position: absolute;
+  top: 0.75em;
+  right: 0.8em;
+  display: grid;
+  place-items: center;
+  width: 1.6em;
+  height: 1.6em;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, rgba(170, 230, 140, 0.45), rgba(120, 190, 90, 0.15));
+  border: 1px solid rgba(170, 230, 140, 0.6);
+  color: #dfffc8;
+  opacity: 0;
+  transform: scale(0.5);
+  transition:
+    opacity 0.3s var(--ease),
+    transform 0.4s var(--ease);
+}
+.dw-tip-check .dw-icon {
+  width: 1em;
+  height: 1em;
+}
+.dw-tip.is-done .dw-tip-check {
+  opacity: 1;
+  transform: none;
+}
+.dw-tip.is-done {
+  border-left-color: #a8e08a;
+}
+/* The stamina callout: above the emblem, pointing down at it. */
+.dw-tip--gauge {
+  left: auto;
+  right: 2.2em;
+  bottom: 9.6em;
+  width: 17.5em;
+  border-left: 1px solid rgba(255, 186, 110, 0.45);
+  border-top: 3px solid #ffb36b;
+  transform: translateY(0.8em);
+}
+.dw-tip--gauge::after {
+  content: '';
+  position: absolute;
+  right: 1.9em;
+  bottom: -0.5em;
+  width: 0.9em;
+  height: 0.9em;
+  background: rgba(26, 19, 14, 0.85);
+  border-right: 1px solid rgba(232, 187, 95, 0.34);
+  border-bottom: 1px solid rgba(232, 187, 95, 0.34);
+  transform: rotate(45deg);
+}
+.dw-tip--gauge .dw-tip-title {
+  color: #ffd9a8;
+}
+.dw-ui.is-reduced .dw-tip,
+.dw-ui.is-reduced .dw-tip--gauge {
+  transform: none;
+}
+
+/* Center banners: discovery, race armed, countdown. A discovery card sits high, in the open sky
+   under the compass: the chase camera frames the wyvern (and the next ring) below the middle of
+   the screen, and on foot the wyvern stands at about mid-height. It never shows mid-race. */
 .dw-banner {
   position: absolute;
   left: 50%;
-  top: 26vh;
+  top: max(10.5vh, calc(var(--u) * 5.6));
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -1087,11 +1441,12 @@
 .dw-banner.is-on {
   opacity: 1;
 }
+
 .dw-banner::before,
 .dw-banner::after {
   content: '';
   position: absolute;
-  inset: -1.1em -9em -1.3em;
+  inset: -0.9em -9em -1em;
   z-index: -1;
   pointer-events: none;
 }
@@ -1115,7 +1470,7 @@
 .dw-banner-name {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 2.7em;
+  font-size: 2.5em;
   letter-spacing: 0.08em;
   line-height: 1.15;
   margin: 0.12em 0 0.18em;
@@ -1125,7 +1480,7 @@
   width: 24em;
 }
 .dw-banner-sub {
-  margin-top: 0.5em;
+  margin-top: 0.3em;
   font-style: italic;
   font-size: 1.05em;
   color: var(--parch);
@@ -1156,14 +1511,69 @@
   }
 }
 
+/* RACE READY: one slim line under the race cluster while a race is armed (the start gate owns
+   the middle of the screen). */
+.dw-gate {
+  position: absolute;
+  left: 50%;
+  top: 8.4em;
+  transform: translate(-50%, -0.3em);
+  display: flex;
+  align-items: baseline;
+  gap: 0.75em;
+  padding: 0.38em 1.3em 0.42em;
+  white-space: nowrap;
+  border-radius: 2em;
+  background: linear-gradient(180deg, rgba(38, 27, 20, 0.62), rgba(24, 17, 13, 0.68));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(232, 187, 95, 0.4);
+  box-shadow: 0 0.4em 1.4em rgba(10, 6, 3, 0.22);
+  opacity: 0;
+  transition:
+    opacity 0.45s var(--ease),
+    transform 0.45s var(--ease);
+}
+.dw-gate.is-on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.dw-gate-kicker {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 0.72em;
+  letter-spacing: 0.32em;
+  color: var(--gold-hi);
+}
+.dw-gate-name {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.18em;
+  letter-spacing: 0.06em;
+  color: #fff6e2;
+}
+.dw-gate-sub {
+  font-style: italic;
+  font-size: 0.92em;
+  color: var(--parch);
+}
+.dw-gate-name::before,
+.dw-gate-sub::before {
+  content: '·';
+  margin-right: 0.75em;
+  color: var(--gold);
+  font-style: normal;
+}
 .dw-countdown {
   position: absolute;
   left: 50%;
-  top: 34vh;
+  /* High, in the RACE READY line's place under the race cluster (that line steps aside for the
+     count), above the gate opening the wyvern aims for. */
+  top: max(22vh, calc(var(--u) * 11));
   transform: translate(-50%, -50%);
   font-family: var(--display);
   font-weight: 700;
-  font-size: 7em;
+  font-size: 5.6em;
   line-height: 1;
   color: #fff6e2;
   text-shadow:
@@ -1549,6 +1959,36 @@
   font-size: 0.86em;
   color: var(--parch-3);
   margin-top: 0.05em;
+}
+/* Quality: "Applying…" replaces the help line while the new shaders link. */
+.dw-row-applying {
+  display: none;
+  align-items: center;
+  gap: 0.5em;
+  margin-top: 0.15em;
+  font-size: 0.82em;
+  font-weight: 700;
+  color: var(--gold-hi);
+}
+.dw-row-applying::before {
+  content: '';
+  width: 0.85em;
+  height: 0.85em;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 220, 150, 0.25);
+  border-top-color: var(--gold-hi);
+  animation: dw-spin 0.9s linear infinite;
+}
+.dw-row.is-applying .dw-row-help {
+  display: none;
+}
+.dw-row.is-applying .dw-row-applying {
+  display: flex;
+}
+@keyframes dw-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .dw-row.is-focus .dw-row-help {
   color: var(--parch-2);

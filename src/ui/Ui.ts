@@ -16,9 +16,9 @@ import { ControlsMenu } from './ControlsMenu';
 import { CollectionMenu } from './CollectionMenu';
 import { CreditsMenu } from './CreditsMenu';
 import { Dialog } from './Dialog';
-import { div } from './dom';
+import { LiveClass, div } from './dom';
 import { preloadFonts } from './fonts';
-import { glyphDevice, glyphHtml, keyGlyph, padGlyph, type GlyphDevice } from './glyphs';
+import { controlName, glyphDevice, glyphHtml, keyGlyph, padGlyph, type GlyphDevice } from './glyphs';
 import { Hud } from './Hud';
 import type { Panel, UiCtx, UiSound } from './panel';
 import { Pause, type PauseEntry } from './Pause';
@@ -28,6 +28,7 @@ import { RacesMenu } from './RacesMenu';
 import { Results, type RaceResult } from './Results';
 import { SettingsMenu } from './SettingsMenu';
 import { Stable } from './Stable';
+import { Tips } from './Tips';
 import { Title } from './Title';
 
 export interface UiDeps {
@@ -49,6 +50,8 @@ export class Ui implements UiSystem {
   private hudNote: HTMLElement;
   private hud: Hud;
   private raceHud: RaceHud;
+  private tips: Tips;
+  private gaugeTip: LiveClass;
   private stack: Panel[] = [];
   private title: Title | null = null;
   private ctx: UiCtx;
@@ -105,13 +108,20 @@ export class Ui implements UiSystem {
 
     this.root = div('dw-ui');
     this.root.dataset.device = 'keyboard';
+    this.gaugeTip = new LiveClass(this.root, 'is-gauge-tip');
     this.hud = new Hud({ events: this.events, fillGlyphs: (el) => this.fillGlyphs(el), reducedMotion: () => this.reduced });
-    this.raceHud = new RaceHud({ events: this.events, reducedMotion: () => this.reduced, toast: (t, s) => this.hud.toast(t, s ?? '', 'race') });
+    this.raceHud = new RaceHud({
+      events: this.events,
+      reducedMotion: () => this.reduced,
+      notify: (n) => this.hud.notify(n),
+      restartLabel: () => controlName('restart', this.device),
+    });
+    this.tips = new Tips({ fillGlyphs: (el) => this.fillGlyphs(el), events: this.events });
     this.veil = div('dw-veil');
     this.stackLayer = div('dw-layer dw-stack');
     this.hudNote = div('dw-hud-note');
     this.hudNote.innerHTML = '<span>HUD hidden</span><span class="dw-hint-g" data-glyph="toggleHud"></span><span>to show</span>';
-    this.root.append(this.hud.root, this.raceHud.root, this.hudNote, this.veil, this.stackLayer, this.hud.toastLayer);
+    this.root.append(this.hud.root, this.raceHud.root, this.tips.root, this.hudNote, this.veil, this.stackLayer, this.hud.toastLayer);
     deps.root.append(this.root);
     this.fillGlyphs(this.root);
     this.subscribe();
@@ -204,7 +214,27 @@ export class Ui implements UiSystem {
         run: () => this.push(new RacesMenu(this.ctx)),
         sub: (v) => (v.races.defs.length ? `${v.races.defs.length} courses` : ''),
       },
-      { label: 'Stable', run: () => this.actions.openStable() },
+      {
+        label: 'Stable',
+        run: () => {
+          // A race in progress (or counting down at its gate) can't change wyvern mid-run:
+          // abandon it first, or keep racing.
+          if (!racing) return this.actions.openStable();
+          const name = view.races.defs.find((d) => d.id === view.races.activeId)?.name ?? 'the race';
+          this.push(
+            new Dialog(this.ctx, 'Abandon the race?', `The Stable is closed while you race. Abandon ${name} and open the Stable?`, [
+              { label: 'Keep racing', run: () => {}, cancel: true, primary: true },
+              {
+                label: 'Abandon',
+                run: () => {
+                  this.actions.quitRace();
+                  this.actions.openStable();
+                },
+              },
+            ]),
+          );
+        },
+      },
       {
         label: 'Collection',
         run: () => this.push(new CollectionMenu(this.ctx)),
@@ -233,12 +263,10 @@ export class Ui implements UiSystem {
   }
 
   private leaveStable(): void {
-    if (this.stableFromTitle && this.actions.quitToTitle) {
-      this.actions.closeStable();
-      this.actions.quitToTitle();
-    } else {
-      this.actions.closeStable();
-    }
+    // Opened from the title: straight back to it, never through 'play' (which would ask for
+    // pointer lock on the way and could leave the mouse captured on the title screen).
+    if (this.stableFromTitle && this.actions.quitToTitle) this.actions.quitToTitle();
+    else this.actions.closeStable();
   }
 
   // --- Panel stack ----------------------------------------------------------------------------
@@ -345,6 +373,7 @@ export class Ui implements UiSystem {
       this.root.dataset.device = dev;
       this.hud.refreshGlyphs();
       this.fillGlyphs(this.root);
+      this.tips.refreshGlyphs();
     }
     const reduced = view.save.data.settings.reducedMotion;
     if (reduced !== this.reduced) {
@@ -374,6 +403,8 @@ export class Ui implements UiSystem {
     this.hud.setVisible(hudVisible);
     this.hud.update(dt, view);
     this.raceHud.update(dt, view, hudVisible);
+    this.tips.update(dt, view, hudVisible);
+    this.gaugeTip.set(this.tips.gaugeOn);
     if (this.hudNoteLeft > 0) this.hudNoteLeft -= dt;
     this.hudNote.classList.toggle('is-on', this.hudNoteLeft > 0 && this.screen === 'play');
 

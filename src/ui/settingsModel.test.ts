@@ -1,13 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../game/settings';
 import { QUALITY } from '../render/quality';
-import { SETTINGS_TABS, cycleChoice, qualityFacts, sliderFraction, sliderValueAt, stepSlider } from './settingsModel';
+import { SETTINGS_TABS, cycleChoice, qualityFacts, sliderFraction, sliderValueAt, stepSlider, toggleValue } from './settingsModel';
 
 describe('settings rows', () => {
-  it('cover every setting exactly once', () => {
-    const keys = SETTINGS_TABS.flatMap((t) => t.rows).flatMap((r) => (r.kind === 'action' ? [] : [r.key]));
+  it('cover every setting exactly once (a setting others follow counts as covered)', () => {
+    const rows = SETTINGS_TABS.flatMap((t) => t.rows);
+    const keys = rows.flatMap((r) => (r.kind === 'action' ? [] : [r.key]));
     expect(new Set(keys).size).toBe(keys.length);
-    expect(new Set(keys)).toEqual(new Set(Object.keys(DEFAULT_SETTINGS)));
+    const covered = new Set([...keys, ...rows.flatMap((r) => (r.kind === 'toggle' && r.fallback ? [r.fallback] : []))]);
+    const optional = ['invertPitchPad', 'invertPitchKeys', 'invertLookY', 'mouseFlight'];
+    expect(covered).toEqual(new Set([...Object.keys(DEFAULT_SETTINGS), ...optional]));
+  });
+  it('per-device inverts follow the single invert until set', () => {
+    const row = SETTINGS_TABS.flatMap((t) => t.rows).find((r) => r.kind === 'toggle' && r.key === 'invertPitchPad');
+    expect(row?.kind).toBe('toggle');
+    if (row?.kind !== 'toggle') return;
+    expect(toggleValue({ ...DEFAULT_SETTINGS, invertPitch: true }, row)).toBe(true);
+    expect(toggleValue({ ...DEFAULT_SETTINGS, invertPitch: true, invertPitchPad: false }, row)).toBe(false);
+    expect(toggleValue({ ...DEFAULT_SETTINGS }, { key: 'mouseFlight' })).toBe(false);
   });
   it('slider ranges contain the defaults', () => {
     for (const row of SETTINGS_TABS.flatMap((t) => t.rows)) {

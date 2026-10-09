@@ -31,11 +31,13 @@ export interface ToggleRow {
   key: KeysOfType<Settings, boolean>;
   label: string;
   help: string;
+  /** An optional setting that, while absent, follows this one (per-device inverts → invertPitch). */
+  fallback?: KeysOfType<Settings, boolean>;
 }
 
 export interface ActionRow {
   kind: 'action';
-  id: 'resetProgress';
+  id: 'resetProgress' | 'replayTips';
   label: string;
   help: string;
 }
@@ -87,7 +89,21 @@ export const SETTINGS_TABS: SettingsTab[] = [
         kind: 'slider', key: 'lookSensitivity', label: 'Look sensitivity', help: 'Right stick and mouse look speed.',
         min: 0.25, max: 2, step: 0.05, format: (v) => `${v.toFixed(2)}×`,
       },
-      { kind: 'toggle', key: 'invertPitch', label: 'Invert flight pitch', help: 'Push forward to climb instead of dive.' },
+      // Per device: plenty of players fly a pad one way and the keys the other. Until set, both
+      // follow the older single setting (invertPitch).
+      {
+        kind: 'toggle', key: 'invertPitchPad', fallback: 'invertPitch', label: 'Invert pitch — controller',
+        help: 'Push the stick forward to climb, pull back to dive.',
+      },
+      {
+        kind: 'toggle', key: 'invertPitchKeys', fallback: 'invertPitch', label: 'Invert pitch — keyboard & mouse',
+        help: 'W climbs and S dives (mouse steering follows).',
+      },
+      { kind: 'toggle', key: 'invertLookY', label: 'Invert camera Y', help: 'Push the stick up, or move the mouse up, to look down.' },
+      {
+        kind: 'toggle', key: 'mouseFlight', label: 'Mouse steering (hold middle button to look)',
+        help: 'Keyboard & mouse: with the mouse captured in flight, it banks and pitches the wyvern.',
+      },
     ],
   },
   {
@@ -96,7 +112,11 @@ export const SETTINGS_TABS: SettingsTab[] = [
     rows: [
       { kind: 'toggle', key: 'holdToFlap', label: 'Hold to flap', help: 'On: hold to keep beating. Off: one beat per press.' },
       { kind: 'toggle', key: 'showGhost', label: 'Race ghost', help: 'Race against a ghost of your best run.' },
-      { kind: 'toggle', key: 'showControlHints', label: 'Control hints', help: 'Flying tips like “Flare to land”. Interaction prompts always show.' },
+      {
+        kind: 'toggle', key: 'showControlHints', label: 'Show tips',
+        help: 'First-flight lessons and flying hints like “Flare to land”. Interaction prompts always show.',
+      },
+      { kind: 'action', id: 'replayTips', label: 'Replay tips', help: 'Show the first-flight lessons again, from the start.' },
       { kind: 'choice', key: 'timeOfDay', label: 'Time of day', help: 'Let the sun cross the sky, or hold it at your favourite hour.', options: TIME_OF_DAY } as ChoiceRow,
       {
         kind: 'slider', key: 'dayLengthMinutes', label: 'Day length', help: 'Real minutes for one full day and night.',
@@ -123,6 +143,11 @@ export const SETTINGS_TABS: SettingsTab[] = [
     ],
   },
 ];
+
+/** A toggle's effective value: the setting, else what it follows, else off. */
+export function toggleValue(s: Settings, row: Pick<ToggleRow, 'key' | 'fallback'>): boolean {
+  return !!(s[row.key] ?? (row.fallback ? s[row.fallback] : false));
+}
 
 /** Step a slider by one notch (dir −1/+1), snapped to the grid and clamped. */
 export function stepSlider(v: number, row: Pick<SliderRow, 'min' | 'max' | 'step'>, dir: number): number {

@@ -27,7 +27,7 @@ import { LocalSaveStore, SAVE_KEY } from '../progression/save';
 import { Fx } from '../fx/Fx';
 import { AudioSystem } from '../audio/Audio';
 import { Ui } from '../ui/Ui';
-import type { GameActions, GameScreen, GameView } from './contracts';
+import type { GameActions, GameScreen, GameView, RaceSystem } from './contracts';
 import { guessQuality } from './settings';
 import { computePrompt } from '../player/prompts';
 import { readDebugParams, type DebugParams } from '../debug/params';
@@ -166,6 +166,7 @@ export class Game implements GameActions {
       weather: this.weather,
       camera: this.cameraRig,
       prompt: null,
+      renderer: this.renderer,
     };
 
     this.placeAtSpawn();
@@ -278,6 +279,8 @@ export class Game implements GameActions {
   }
 
   openStable(): void {
+    // No breed swaps mid-race: the pause menu asks first; anything else stands the race down.
+    if (this.races.state === 'running' || this.races.state === 'countdown') this.races.abort('quit');
     this.setScreen('stable');
   }
 
@@ -299,19 +302,27 @@ export class Game implements GameActions {
   }
 
   setWyvernLook(look: WyvernLook): void {
-    const breedChanged = look.breed !== this.save.data.wyvern.breed;
     this.save.data.wyvern = { ...look };
-    if (breedChanged) this.player.setBreed(look.breed);
-    this.wyvern.setLook(look);
+    this.previewWyvernLook(look);
     this.save.save();
     this.events.emit('lookChanged', {});
   }
 
   setRiderLook(look: RiderLook): void {
     this.save.data.rider = { ...look };
-    this.rider.setLook(look);
+    this.previewRiderLook(look);
     this.save.save();
     this.events.emit('lookChanged', {});
+  }
+
+  previewWyvernLook(look: WyvernLook): void {
+    // Compare with the breed actually flying, not the save (which may already hold the new look).
+    if (look.breed !== this.player.breed.id) this.player.setBreed(look.breed);
+    this.wyvern.setLook(look);
+  }
+
+  previewRiderLook(look: RiderLook): void {
+    this.rider.setLook(look);
   }
 
   applySettings(s: Settings): void {
@@ -341,9 +352,15 @@ export class Game implements GameActions {
   }
 
   resetProgress(): void {
+    // Stand down any race and let the races forget bests and the best ghost they hold in memory.
+    if (this.races.activeId) this.races.abort('quit');
+    (this.races as RaceSystem).resetProgress?.();
     this.save.reset();
-    this.setWyvernLook(this.save.data.wyvern);
-    this.setRiderLook(this.save.data.rider);
+    // Everything that follows the save re-reads it: the breed's physics, the models, collectibles
+    // (they notice the new save), the HUD's discoveries and the tips.
+    this.previewWyvernLook(this.save.data.wyvern);
+    this.previewRiderLook(this.save.data.rider);
+    this.events.emit('lookChanged', {});
     this.placeAtSpawn();
   }
 

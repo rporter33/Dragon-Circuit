@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { headingFromYaw, headingOf, relativeBearing, ribbonPosition, wrapPi } from './compass';
+import { headingFromYaw, headingOf, layoutLabels, relativeBearing, ribbonPosition, wrapPi } from './compass';
 
 const D = Math.PI / 180;
 
@@ -33,5 +33,35 @@ describe('ribbonPosition', () => {
     expect(ribbonPosition(30 * D, 60 * D, out)).toEqual({ x: 0.5, edge: false });
     expect(ribbonPosition(-90 * D, 60 * D, out)).toEqual({ x: -1, edge: true });
     expect(ribbonPosition(170 * D, 60 * D, out)).toEqual({ x: 1, edge: true });
+  });
+});
+
+describe('compass label layout', () => {
+  const out: number[] = [];
+  it('keeps labels apart: the waypoint wins the first row, a clash drops to the second row', () => {
+    const rows = layoutLabels(
+      [
+        { x: 10, width: 120, priority: 1 }, // Unexplored · 1.8 km
+        { x: 0, width: 50, priority: 5 }, // waypoint 615 m
+        { x: 300, width: 100, priority: 2 }, // far enough away to share the row
+      ],
+      6,
+      2,
+      out,
+    );
+    expect(rows).toEqual([1, 0, 0]);
+  });
+  it('hides what fits nowhere, preferring the label nearest the center', () => {
+    const rows = layoutLabels(
+      [
+        { x: 40, width: 100, priority: 1 },
+        { x: -20, width: 100, priority: 1 },
+        { x: 5, width: 100, priority: 1 },
+      ],
+      4,
+      1,
+      out,
+    );
+    expect(rows).toEqual([-1, -1, 0]);
   });
 });

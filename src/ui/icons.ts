@@ -54,6 +54,13 @@ export const ICONS = {
   camera: s('<path d="M4 8 H8 L9.6 5.6 H14.4 L16 8 H20 V19 H4 Z" fill="currentColor"/><circle cx="12" cy="13.2" r="3.4" fill="#000" fill-opacity=".38"/>'),
   stall: s('<path d="M12 3 L22 20.5 H2 Z" fill="currentColor"/><path d="M12 9.5 V14.5" stroke="#1a120d" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17.6" r="1.3" fill="#1a120d"/>'),
   pip: s('<path d="M12 4 L20 12 L12 20 L4 12 Z" fill="currentColor"/>'),
+  /** Sun-warmed (the Rested bonus by day): a small sun. */
+  sun: s(
+    '<circle cx="12" cy="12" r="4.6" fill="currentColor"/>' +
+      '<path d="M12 2.6 V5.2 M12 18.8 V21.4 M2.6 12 H5.2 M18.8 12 H21.4 M5.4 5.4 L7.2 7.2 M16.8 16.8 L18.6 18.6 M5.4 18.6 L7.2 16.8 M16.8 7.2 L18.6 5.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>',
+  ),
+  /** Rested (by night): a crescent. */
+  moon: s('<path d="M15.5 3.4 C10.4 4.3 7 8.6 7 13 C7 17.6 10.6 21 15.2 21 C17.2 21 19 20.3 20.4 19.2 C14.9 19.4 11.2 15.8 11.2 11.2 C11.2 7.9 12.9 5.1 15.5 3.4 Z" fill="currentColor"/>'),
 };
 
 const MEDAL_COLORS: Record<Exclude<Medal, 'none'>, [string, string, string]> = {
