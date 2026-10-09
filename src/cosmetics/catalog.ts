@@ -117,7 +117,9 @@ export const PALETTES = {
     '#2f5d50', '#3f7d5a', '#6f9a4a', '#a8a24a', '#c48a3a', '#b5562f', '#8e2f2f', '#6a2f4f',
     '#4b3a6b', '#2f4a7a', '#2f6f8f', '#4f8fa8', '#8fa8b8', '#d8d0c0', '#5a5048', '#2a2a30',
   ],
-  belly: ['#e8dcc0', '#d8c098', '#c8a878', '#e8c8a0', '#c0d0c8', '#b8b0c8', '#f0e8d8', '#a89880'],
+  // The palest bellies sit about 8% darker in lightness than first picked: under golden-hour
+  // light a cream near white bloomed (materials.ts also caps a look's belly luminance).
+  belly: ['#dfcea7', '#d8c098', '#c8a878', '#e8c8a0', '#c0d0c8', '#b8b0c8', '#e6d8be', '#a89880'],
   membrane: [
     '#c86a4a', '#d89a5a', '#e8c070', '#9ac070', '#5aa890', '#5a88c0', '#8a6ac0', '#c06a9a',
     '#e8e0d0', '#6a5a50', '#3a3a48', '#d84a4a',
@@ -133,11 +135,12 @@ export const PALETTES = {
 
 /** Breed defaults: a starting look per breed so switching breeds looks deliberate. */
 export const BREED_DEFAULT_COLORS: Record<BreedId, Pick<WyvernLook, 'primary' | 'secondary' | 'belly' | 'membrane' | 'eyes'>> = {
-  harrier: { primary: '#3f7d5a', secondary: '#2f5d50', belly: '#e8dcc0', membrane: '#d89a5a', eyes: '#f0c040' },
+  harrier: { primary: '#3f7d5a', secondary: '#2f5d50', belly: '#dfcea7', membrane: '#d89a5a', eyes: '#f0c040' },
   skimmer: { primary: '#2f6f8f', secondary: '#2f4a7a', belly: '#c0d0c8', membrane: '#5aa890', eyes: '#60d0e0' },
   // Storm-slate with a deep blue mantle and amber sails: mid-to-dark values, so the mount reads
-  // against the white cloud sea even in full sun and haze (VIS-06).
-  galewing: { primary: '#6c8496', secondary: '#2f4a7a', belly: '#e6dccb', membrane: '#cf8a3c', eyes: '#4080f0' },
+  // against the white cloud sea even in full sun and haze (VIS-06). The slate sits a full step
+  // under the cloud's value (the guide flies a galewing and must be found at a glance).
+  galewing: { primary: '#4d6477', secondary: '#26364f', belly: '#dbccb4', membrane: '#cf8a3c', eyes: '#4080f0' },
   ironback: { primary: '#5a5048', secondary: '#2a2a30', belly: '#c8a878', membrane: '#b5562f', eyes: '#e87830' },
 };
 

@@ -35,3 +35,26 @@ export const globalUniforms = {
 };
 
 export type GlobalUniforms = typeof globalUniforms;
+
+/**
+ * The creature light rig: uniforms only the wyvern and rider materials read (the world never
+ * compiles them). The sky writes the bloom threshold; the camera rig writes the kick and rim
+ * lights per shot (camera/creatureLight.ts), in VIEW space, every frame.
+ */
+export const creatureUniforms = {
+  /**
+   * The palette's bloom threshold (linear scene luminance). Creature hide light is shouldered
+   * just under it, so no non-emissive pixel of a wyvern ever blooms.
+   */
+  uDwBloomT: { value: 0.85 },
+  /** Kick light: direction toward the light (view space), color and intensity. */
+  uKickDir: { value: new Vector3(0, 1, 0) },
+  uKickColor: { value: new Color(0.8, 0.88, 1.0) },
+  uKickI: { value: 0 },
+  /** Directional rim light: direction toward the light (view space, mostly behind the subject). */
+  uRimDir: { value: new Vector3(0, 0, -1) },
+  uRimColor: { value: new Color(1, 1, 1) },
+  uRimI: { value: 0 },
+};
+
+export type CreatureUniforms = typeof creatureUniforms;

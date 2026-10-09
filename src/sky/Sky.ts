@@ -19,7 +19,7 @@ import type { Settings } from '../core/types';
 import type { SkySystem } from '../game/contracts';
 import type { QualityProfile } from '../render/quality';
 import type { Renderer } from '../render/renderer';
-import { globalUniforms } from '../render/uniforms';
+import { creatureUniforms, globalUniforms } from '../render/uniforms';
 import { registerShadowFrustum } from '../render/shadowOnly';
 import { LAYOUT, type WorldLayout } from '../world/layout';
 import { clamp01, smoothstep } from '../core/math';
@@ -287,6 +287,7 @@ export class Sky implements SkySystem {
     // Inside a cloud the world goes to the cloud's own lit color, never a glaring white at night.
     g.uCloudColor.value.copy(pal.cloudLit).lerp(pal.fog, 0.35).multiplyScalar(0.92);
     this.renderer.setBloom(pal.bloom, pal.bloomThreshold);
+    creatureUniforms.uDwBloomT.value = pal.bloomThreshold;
 
     // --- Clouds -------------------------------------------------------------------------------
     this.shared.uCloudLit.value.copy(pal.cloudLit);

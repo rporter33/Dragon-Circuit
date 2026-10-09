@@ -24,8 +24,9 @@ import {
   type WebGLProgramParametersWithUniforms,
 } from 'three';
 import type { WyvernLook } from '../../core/types';
-import { applyPainterly, toonRamp } from '../../render/painterly';
-import { globalUniforms } from '../../render/uniforms';
+import { PAINTERLY_RIM_GLSL, applyPainterly, toonRamp } from '../../render/painterly';
+import { creatureUniforms, globalUniforms } from '../../render/uniforms';
+import { CREATURE_LIGHT_BLOCK, CREATURE_LIGHT_PARS } from './shading/light';
 
 export const PATTERN_IDS: Record<string, number> = {
   plain: 0,
@@ -107,11 +108,30 @@ export function createWyvernUniforms(): WyvernUniforms {
 const _hsl = { h: 0, s: 0, l: 0 };
 const _c = new Color();
 
+/**
+ * Highest linear luminance a look's hide colors may have. Pale picks stay pale but leave the
+ * lit hide room under the bloom threshold (a cream belly at 0.72 bloomed into a white tube at
+ * golden hour). 0.55 is about HSL lightness 0.74 for a warm cream.
+ */
+export const BELLY_MAX_LUMINANCE = 0.55;
+export const SCALES_MAX_LUMINANCE = 0.6;
+
+/** Linear (Rec. 709) luminance of a linear color. */
+export function luminance(c: Color): number {
+  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+}
+
+/** Scale a linear color down (hue and saturation kept) so its luminance is at most `max`. */
+export function capLuminance(c: Color, max: number): Color {
+  const l = luminance(c);
+  return l > max ? c.multiplyScalar(max / l) : c;
+}
+
 /** Write a look's colors into the uniforms (cheap; no rebuild). */
 export function applyLookUniforms(u: WyvernUniforms, look: WyvernLook): void {
-  u.uPrimary.value.set(look.primary);
-  u.uSecondary.value.set(look.secondary);
-  u.uBelly.value.set(look.belly);
+  capLuminance(u.uPrimary.value.set(look.primary), SCALES_MAX_LUMINANCE);
+  capLuminance(u.uSecondary.value.set(look.secondary), SCALES_MAX_LUMINANCE);
+  capLuminance(u.uBelly.value.set(look.belly), BELLY_MAX_LUMINANCE);
   u.uMembrane.value.set(look.membrane);
   u.uEyes.value.set(look.eyes);
   u.uSaddle.value.set(look.saddleColor);
@@ -216,9 +236,6 @@ vec4 dwScaleCell(vec3 p) {
 
 // Relief of the keeled scales (about -0.7..0.9), for the bump once the normal is known.
 float dwScaleH = 0.0;
-// How much of the painterly rim light a region takes: full on hide, little on the saddle's
-// leather, cloth and gold, whose thin edges otherwise flare like a light source in daylight.
-float dwRimScale = 1.0;
 
 // Returns albedo; writes the emissive part and a "gold" mask for the glint.
 vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
@@ -226,7 +243,10 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   gold = 0.0;
   dwScaleH = 0.0;
   int region = int(vRegion + 0.5);
-  dwRimScale = region == 5 ? 0.15 : (region >= 4 && region <= 7) || region == 11 ? 0.3 : region == 2 ? 0.5 : 1.0;
+  // How much of the rim a region takes (dwRimScale, shading/light.ts): full on the hide, little
+  // on the saddle's leather, cloth and gold (thin edges flare like a light source), the eye and
+  // the keratin of claws and teeth; the belly is masked below by anatomy.
+  dwRimScale = region == 5 ? 0.15 : (region >= 4 && region <= 7) || region == 11 ? 0.3 : region == 2 ? 0.5 : region == 9 ? 0.25 : 1.0;
   vec3 bp = vBodyPos / uBodyScale;
   float n1 = dwVnoise(bp * 2.3);
   float n2 = dwVnoise(bp * 6.1 + 3.1);
@@ -346,10 +366,21 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
       col *= mix(1.0, (1.0 - 0.16 * gap) * mix(0.95, 1.03, smoothstep(-0.35, 0.35, cv.z)), w);
       dwScaleH = w * (0.3 * smoothstep(-0.35, 0.35, cv.z) - 0.5 * gap);
     }
-    // Belly: a soft painterly boundary and faint transverse scutes.
+    // Belly: a soft painterly boundary and faint transverse scutes. The pale ventral side takes
+    // little rim (it faces down and away; a bright rim there read as a glowing tube).
     float bm = smoothstep(0.32, 0.68, belly + 0.18 * (n1 - 0.5));
-    float scute = smoothstep(0.86, 0.97, fract(s * 2.6)) * 0.12 * bm;
-    col = mix(col, uBelly * (1.0 - scute) * (0.96 + 0.06 * n2), bm);
+    dwRimScale *= mix(1.0, 0.3, smoothstep(0.3, 0.7, belly));
+    // Ventral scutes: broad transverse plates (~38 cm on a 3.3 m torso), each a face rising to
+    // its free rear edge and a dark groove where the next one tucks under. Lines widen with their
+    // on-screen size and fade to the plates' mean value, so they never alias or drift in value.
+    float scF = s * 2.6;
+    float scW = fwidth(scF);
+    float scR = fract(scF);
+    float scGroove = 1.0 - smoothstep(0.0, 0.05 + 1.5 * scW, min(scR, 1.0 - scR) - 0.01);
+    float scFace = smoothstep(0.05, 0.85, scR);
+    float scShade = (1.0 - 0.3 * scGroove) * (0.9 + 0.12 * scFace);
+    scShade = mix(0.93, scShade, 1.0 - smoothstep(0.12, 0.4, scW));
+    col = mix(col, uBelly * scShade * (0.96 + 0.06 * n2), bm);
     if (region == 8) {
       // Osteoderms: bony scutes in the secondary tone, their keels worn pale like old bone, the
       // rims shading down into the gaps between them (aUv2.x: 0 on the keel, 1 at the rim).
@@ -369,8 +400,9 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
     return c;
   }
   if (region == 9) {
-    // Claws and teeth: ivory, darkening at the tips of claws.
-    return mix(vec3(0.93, 0.88, 0.76), vec3(0.32, 0.27, 0.24), smoothstep(0.45, 1.0, vUv2.x) * 0.6);
+    // Claws and teeth: keratin, a worn horn tone at the base darkening toward the tips (never
+    // the palest thing on the animal: an ivory near 0.9 read as LED sparks at every foot).
+    return mix(vec3(0.46, 0.40, 0.31), vec3(0.17, 0.14, 0.12), smoothstep(0.35, 1.0, vUv2.x));
   }
   if (region == 2) {
     // Eye: glowing iris, slit pupil, dark limbus, eyelid when blinking.
@@ -418,18 +450,6 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
     return mix(vec3(0.55, 0.17, 0.34), vec3(0.26, 0.09, 0.24), smoothstep(0.4, 1.0, vUv2.x)) * (0.9 + 0.15 * n2);
   }
   return uPrimary;
-}
-`;
-
-/**
- * Silhouette contour: a soft dark band where the surface turns away from the camera (an ink line
- * in the painterly style), so even a pale palette keeps a readable outline against white cloud.
- * Applied after the painterly rim, so the rim's glow survives only as a thin sunlit edge.
- */
-const CONTOUR_GLSL = /* glsl */ `
-{
-  float dwCf = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
-  outgoingLight *= 1.0 - uContour * 0.34 * smoothstep(0.55, 0.95, dwCf);
 }
 `;
 
@@ -584,8 +604,19 @@ vRegion = aMat.x;
 `;
 
 function patchShared(shader: WebGLProgramParametersWithUniforms, u: WyvernUniforms): void {
-  Object.assign(shader.uniforms, u, { uTime: globalUniforms.uTime, uNight: globalUniforms.uNight });
+  Object.assign(shader.uniforms, u, creatureUniforms, { uTime: globalUniforms.uTime, uNight: globalUniforms.uNight });
   shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_PARS);
+  shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\n' + CREATURE_LIGHT_PARS);
+}
+
+/**
+ * Swap the painterly lift for the creature light (shading/light.ts). Exact-text: if the
+ * painterly patch ever changes, this throws at compile time instead of silently shipping the
+ * flat lift (and its bloom) again.
+ */
+function creatureLight(frag: string): string {
+  if (!frag.includes(PAINTERLY_RIM_GLSL)) throw new Error('wyvern materials: the painterly rim block was not found');
+  return frag.replace(PAINTERLY_RIM_GLSL, CREATURE_LIGHT_BLOCK);
 }
 
 /** Opaque toon body with region colors and patterns. */
@@ -596,16 +627,10 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
     onBeforeCompile: (shader) => {
       patchShared(shader, u);
       shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_BEGIN);
-      shader.fragmentShader = shader.fragmentShader
+      shader.fragmentShader = creatureLight(shader.fragmentShader)
         .replace('void main() {', BODY_PARS_FRAG + '\nvoid main() {')
-        .replace(
-          '#include <opaque_fragment>',
-          CONTOUR_GLSL + '\n#ifdef DW_MATTE\nvec3 dwMatteLit = max(outgoingLight - totalEmissiveRadiance, vec3(0.0));\n#endif\n#include <opaque_fragment>',
-        )
         .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + matteOut('vRegion + 1.0'))
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + SCALE_BUMP_GLSL)
-        // Per-region rim (see dwRimScale); a no-op if the painterly rim's wording ever changes.
-        .replace('uRimStrength * uDwRim', 'uRimStrength * uDwRim * dwRimScale')
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
@@ -648,9 +673,6 @@ export function createMembraneMaterial(u: WyvernUniforms): MeshToonMaterial {
       frag =
         frag.slice(0, idx) +
         /* glsl */ `
-        #ifdef DW_MATTE
-        vec3 dwMatteLit = outgoingLight;
-        #endif
         {
           // Light through the membrane: looking toward the sun, or the far side is sunlit.
           vec3 mV = normalize(vDwWorldPos - cameraPosition);
@@ -665,7 +687,7 @@ export function createMembraneMaterial(u: WyvernUniforms): MeshToonMaterial {
         }
         ` +
         frag.slice(idx);
-      shader.fragmentShader = frag
+      shader.fragmentShader = creatureLight(frag)
         .replace('void main() {', MEMBRANE_PARS_FRAG + '\nvoid main() {')
         .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + matteOut('vRegion + 21.0'))
         .replace(
