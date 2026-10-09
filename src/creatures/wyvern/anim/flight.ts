@@ -55,10 +55,15 @@ const _v = new Vector3();
 const ROLL_OMEGA = 6;
 /**
  * The inner wing's flex at full roll stick: elbow forward, wrist back (degrees; the recovery
- * stroke's M-fold is 34/46 at its deepest, which shortens the span by a tenth).
+ * stroke's M-fold is 34/46 at its deepest, which shortens the span by a tenth), and the wing
+ * finger's outer phalanx curled back. Since A13 the span lives in that spar (the arm, hand and
+ * finger bundle are sized to the body), so the elbow and wrist alone shorten the wing less than
+ * they did (the harrier's inner wing 0.86 of the outer's, not 0.84); curling the spar 12° makes
+ * the flex a sixth again (0.83) on every breed.
  */
 const INNER_FORE = 42;
 const INNER_HAND = 58;
+const INNER_TIP = 12;
 /**
  * The living glide (B4): per wing, two octaves of smooth value noise (GLIDE_HZ) on the shoulder's
  * elevation and twist, the span trim at the wrist and the tips (degrees at full weight), and every
@@ -462,7 +467,8 @@ export class FlightLayer {
       out[W.humSw] -= 6 * init * DEG;
     } else if (init < 0) {
       // The inner wing flexes at the elbow and wrist (deeper than the recovery's M-fold, for a
-      // moment): its span shortens by a sixth while the outer one stays fully spread.
+      // moment) and curls its wingtip spar back: its span shortens by a sixth while the outer one
+      // stays fully spread.
       const m = -init;
       out[W.foreSw] -= INNER_FORE * m * DEG;
       out[W.handSw] += INNER_HAND * m * DEG;
@@ -470,6 +476,7 @@ export class FlightLayer {
       out[W.f0bEl] -= 6 * m * DEG;
       out[W.f1bEl] -= 6 * m * DEG;
       out[W.f2bEl] -= 6 * m * DEG;
+      out[W.f0bSw] += INNER_TIP * m * DEG;
     }
     // Rising air under a wingtip loads that wing before the body rolls (a thermal's edge).
     const gust = f.pose.gust;
