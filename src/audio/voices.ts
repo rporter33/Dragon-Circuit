@@ -259,6 +259,16 @@ export function chime(e: AudioEngine, out: AudioNode, t: number, midi: number, v
   noiseBurst(e, out, 'white', t, 0.001, 0.025 * vel, 0.012, 'highpass', 5000, 0.7);
 }
 
+/**
+ * Rising air under the wings: two soft chimes a fifth apart, the higher one answering, over a
+ * breath of air that sweeps upward. `vel` 0..1 (stronger lift rings a little brighter).
+ */
+export function thermalChime(e: AudioEngine, out: AudioNode, t: number, notes: readonly [number, number], vel: number): void {
+  chime(e, out, t, notes[0], 0.34 * vel, 1.3);
+  chime(e, out, t + 0.17, notes[1], 0.28 * vel, 1.7);
+  whoosh(e, out, t, 1.1, 0.05 * vel, 420, 1500, 0.7);
+}
+
 const BELL_RATIOS = [0.5, 1, 1.2, 1.5, 2, 2.52, 3, 4.2];
 const BELL_AMPS = [0.55, 1, 0.45, 0.25, 0.45, 0.14, 0.18, 0.07];
 const BELL_DECAYS = [6.5, 4.8, 3.2, 2.6, 2.4, 1.6, 1.2, 0.8];

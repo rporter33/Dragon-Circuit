@@ -155,6 +155,7 @@ export class AmbienceLayer {
   private birdPan: StereoPannerNode;
   private thunderPan: StereoPannerNode;
   private thunderOut: GainNode;
+  private stormGain: GainNode;
   private lastMix: AmbienceMix | null = null;
 
   constructor(private e: AudioEngine, t: number) {
@@ -214,7 +215,31 @@ export class AmbienceLayer {
     this.thunderOut.connect(this.thunderPan).connect(dry);
     this.thunderPan.connect(gain(ctx, 0.5)).connect(wet);
 
-    for (const s of [brown, white, pink, fallPink, fallBrown]) e.startNoise(s, t);
+    // Edge storm: a low roar that surges slowly, under a howl whose pitch wanders, so the wall
+    // of weather sounds alive rather than like a fan. Silent (gain 0) inside the archipelago.
+    this.stormGain = gain(ctx, 0);
+    this.stormGain.connect(dry);
+    this.stormGain.connect(gain(ctx, 0.35)).connect(wet);
+    const stormBrown = e.noiseSource('brown');
+    const surge = gain(ctx, 0.75);
+    stormBrown.connect(filter(ctx, 'lowpass', 240, 0.6)).connect(surge).connect(this.stormGain);
+    const stormPink = e.noiseSource('pink');
+    const howlBp = filter(ctx, 'bandpass', 430, 2.2);
+    const howl = gain(ctx, 0.55);
+    stormPink.connect(howlBp).connect(howl).connect(this.stormGain);
+    const lfo = (freq: number, depth: number, target: AudioParam) => {
+      const o = ctx.createOscillator();
+      o.frequency.value = freq;
+      const d = gain(ctx, depth);
+      o.connect(d).connect(target);
+      o.start(t);
+    };
+    lfo(0.11, 150, howlBp.frequency);
+    lfo(0.047, 70, howlBp.frequency);
+    lfo(0.23, 0.3, surge.gain);
+    lfo(0.17, 0.25, howl.gain);
+
+    for (const s of [brown, white, pink, fallPink, fallBrown, stormBrown, stormPink]) e.startNoise(s, t);
   }
 
   /**
@@ -230,6 +255,7 @@ export class AmbienceLayer {
     glide(this.fallGain.gain, 0.22 * fallGain, t, 0.25);
     glide(this.fallPan.pan, fallPan, t, 0.25);
     glide(this.cricketGain.gain, m.crickets, t, 0.8);
+    glide(this.stormGain.gain, m.storm, t, 0.6);
 
     // Cricket chirps, scheduled just ahead of the clock.
     for (const c of this.crickets) {

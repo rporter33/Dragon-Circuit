@@ -32,7 +32,7 @@ import {
   type Spatial,
   type WindInput,
 } from './mix';
-import { finishArpeggio, medalChord, ringNote, unlockJingle } from './notes';
+import { THERMAL_CHIME_GAP, finishArpeggio, medalChord, ringNote, thermalNotes, unlockJingle } from './notes';
 import * as V from './voices';
 
 export interface AudioDeps {
@@ -67,6 +67,8 @@ export class AudioSystem implements AudioSystemApi {
   private lastHit = -1;
   /** Audio time of the last lightning event; while the sky drives thunder, ours stays quiet. */
   private lastLightning = -1e9;
+  /** Audio time of the last thermal chime (rate-limited: circling crosses a column's edge often). */
+  private lastThermal = -1e9;
   private readonly windIn: WindInput = { airspeed: 0, tuck: 0, flare: 0, gLoad: 1, grounded: true, ambientWind: 3 };
   private readonly windOut = emptyWindMix();
   private readonly ambOut = emptyAmbienceMix();
@@ -177,7 +179,9 @@ export class AudioSystem implements AudioSystemApi {
       near = pose.groundY !== null ? 1 - smoothstep(6, 140, p.y - pose.groundY) : 0;
     }
     this.nearGround = damp(this.nearGround, near, 1.5, step);
-    ambienceMix({ night: sky.night, timeOfDay: sky.timeOfDay, rain: weather.rain, nearGround: this.nearGround }, this.ambOut);
+    // weather.boundary is optional in the contract (0 when absent).
+    const boundary = weather.boundary ?? 0;
+    ambienceMix({ night: sky.night, timeOfDay: sky.timeOfDay, rain: weather.rain, nearGround: this.nearGround, boundary }, this.ambOut);
     const falls = this.deps.waterfalls?.();
     let fallPan = 0;
     if (falls && falls.length) {
@@ -389,6 +393,14 @@ export class AudioSystem implements AudioSystemApi {
       const near = 1 - Math.min(1, p.distance / 9000);
       const delay = Math.min(12, p.distance / 340);
       V.thunder(e, e.strip(e.amb, 1, this.sp.pan * 0.8, 0.5), t + delay, 0.25 + 0.45 * near * near);
+    });
+    on('thermalEnter', (p, t, e) => {
+      if (t - this.lastThermal < THERMAL_CHIME_GAP) return;
+      this.lastThermal = t;
+      // A gentle cue, a little brighter for strong lift (enter fires above ~2 m/s).
+      const lift = Number.isFinite(p?.lift) ? p.lift : 2;
+      const vel = 0.75 + 0.25 * clamp01((lift - 2) / 4);
+      V.thermalChime(e, e.strip(e.sfx, 0.9, 0, 0.6), t, thermalNotes(), vel);
     });
     on('weatherChange', (p, t, e) => {
       // Rain arriving: one roll of thunder to announce it.

@@ -128,6 +128,8 @@ export interface AmbienceInput {
   rain: number;
   /** 0..1 how close the listener is to an island surface (1 = standing on it). */
   nearGround: number;
+  /** 0..1 how deep into the storm at the world's edge (weather.boundary); optional. */
+  boundary?: number;
 }
 
 export interface AmbienceMix {
@@ -140,6 +142,8 @@ export interface AmbienceMix {
   rainHiss: number;
   /** Probability weight of distant thunder. */
   thunder: number;
+  /** The storm wind at the world's edge: a low roar under a wandering howl. */
+  storm: number;
 }
 
 export function ambienceMix(a: AmbienceInput, out: AmbienceMix): AmbienceMix {
@@ -153,11 +157,15 @@ export function ambienceMix(a: AmbienceInput, out: AmbienceMix): AmbienceMix {
   out.birds = day * near * (1 - 0.85 * rain) * (0.35 + 0.65 * dawn);
   out.rainHiss = 0.075 * Math.pow(rain, 0.8) * (0.6 + 0.4 * near);
   out.thunder = smoothstep(0.55, 0.9, rain);
+  // The edge storm rises over the last stretch before the boundary and drowns the calm air.
+  const b = Number.isFinite(a.boundary) ? clamp01(a.boundary!) : 0;
+  out.storm = 0.13 * smoothstep(0.05, 1, b);
+  out.air *= 1 - 0.8 * smoothstep(0.1, 0.7, b);
   return out;
 }
 
 export function emptyAmbienceMix(): AmbienceMix {
-  return { air: 0, crickets: 0, birds: 0, rainHiss: 0, thunder: 0 };
+  return { air: 0, crickets: 0, birds: 0, rainHiss: 0, thunder: 0, storm: 0 };
 }
 
 // ---------------------------------------------------------------------------------------------
