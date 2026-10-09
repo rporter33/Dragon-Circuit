@@ -70,6 +70,11 @@ export const TACK = {
   straddle: { kneeX: 0.3, kneeFwd: 0.1, hipX: 0.092, hipDrop: 0.065, thigh: 0.42, shin: 0.41, legR: 0.075, ankleY: 0.075, foot: 0.25 },
   /** Blanket thickness over the hide (m). */
   blanket: 0.05,
+  /**
+   * The seated foot (E's target): the shin from the knee (direction, unnormalised: out, down, back),
+   * the iron's tread from the ankle (the foot pitched toes-down), and its clearance of the hide (m).
+   */
+  stirrup: { shin: [0.12, -0.1, -0.38] as const, tread: [0.01, -0.07, -0.06] as const, treadClear: 0.07 },
 };
 
 export interface SaddleInfo {
@@ -536,29 +541,31 @@ function solveStraddle(rig: RigDef, hide: Hide): StraddleFit {
   }
   const above = hi;
   knee.y = topY + above - D.hipDrop - dy;
-  // The shin hangs from the knee, swung out (and a little back) just enough to clear the barrel.
+  // The jockey's (or a dragon rider's) seat: the knee bent about 90 degrees, the shin running back
+  // along the top of the barrel, the foot behind and a little outboard of the knee (E's target),
+  // swung out just enough to clear the blanketed hide.
+  const D2 = TACK.stirrup;
   const dir = new Vector3();
   const ankle = new Vector3();
-  const clearShin = (a: number) => {
-    dir.set(Math.sin(a), -Math.cos(a), -0.22).normalize();
-    let d = Infinity;
-    for (let t = 0.35; t <= 1.001; t += 0.13) {
-      d = Math.min(d, clearOf(p.copy(knee).addScaledVector(dir, t * D.shin)));
-      if (d < 0) return d;
-    }
+  const tread = new Vector3();
+  const place = (out: number) => {
+    dir.set(D2.shin[0] + out, D2.shin[1], D2.shin[2]).normalize();
+    ankle.copy(knee).addScaledVector(dir, D.shin);
+    tread.copy(ankle).add(_q.set(D2.tread[0], D2.tread[1], D2.tread[2]));
+    let d = clearOf(tread) - D2.treadClear;
+    for (let t = 0.35; t <= 1.001; t += 0.13) d = Math.min(d, clearOf(p.copy(knee).addScaledVector(dir, t * D.shin)) - (D.legR * 0.8 + 0.01));
     return d;
   };
-  let a0 = 0;
-  let a1 = 1.4;
-  for (let k = 0; k < 20; k++) {
-    const mid = 0.5 * (a0 + a1);
-    if (clearShin(mid) > D.legR * 0.8 + 0.01) a1 = mid;
-    else a0 = mid;
+  let o0 = 0;
+  let o1 = 0.8;
+  if (place(0) < 0) {
+    for (let k = 0; k < 20; k++) {
+      const mid = 0.5 * (o0 + o1);
+      if (place(mid) >= 0) o1 = mid;
+      else o0 = mid;
+    }
+    place(o1);
   }
-  dir.set(Math.sin(a1), -Math.cos(a1), -0.22).normalize();
-  ankle.copy(knee).addScaledVector(dir, D.shin);
-  // The iron's tread under the ball of the foot (the foot level, pointing forward).
-  const tread = ankle.clone().add(new Vector3(0.02, -D.ankleY - 0.02, 0.55 * D.foot * 0.8));
   return { above, knee, ankle, tread };
 }
 
@@ -789,7 +796,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string, res: Res = R
       }
       seat.y = topY + 0.3 + rise;
       grip.set(0, 0.48 + rise + (topY - seat.y), m(0.72));
-      stirrups(sc - m(0.1), built.lift);
+      stirrups(sc + m(0.08), built.lift);
       break;
     }
     case 'royal': {
@@ -885,7 +892,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string, res: Res = R
         strip(b, pts, side, [0.03, 0.05, 0.07], () => skin, (_i, t) => ({ region: MREGION.canopy, belly: 0.5, dorsal: 1, flutter: t }), 1);
       }
       b.end();
-      stirrups(sc - m(0.1), built.lift);
+      stirrups(sc + m(0.08), built.lift);
       break;
     }
     case 'nomad':
@@ -897,7 +904,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string, res: Res = R
       rise = fit.above - (nomad ? 0.31 : 0.3);
       built = frame({ lift: nomad ? 0.26 : 0.25, len: 1.0, cantle: 0.16, pommel: 0.08, seatRegion: REGION.leather, flapRegion: REGION.leather, trim: REGION.leather, barRegion: REGION.cloth });
       seat.y = topY + (nomad ? 0.31 : 0.3) + rise;
-      stirrups(sc - m(0.1), built.lift);
+      stirrups(sc + m(0.08), built.lift);
       if (id === 'nomad' && res.tack > 0) {
         // Bedroll across the back behind the cantle.
         const bs = sc + m(0.72);
