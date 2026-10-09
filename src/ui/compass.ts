@@ -61,17 +61,34 @@ export interface LabelCandidate {
   priority: number;
 }
 
+const ORDER: number[] = [];
+
+/** Higher priority first, then nearer the ribbon's center. */
+function before(a: LabelCandidate, b: LabelCandidate): boolean {
+  return a.priority !== b.priority ? a.priority > b.priority : Math.abs(a.x) < Math.abs(b.x);
+}
+
 /**
  * Give each candidate a row (0, 1, ...) so no two labels overlap, or -1 to hide it. Higher
  * priority first, then the one nearest the ribbon's center; each takes the first row where it
  * fits with `gap` px to spare. Writes into `out` (indexed like `labels`) and returns it.
  */
 export function layoutLabels(labels: readonly LabelCandidate[], gap: number, rows: number, out: number[]): number[] {
-  const order = labels.map((_, i) => i);
-  order.sort((a, b) => labels[b].priority - labels[a].priority || Math.abs(labels[a].x) - Math.abs(labels[b].x));
+  // Insertion sort into a reused array: a handful of labels, every frame, no garbage.
+  const order = ORDER;
+  order.length = 0;
+  for (let i = 0; i < labels.length; i++) {
+    let k = order.length;
+    while (k > 0 && before(labels[i], labels[order[k - 1]])) {
+      order[k] = order[k - 1];
+      k--;
+    }
+    order[k] = i;
+  }
   out.length = labels.length;
   for (let i = 0; i < labels.length; i++) out[i] = -1;
-  for (const i of order) {
+  for (let n = 0; n < order.length; n++) {
+    const i = order[n];
     const a = labels[i];
     for (let row = 0; row < rows && out[i] < 0; row++) {
       let free = true;

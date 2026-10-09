@@ -770,24 +770,49 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.25em;
   white-space: nowrap;
 }
+/* Each note is a small smoked-glass pill (it must read over white cloud as well as blue sky),
+   and a note that is off takes no room, so the ones showing stack neatly over the emblem. */
 .dw-lift,
-.dw-restnote {
+.dw-restnote,
+.dw-restcap {
+  display: inline-flex;
+  align-items: center;
   font-size: 0.88em;
   font-weight: 700;
   letter-spacing: 0.04em;
+  line-height: 1.25;
+  padding: 0 0.75em;
+  border-radius: 1em;
+  background: linear-gradient(180deg, rgba(38, 27, 20, 0.6), rgba(24, 17, 13, 0.66));
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(232, 187, 95, 0.24);
+  box-shadow: 0 0.2em 0.8em rgba(10, 6, 3, 0.18);
+  text-shadow: none;
+  max-height: 0;
+  margin-top: 0;
+  overflow: hidden;
+  border-width: 0;
   opacity: 0;
   transform: translateY(0.3em);
   transition:
     opacity 0.5s var(--ease),
-    transform 0.5s var(--ease);
+    transform 0.5s var(--ease),
+    max-height 0.4s var(--ease),
+    padding 0.4s var(--ease),
+    margin 0.4s var(--ease);
 }
 .dw-lift.is-on,
-.dw-restnote.is-on {
+.dw-restnote.is-on,
+.dw-restcap.is-on {
   opacity: 1;
   transform: none;
+  max-height: 2.2em;
+  padding: 0.26em 0.75em;
+  margin-top: 0.35em;
+  border-width: 1px;
 }
 .dw-lift {
   color: var(--gold-hi);
@@ -811,14 +836,82 @@
     transform: translateY(-0.18em) scale(1.25);
   }
 }
+.dw-lift-v {
+  margin-left: 0.5em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  color: #fff3c9;
+}
+/* Riding into a thermal: one warm bloom behind the note, so the moment registers. */
+.dw-lift.is-pulse {
+  animation: dw-lift-enter 1.2s var(--ease);
+}
+@keyframes dw-lift-enter {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 210, 120, 0.85);
+    transform: scale(0.94);
+  }
+  35% {
+    box-shadow: 0 0 1.1em 0.25em rgba(255, 210, 120, 0.55);
+    transform: scale(1.06);
+  }
+  100% {
+    box-shadow: 0 0.2em 0.8em rgba(10, 6, 3, 0.18);
+    transform: none;
+  }
+}
 .dw-restnote {
   color: #ffe2b8;
   font-style: italic;
   font-weight: 600;
 }
+/* "Sun-warmed" / "Rested": names the warm ring for a few seconds when the bonus begins. */
+.dw-restcap {
+  gap: 0.4em;
+  letter-spacing: 0.06em;
+  color: #ffd9a8;
+  border-color: rgba(255, 179, 107, 0.4);
+}
+.dw-restcap-i {
+  display: inline-grid;
+  width: 1.1em;
+  height: 1.1em;
+  color: #ffb36b;
+  filter: drop-shadow(0 0 0.35em rgba(255, 150, 80, 0.8));
+}
+.dw-restcap-i .dw-icon {
+  width: 100%;
+  height: 100%;
+}
+/* Speed over the ground: only near the edge of the world, when the headwind holds you back. */
+.dw-readout-gs {
+  display: none;
+  align-items: baseline;
+  gap: 0.35em;
+  margin: -0.1em 0 0.15em;
+  font-size: 0.82em;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #cfe3ff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(20, 12, 6, 0.7);
+}
+.dw-readout-gs.is-on {
+  display: flex;
+}
+.dw-readout-gs b {
+  font-weight: 800;
+  font-size: 1.2em;
+  color: #eef5ff;
+}
 /* While the stamina tip is up beside the emblem, it says this already. */
-.dw-ui.is-gauge-tip .dw-restnote {
+.dw-ui.is-gauge-tip .dw-restnote,
+.dw-ui.is-gauge-tip .dw-restcap {
   opacity: 0;
+  max-height: 0;
+  padding: 0 0.75em;
+  margin-top: 0;
+  border-width: 0;
 }
 .dw-readouts {
   display: flex;
@@ -945,7 +1038,7 @@
 .dw-gauge-rest {
   fill: none;
   stroke: url(#dw-rest-grad);
-  stroke-width: 2;
+  stroke-width: 2.6;
   stroke-linecap: round;
   opacity: 0;
   filter: drop-shadow(0 0 3px rgba(255, 130, 80, 0.95));
@@ -1047,13 +1140,13 @@
   color: #fff0dc;
 }
 
-/* "Click to look around": low, above the prompt row, clear of the wyvern and rider (the chase
-   camera frames them around the middle of the screen); it shows for a few seconds, then steps
-   aside until the mouse moves again. */
+/* "Click to look around": at the foot of the screen, under the prompt row and clear of the
+   wyvern and rider (the chase camera frames the mount's tail down to ~80% of the height); it
+   shows for a few seconds, then steps aside until the mouse moves again. */
 .dw-pointer-hint {
   position: absolute;
   left: 50%;
-  bottom: calc(9.5vh + 3.9em);
+  bottom: 2.4vh;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -1328,12 +1421,13 @@
   transform: none;
 }
 
-/* Center banners: discovery, race armed, countdown. */
+/* Center banners: discovery, race armed, countdown. A discovery card sits high, in the open sky
+   under the compass: the chase camera frames the wyvern (and the next ring) below the middle of
+   the screen, and on foot the wyvern stands at about mid-height. It never shows mid-race. */
 .dw-banner {
   position: absolute;
   left: 50%;
-  /* Below the compass and the race cluster even on short windows. */
-  top: max(26vh, calc(var(--u) * 9.4));
+  top: max(10.5vh, calc(var(--u) * 5.6));
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -1346,11 +1440,15 @@
 .dw-banner.is-on {
   opacity: 1;
 }
+/* RACE READY shows with the race cluster up: it sits below the cluster even on short windows. */
+.dw-banner.dw-gate {
+  top: max(26vh, calc(var(--u) * 9.4));
+}
 .dw-banner::before,
 .dw-banner::after {
   content: '';
   position: absolute;
-  inset: -1.1em -9em -1.3em;
+  inset: -0.9em -9em -1em;
   z-index: -1;
   pointer-events: none;
 }
@@ -1374,7 +1472,7 @@
 .dw-banner-name {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 2.7em;
+  font-size: 2.5em;
   letter-spacing: 0.08em;
   line-height: 1.15;
   margin: 0.12em 0 0.18em;
@@ -1384,7 +1482,7 @@
   width: 24em;
 }
 .dw-banner-sub {
-  margin-top: 0.5em;
+  margin-top: 0.3em;
   font-style: italic;
   font-size: 1.05em;
   color: var(--parch);
@@ -1808,6 +1906,36 @@
   font-size: 0.86em;
   color: var(--parch-3);
   margin-top: 0.05em;
+}
+/* Quality: "Applying…" replaces the help line while the new shaders link. */
+.dw-row-applying {
+  display: none;
+  align-items: center;
+  gap: 0.5em;
+  margin-top: 0.15em;
+  font-size: 0.82em;
+  font-weight: 700;
+  color: var(--gold-hi);
+}
+.dw-row-applying::before {
+  content: '';
+  width: 0.85em;
+  height: 0.85em;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 220, 150, 0.25);
+  border-top-color: var(--gold-hi);
+  animation: dw-spin 0.9s linear infinite;
+}
+.dw-row.is-applying .dw-row-help {
+  display: none;
+}
+.dw-row.is-applying .dw-row-applying {
+  display: flex;
+}
+@keyframes dw-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .dw-row.is-focus .dw-row-help {
   color: var(--parch-2);

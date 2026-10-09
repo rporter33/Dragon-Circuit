@@ -3,28 +3,21 @@
 // as a callout beside the stamina emblem they talk about. Glyphs follow the active device.
 
 import { Vector3 } from 'three';
+import type { GameEventBus } from '../core/events';
 import type { GameView } from '../game/contracts';
 import type { ControlAction } from '../input/scheme';
-import { LAYOUT } from '../world/layout';
 import { LiveClass, div, fromHtml, h } from './dom';
 import { ICONS } from './icons';
-import { TIPS, Tutor, type TipDef, type TutorFrame } from './tutor';
+import { TIPS, Tutor, tipText, type TipDef, type TutorFrame } from './tutor';
 
 export interface TipsCtx {
   fillGlyphs(root: Element): void;
+  /** The weather announces thermals (thermalEnter / thermalExit). */
+  events?: GameEventBus;
 }
 
 const CORE_COUNT = TIPS.filter((t) => t.core).length;
 const tmp = new Vector3();
-
-/** Inside a thermal column (a little beyond its core), between its base and top. */
-function inThermal(p: Vector3): boolean {
-  for (const t of LAYOUT.thermals) {
-    if (p.y < t.baseY || p.y > t.topY + 40) continue;
-    if (Math.hypot(p.x - t.x, p.z - t.z) < t.radius * 1.4) return true;
-  }
-  return false;
-}
 
 export class Tips {
   readonly root: HTMLElement;
@@ -40,6 +33,10 @@ export class Tips {
   private calloutBody: HTMLElement;
   private calloutOn: LiveClass;
   private shownTip: TipDef | null = null;
+  /** The hour the shown tip's words were chosen for (day / night variants). */
+  private shownNight = false;
+  /** Riding a thermal, as the weather announces it. */
+  private thermal = false;
   /** A stamina tip is showing beside the emblem (the HUD hides its own stamina note). */
   gaugeOn = false;
   private view: GameView | null = null;
@@ -67,6 +64,8 @@ export class Tips {
     this.calloutOn = new LiveClass(this.callout, 'is-on');
 
     this.root = div('dw-layer dw-tips', this.card, this.callout);
+    ctx.events?.on('thermalEnter', () => (this.thermal = true));
+    ctx.events?.on('thermalExit', () => (this.thermal = false));
   }
 
   /** Re-render glyphs after a device change. */
@@ -105,7 +104,7 @@ export class Tips {
     const gy = p.wyvernPose.groundY;
     f.height = gy === null ? null : p.wyvernPose.position.y - gy;
     f.rested = p.rested ?? 0;
-    f.inThermal = p.mode === 'flying' && inThermal(p.position);
+    f.inThermal = p.mode === 'flying' && this.thermal;
     f.racing = racing;
     const wp = !racing && races.state === 'idle' ? races.waypoint(tmp) : null;
     f.nearGate = !!wp && wp.distanceTo(p.riderPosition) < 450;
@@ -116,12 +115,12 @@ export class Tips {
       this.tutor.dirty = false;
       view.save.save();
     }
-    this.render(f.enabled);
+    this.render(f.enabled, view.sky.night > 0.5);
   }
 
-  private render(enabled: boolean): void {
+  private render(enabled: boolean, night: boolean): void {
     const tip = this.tutor.current;
-    if (tip !== this.shownTip && tip) this.fill(tip);
+    if (tip && (tip !== this.shownTip || (tip.night && night !== this.shownNight))) this.fill(tip, night);
     this.shownTip = tip;
     const on = enabled && !!tip;
     this.cardOn.set(on && tip!.anchor === 'card');
@@ -130,15 +129,17 @@ export class Tips {
     this.cardDone.set(on && this.tutor.doneLeft > 0);
   }
 
-  private fill(tip: TipDef): void {
+  private fill(tip: TipDef, night: boolean): void {
+    this.shownNight = night;
     const gauge = tip.anchor === 'gauge';
     if (!gauge) {
       const i = TIPS.filter((t) => t.core).indexOf(tip);
       this.cardKicker.textContent = tip.core ? `FIRST FLIGHT · ${i + 1} OF ${CORE_COUNT}` : 'TIP';
     }
-    (gauge ? this.calloutTitle : this.cardTitle).textContent = tip.title;
+    const words = tipText(tip, night ? 1 : 0);
+    (gauge ? this.calloutTitle : this.cardTitle).textContent = words.title;
     const body = gauge ? this.calloutBody : this.cardBody;
-    body.replaceChildren(...bodyNodes(tip.body));
+    body.replaceChildren(...bodyNodes(words.body));
     this.ctx.fillGlyphs(body);
   }
 }

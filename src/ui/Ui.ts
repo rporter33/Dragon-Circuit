@@ -18,7 +18,7 @@ import { CreditsMenu } from './CreditsMenu';
 import { Dialog } from './Dialog';
 import { LiveClass, div } from './dom';
 import { preloadFonts } from './fonts';
-import { glyphDevice, glyphHtml, keyGlyph, padGlyph, type GlyphDevice } from './glyphs';
+import { controlName, glyphDevice, glyphHtml, keyGlyph, padGlyph, type GlyphDevice } from './glyphs';
 import { Hud } from './Hud';
 import type { Panel, UiCtx, UiSound } from './panel';
 import { Pause, type PauseEntry } from './Pause';
@@ -110,8 +110,13 @@ export class Ui implements UiSystem {
     this.root.dataset.device = 'keyboard';
     this.gaugeTip = new LiveClass(this.root, 'is-gauge-tip');
     this.hud = new Hud({ events: this.events, fillGlyphs: (el) => this.fillGlyphs(el), reducedMotion: () => this.reduced });
-    this.raceHud = new RaceHud({ events: this.events, reducedMotion: () => this.reduced, notify: (n) => this.hud.notify(n) });
-    this.tips = new Tips({ fillGlyphs: (el) => this.fillGlyphs(el) });
+    this.raceHud = new RaceHud({
+      events: this.events,
+      reducedMotion: () => this.reduced,
+      notify: (n) => this.hud.notify(n),
+      restartLabel: () => controlName('restart', this.device),
+    });
+    this.tips = new Tips({ fillGlyphs: (el) => this.fillGlyphs(el), events: this.events });
     this.veil = div('dw-veil');
     this.stackLayer = div('dw-layer dw-stack');
     this.hudNote = div('dw-hud-note');
@@ -212,8 +217,9 @@ export class Ui implements UiSystem {
       {
         label: 'Stable',
         run: () => {
-          // A race in progress can't change wyvern mid-run: abandon it first (or keep racing).
-          if (view.races.state !== 'running') return this.actions.openStable();
+          // A race in progress (or counting down at its gate) can't change wyvern mid-run:
+          // abandon it first, or keep racing.
+          if (!racing) return this.actions.openStable();
           const name = view.races.defs.find((d) => d.id === view.races.activeId)?.name ?? 'the race';
           this.push(
             new Dialog(this.ctx, 'Abandon the race?', `The Stable is closed while you race. Abandon ${name} and open the Stable?`, [

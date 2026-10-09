@@ -42,13 +42,26 @@ const ARC_LEN = (ARC_C * 300) / 360;
 const REST_R = 50.5;
 const REST_C = 2 * Math.PI * REST_R;
 const REST_LEN = (REST_C * 300) / 360;
-/** Prompts that are flying tips (hidden when tips are off). Interactions always show. */
+/** Prompts that are flying tips (hidden in flight when tips are off). Interactions always show. */
 const TIP_ACTIONS: ReadonlySet<PromptAction> = new Set<PromptAction>(['flap', 'flare', 'tuck', 'rest']);
 /** "Click to look around" shows this long each time it is needed, then steps aside. */
 const POINTER_HINT_SECONDS = 6;
-/** Past this far beyond the boundary radius the "winds turn you back" notice shows (once per trip). */
+/** weather.boundary past which "the winds turn you back" is announced (once per trip), and the
+ *  level well inside the Drift that re-arms it. */
+const BOUNDARY_NOTICE = 0.5;
+const BOUNDARY_REARM = 0.02;
+/** Without weather.boundary: the same in metres relative to the boundary radius. */
 const BOUNDARY_NOTICE_IN = -150;
 const BOUNDARY_NOTICE_REARM = -500;
+/** Rising air under the wings (m/s) that reads as lift without a thermal (ridge lift). */
+const RISING_LIFT = 2;
+/** Near the edge (weather.boundary above this), show speed over the ground when the headwind
+ *  takes this much of the airspeed (m/s; on / off). */
+const GROUND_SPEED_EDGE = 0.2;
+const GROUND_SPEED_ON = 6;
+const GROUND_SPEED_OFF = 3.5;
+/** Seconds the "Sun-warmed" / "Rested" caption shows when the bonus begins. */
+const RESTED_CAPTION = 5;
 
 export interface HudCtx {
   events: GameEventBus;
@@ -88,6 +101,18 @@ export function unitPx(): number {
   return Math.min(40, Math.max(14, vh * 0.01667));
 }
 
+/** What the Rested bonus is called: basking in the sun by day, a night's rest after dark. */
+export function restedName(night: boolean): string {
+  return night ? 'Rested' : 'Sun-warmed';
+}
+
+/** Restart a one-shot CSS animation class. */
+function restartAnimation(el: HTMLElement, cls: string): void {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+}
+
 /** Prompt actions that are not a button: drawn as an emblem instead of a glyph. */
 function isButtonAction(action: PromptAction): boolean {
   return !!bindingFor(action as ControlAction);
@@ -116,8 +141,21 @@ export class Hud {
   private alt: LiveText;
   private vario: HTMLElement;
   private varioState = '';
+  private liftEl: HTMLElement;
   private lift: LiveClass;
+  private liftValue: LiveText;
   private liftAir = new Vector3();
+  /** Riding a thermal (thermalEnter until thermalExit). */
+  private inThermal = false;
+  private groundSpeed: LiveText;
+  private groundSpeedOn: LiveClass;
+  private groundSpeedShown = false;
+  private restCaption: HTMLElement;
+  private restCaptionText: LiveText;
+  private restCaptionOn: LiveClass;
+  private restCaptionLeft = 0;
+  private restCaptionNight: boolean | null = null;
+  private wasRested = false;
   private gauge: HTMLElement;
   private gaugeFill: SVGCircleElement;
   private gaugeDash: LiveStyle;
@@ -147,6 +185,7 @@ export class Hud {
   private wp = new Vector3();
   private ribbon = { x: 0, edge: false };
   private candidates: LabelCandidate[] = [];
+  private candidatePool: LabelCandidate[] = [];
   private candidateOf: Marker[] = [];
   private rows: number[] = [];
 
@@ -161,6 +200,7 @@ export class Hud {
   private stall: HTMLElement;
   private stallOn: LiveClass;
   private pointerHint: HTMLElement;
+  private pointerText: LiveText;
   private pointerOn: LiveClass;
   private pointerLeft = 0;
   private pointerWasNeeded = false;
@@ -270,20 +310,34 @@ export class Hud {
     const altV = h('span', { class: 'dw-readout-v', text: '0' });
     this.vario = fromHtml(ICONS.arrow);
     this.vario.classList.add('dw-vario', 'is-level');
-    const liftEl = h('span', { class: 'dw-lift', text: 'Rising air' });
-    this.lift = new LiveClass(liftEl, 'is-on');
+    // "Rising air +4 m/s": the lift under the wings, a gentle vario for thermals and ridges.
+    const liftV = h('span', { class: 'dw-lift-v' });
+    this.liftEl = h('span', { class: 'dw-lift' }, 'Rising air', liftV);
+    this.lift = new LiveClass(this.liftEl, 'is-on');
+    this.liftValue = new LiveText(liftV);
     const restNote = h('span', { class: 'dw-restnote', text: 'Glide or land to rest' });
     this.restNote = new LiveClass(restNote, 'is-on');
+    // The Rested bonus names itself when it begins: basking by day, a night's rest after dark.
+    const capText = h('span', { text: 'Sun-warmed' });
+    this.restCaption = h('span', { class: 'dw-restcap' }, h('span', { class: 'dw-restcap-i', html: ICONS.sun }), capText);
+    this.restCaptionText = new LiveText(capText);
+    this.restCaptionOn = new LiveClass(this.restCaption, 'is-on');
+    // Speed over the ground, shown only when a headwind at the edge of the world eats the airspeed.
+    const gsV = h('b', { text: '0' });
+    const gsEl = div('dw-readout-gs', gsV, h('span', { text: 'km/h over ground' }));
+    this.groundSpeed = new LiveText(gsV);
+    this.groundSpeedOn = new LiveClass(gsEl, 'is-on');
     const readouts = div(
       'dw-readouts dw-fadeable',
       div('dw-readout dw-readout--speed', speedV, h('span', { class: 'dw-readout-u', text: 'km/h' })),
+      gsEl,
       div('dw-readout dw-readout--alt', this.vario, altV, h('span', { class: 'dw-readout-u', text: 'm' })),
     );
     this.speed = new LiveText(speedV);
     this.alt = new LiveText(altV);
     this.readouts = new LiveClass(readouts, 'is-gone');
     this.readoutsIdle = new LiveClass(readouts, 'is-idle');
-    this.flightInfo = div('dw-flightinfo', div('dw-flightinfo-notes', liftEl, restNote), readouts, this.gauge);
+    this.flightInfo = div('dw-flightinfo', div('dw-flightinfo-notes', this.liftEl, restNote, this.restCaption), readouts, this.gauge);
     this.shade = new LiveClass(this.flightInfo, 'is-shaded');
 
     // --- Prompt, stall, pointer hint ---------------------------------------------------------
@@ -298,11 +352,9 @@ export class Hud {
     this.stall = div('dw-stall', fromHtml(ICONS.stall), h('span', { text: 'STALL' }));
     this.stallOn = new LiveClass(this.stall, 'is-on');
 
-    this.pointerHint = div(
-      'dw-pointer-hint',
-      h('span', { class: 'dw-hint-g', attrs: { 'data-glyph-key': 'Mouse0' } }),
-      h('span', { text: 'Click to look around' }),
-    );
+    const pointerText = h('span', { text: 'Click to look around' });
+    this.pointerHint = div('dw-pointer-hint', h('span', { class: 'dw-hint-g', attrs: { 'data-glyph-key': 'Mouse0' } }), pointerText);
+    this.pointerText = new LiveText(pointerText);
     this.pointerOn = new LiveClass(this.pointerHint, 'is-on');
 
     // --- Banner -------------------------------------------------------------------------------
@@ -352,6 +404,14 @@ export class Hud {
 
   private subscribe(ev: GameEventBus): void {
     ev.on('flapRefused', () => this.pulseGauge());
+    // Riding into a thermal: the lift note lights up with a pulse (once per entry, not per frame).
+    ev.on('thermalEnter', () => {
+      this.inThermal = true;
+      if (this.view?.player.mode === 'flying') restartAnimation(this.liftEl, 'is-pulse');
+    });
+    ev.on('thermalExit', () => {
+      this.inThermal = false;
+    });
     // Generic notices from any system. Typed events below own pickups, unlocks and discoveries;
     // when an emitter also sends a plain toast for them, the queue merges it away (same text).
     ev.on('toast', (e: GameEvents['toast']) => {
@@ -442,6 +502,7 @@ export class Hud {
     // --- Readouts --------------------------------------------------------------------------
     this.readouts.set(!flying);
     let rising = false;
+    let showGround = false;
     if (flying) {
       this.speed.set(kmh(f.airspeed));
       this.alt.set(Math.max(0, Math.round(f.position.y)));
@@ -452,10 +513,23 @@ export class Hud {
         this.vario.classList.add(v);
         this.varioState = v;
       }
-      // Rising air under the wings (thermals, ridge lift): the cue that circling here pays.
-      rising = view.weather.windAt(f.position, this.liftAir).y > 2;
+      // Rising air under the wings (thermals, ridge lift): the cue that circling here pays. The
+      // weather measures it at the wyvern each frame; older weather systems are sampled here.
+      const lift = view.weather.lift ?? view.weather.windAt(f.position, this.liftAir).y;
+      rising = this.inThermal || lift > RISING_LIFT;
+      if (rising) this.liftValue.set(`+${Math.max(1, Math.round(lift))} m/s`);
+      // At the edge of the world the headwind can hold the wyvern still while the airspeed reads
+      // 100 km/h: then say how fast it actually moves over the ground.
+      if ((view.weather.boundary ?? 0) > GROUND_SPEED_EDGE) {
+        const ground = f.velocity.length();
+        const lost = Math.abs(f.airspeed - ground);
+        showGround = this.groundSpeedShown ? lost > GROUND_SPEED_OFF : lost > GROUND_SPEED_ON;
+        if (showGround) this.groundSpeed.set(kmh(ground));
+      }
     }
     this.lift.set(rising);
+    this.groundSpeedShown = showGround;
+    this.groundSpeedOn.set(showGround);
 
     // --- Stamina -----------------------------------------------------------------------------
     const st = Math.max(0, Math.min(1, f.stamina));
@@ -482,6 +556,7 @@ export class Hud {
     // Tired reads as a suggestion, not a failure: glide, or land on any island to rest. (Winded,
     // the prompt says it; while the stamina tip is up, the tip says it.)
     this.restNote.set(flying && low && !rising && view.prompt?.action !== 'rest');
+    this.updateRestCaption(dt, view, rested);
 
     // --- Stall -------------------------------------------------------------------------------
     this.stallOn.set(flying && f.stall > 0.35);
@@ -492,7 +567,8 @@ export class Hud {
     // --- Prompt ------------------------------------------------------------------------------
     const pr = view.prompt;
     const showHints = view.save.data.settings.showControlHints;
-    const promptVisible = pr !== null && (showHints || !TIP_ACTIONS.has(pr.action));
+    // "Show tips" off hides the flying hints; on the ground every prompt is an interaction.
+    const promptVisible = pr !== null && (showHints || !flying || !TIP_ACTIONS.has(pr.action));
     this.promptOn.set(promptVisible);
     if (pr && promptVisible) {
       // Never show a button that won't work right now: winded, wingbeats are refused.
@@ -524,6 +600,8 @@ export class Hud {
     this.pointerWasNeeded = needed;
     if (this.pointerLeft > 0) this.pointerLeft -= dt;
     this.pointerOn.set(needed && this.pointerLeft > 0);
+    // With mouse steering on, capturing the mouse in flight hands it the wyvern, not the camera.
+    if (needed) this.pointerText.set(flying && view.save.data.settings.mouseFlight ? 'Click to steer with the mouse' : 'Click to look around');
 
     // --- The edge of the world -----------------------------------------------------------------
     this.updateBoundary(view, flying);
@@ -539,13 +617,43 @@ export class Hud {
     return view.player.riderPosition;
   }
 
+  /**
+   * "Sun-warmed" (by day: the wyvern basks, wings spread to the sun) or "Rested" (at night) beside
+   * the stamina emblem for a few seconds when the bonus begins; the warm ring says it after that.
+   */
+  private updateRestCaption(dt: number, view: GameView, rested: number): void {
+    const isRested = rested > 0;
+    if (isRested && !this.wasRested) this.restCaptionLeft = RESTED_CAPTION;
+    this.wasRested = isRested;
+    if (this.restCaptionLeft > 0) this.restCaptionLeft -= dt;
+    const on = isRested && this.restCaptionLeft > 0;
+    this.restCaptionOn.set(on);
+    if (!on) return;
+    const night = view.sky.night > 0.5;
+    if (night === this.restCaptionNight) return;
+    this.restCaptionNight = night;
+    this.restCaptionText.set(restedName(night));
+    (this.restCaption.firstChild as HTMLElement).innerHTML = night ? ICONS.moon : ICONS.sun;
+  }
+
   private updateBoundary(view: GameView, flying: boolean): void {
-    const p = this.origin(view);
-    const past = Math.hypot(p.x, p.z) - LAYOUT.boundaryRadius;
-    if (!this.beyondBoundary && flying && past > BOUNDARY_NOTICE_IN) {
+    // The weather says how deep into the storm at the edge the wyvern is; without it, measure.
+    const b = view.weather.boundary;
+    let near: boolean;
+    let home: boolean;
+    if (b !== undefined) {
+      near = b > BOUNDARY_NOTICE;
+      home = b < BOUNDARY_REARM;
+    } else {
+      const p = this.origin(view);
+      const past = Math.hypot(p.x, p.z) - LAYOUT.boundaryRadius;
+      near = past > BOUNDARY_NOTICE_IN;
+      home = past < BOUNDARY_NOTICE_REARM;
+    }
+    if (!this.beyondBoundary && flying && near) {
       this.beyondBoundary = true;
       this.notices.push({ key: 'boundary', text: 'The winds of the Drift turn you back', sub: 'Follow the compass home to the Roost', icon: 'wing', priority: 3, life: 6 });
-    } else if (this.beyondBoundary && past < BOUNDARY_NOTICE_REARM) {
+    } else if (this.beyondBoundary && home) {
       this.beyondBoundary = false;
     }
   }
@@ -627,7 +735,6 @@ export class Hud {
   private layoutCompassLabels(racing: boolean): void {
     const c = this.candidates;
     const of = this.candidateOf;
-    c.length = 0;
     of.length = 0;
     const px = this.unit * LABEL_EM;
     let unknown: Marker | null = null;
@@ -640,7 +747,17 @@ export class Hud {
       of.push(m);
     }
     if (unknown) of.push(unknown);
-    for (const m of of) c.push({ x: m.lx, width: (m.text.length * LABEL_CHAR_EM + LABEL_PAD_EM) * px, priority: m.priority });
+    // Candidate records are pooled (this runs every frame).
+    while (this.candidatePool.length < of.length) this.candidatePool.push({ x: 0, width: 0, priority: 0 });
+    c.length = 0;
+    for (let k = 0; k < of.length; k++) {
+      const m = of[k];
+      const cand = this.candidatePool[k];
+      cand.x = m.lx;
+      cand.width = (m.text.length * LABEL_CHAR_EM + LABEL_PAD_EM) * px;
+      cand.priority = m.priority;
+      c.push(cand);
+    }
     // Mid-race the second row would sit on the race timer.
     layoutLabels(c, px * 0.6, racing ? 1 : 2, this.rows);
     const rowH = px * 1.55;

@@ -20,6 +20,8 @@ export interface RaceHudCtx {
   reducedMotion(): boolean;
   /** Announce something through the HUD's notice queue. */
   notify(spec: NoticeSpec): void;
+  /** The restart control's name on the active device ("R", "View"), for plain-text notices. */
+  restartLabel?(): string;
 }
 
 const tmp = new Vector3();
@@ -31,6 +33,7 @@ const ABORT_LINES: Record<string, string> = {
   'left-course': 'You strayed too far from the course',
   respawn: 'You fell into the clouds',
   dismount: 'You dismounted',
+  'breed-change': 'A record keeps the breed it was flown on',
 };
 
 export class RaceHud {
@@ -134,7 +137,11 @@ export class RaceHud {
       if (this.raceId !== e.raceId) return;
       this.armed = false;
       this.clearCount();
-      this.disarmedId = e.raceId;
+      // Races that say why they stood down are believed ('missed-gate' is the one worth a word);
+      // otherwise the HUD judges from where the player is (see update).
+      const reason = (e as { reason?: string }).reason;
+      if (reason === undefined) this.disarmedId = e.raceId;
+      else if (reason === 'missed-gate') this.missedGate(e.raceId, true);
     });
     ev.on('raceCountdown', (e: GameEvents['raceCountdown']) => {
       this.raceId = e.raceId;
@@ -192,8 +199,11 @@ export class RaceHud {
     this.count.style.opacity = '';
   }
 
-  private missedGate(raceId: string): void {
-    this.ctx.notify({ key: `missed-gate:${raceId}`, text: 'Missed the start gate', sub: 'Turn back and fly through it to start', icon: 'race', priority: 2, life: 5 });
+  /** `retry`: the race system offers a restart from the gate (the restart button). */
+  private missedGate(raceId: string, retry = false): void {
+    const key = this.ctx.restartLabel?.();
+    const sub = retry && key ? `Turn back and fly through it, or press ${key} to try again` : 'Turn back and fly through it to start';
+    this.ctx.notify({ key: `missed-gate:${raceId}`, text: 'Missed the start gate', sub, icon: 'race', priority: 2, life: 5 });
   }
 
   private showCount(text: string, go: boolean): void {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TIP_GAP, TIPS, Tutor, tipActions, type TutorFrame, type TutorSave } from './tutor';
+import { TIP_GAP, TIPS, Tutor, tipActions, tipDef, tipText, type TutorFrame, type TutorSave } from './tutor';
 
 function frame(over: Partial<TutorFrame> = {}): TutorFrame {
   return {
@@ -132,6 +132,27 @@ describe('Tutor', () => {
     t.reset();
     expect(save.tutorialDone).toBe(false);
     expect(save.tips).toEqual([]);
+  });
+
+  it('teaches rising air the first time the wyvern rides a thermal (once the wingbeat lesson is done)', () => {
+    const save: TutorSave = { tutorialDone: false, tips: ['walk', 'takeoff', 'flap', 'pitch'] };
+    const t = new Tutor(() => save);
+    run(t, 6, { mode: 'flying' });
+    expect(t.current).toBeNull();
+    run(t, 3, { mode: 'flying', inThermal: true });
+    expect(t.current?.id).toBe('thermal');
+    expect(t.current?.title).toBe('Rising air — circle to climb');
+    // Climbing in it for a couple of seconds is the lesson learned.
+    run(t, 3, { mode: 'flying', inThermal: true, vy: 3 });
+    run(t, 2, { mode: 'flying' });
+    expect(save.tips).toContain('thermal');
+  });
+
+  it('calls the Rested bonus Sun-warmed by day (wyverns bask) and Rested at night', () => {
+    const rested = tipDef('rested');
+    expect(tipText(rested, 0).title).toBe('Sun-warmed');
+    expect(tipText(rested, 0.9).title).toBe('Rested');
+    expect(tipText(tipDef('flap'), 0.9).title).toBe(tipDef('flap').title);
   });
 
   it('lists the glyph actions a tip body names', () => {

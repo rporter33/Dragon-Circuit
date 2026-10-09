@@ -33,6 +33,8 @@ export interface TipDef {
   maxTime: number;
   /** May cut in on a tip that has had its minimum time. */
   urgent?: boolean;
+  /** After dark, if the words differ (the Rested bonus is basking in the sun by day). */
+  night?: { title: string; body: string };
 }
 
 export const TIPS: readonly TipDef[] = [
@@ -52,16 +54,30 @@ export const TIPS: readonly TipDef[] = [
   { id: 'flare', title: 'Coming in to land', body: 'Come in low and slow, then hold {flare} just above the ground to settle.', anchor: 'card', core: true, after: ['flap'], minTime: 4, maxTime: 14 },
   { id: 'tired', title: 'Wings tiring', body: 'No hurry: glide to recover, or land on any island to rest.', anchor: 'gauge', core: false, after: ['flap'], minTime: 4, maxTime: 9, urgent: true },
   {
+    // Wyverns are reptiles: by day a rest on an island means basking, wings spread to the sun.
     id: 'rested',
-    title: 'Rested',
-    body: 'A rest on the island refreshed your wyvern. While the warm ring glows, its stamina lasts longer and refills faster.',
+    title: 'Sun-warmed',
+    body: 'Your wyvern basked in the sun, wings spread wide. While the warm ring glows, its stamina lasts longer and refills faster.',
+    night: {
+      title: 'Rested',
+      body: 'A rest on the island refreshed your wyvern. While the warm ring glows, its stamina lasts longer and refills faster.',
+    },
     anchor: 'gauge',
     core: false,
     after: ['flap'],
     minTime: 6,
     maxTime: 8,
   },
-  { id: 'thermal', title: 'Rising air', body: 'Glowing motes mark thermals. Circle inside one to climb without beating your wings.', anchor: 'card', core: false, after: ['pitch'], minTime: 5, maxTime: 11 },
+  {
+    id: 'thermal',
+    title: 'Rising air — circle to climb',
+    body: 'Glowing motes mark a thermal. Bank gently and keep circling inside it to climb without a wingbeat.',
+    anchor: 'card',
+    core: false,
+    after: ['flap'],
+    minTime: 5,
+    maxTime: 11,
+  },
   { id: 'race', title: 'Races', body: 'Races start at the stone gates: fly through one, or pick a course from the pause menu {pause}.', anchor: 'card', core: false, after: ['pitch'], minTime: 6, maxTime: 9 },
 ];
 
@@ -71,6 +87,11 @@ const PROMPT_OVERLAP = 3;
 
 export function tipDef(id: TipId): TipDef {
   return BY_ID.get(id)!;
+}
+
+/** A tip's words for the hour (`night` 0 day … 1 night, as SkySystem.night). */
+export function tipText(tip: TipDef, night: number): { title: string; body: string } {
+  return night > 0.5 && tip.night ? tip.night : tip;
 }
 
 /** The glyph actions a tip body mentions, in order ("{flap}" → 'flap'). */
@@ -98,7 +119,7 @@ export interface TutorFrame {
   height: number | null;
   /** 0..1 Rested bonus remaining. */
   rested: number;
-  /** Inside (or at the edge of) a thermal column. */
+  /** Riding a thermal (the weather's thermalEnter until thermalExit). */
   inThermal: boolean;
   /** A race is armed or running. */
   racing: boolean;
