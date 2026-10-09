@@ -52,6 +52,11 @@ export interface WyvernUniforms {
   uEyeAxis: IUniform<Vector3>;
   uEyeRadius: IUniform<number>;
   uBlink: IUniform<number>;
+  /**
+   * 0..1 sweep of the nictitating membrane: a translucent inner eyelid drawn sideways across the
+   * eye from its front corner (separate from the outer lids, `uBlink`).
+   */
+  uNictitate: IUniform<number>;
   /** Membrane flutter amplitude (m) and speed (rad/s), from airspeed. */
   uFlutter: IUniform<number>;
   uFlutterRate: IUniform<number>;
@@ -88,6 +93,7 @@ export function createWyvernUniforms(): WyvernUniforms {
     uEyeAxis: { value: new Vector3(1, 0, 0) },
     uEyeRadius: { value: 0.1 },
     uBlink: { value: 0 },
+    uNictitate: { value: 0 },
     uFlutter: { value: 0 },
     uFlutterRate: { value: 20 },
     uRipple: { value: 0 },
@@ -178,6 +184,7 @@ uniform vec3 uEyeCenter;
 uniform vec3 uEyeAxis;
 uniform float uEyeRadius;
 uniform float uBlink;
+uniform float uNictitate;
 uniform float uBodyScale;
 uniform float uContour;
 varying vec3 vBodyPos;
@@ -309,8 +316,14 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
     vec3 c = mix(uEyes * 0.25, uEyes * (0.85 + 0.35 * smoothstep(0.6, 0.95, d)), iris);
     c = mix(c, vec3(0.02, 0.015, 0.02), pupil);
     float hl = smoothstep(0.93, 0.97, dot(normalize(e), normalize(axis + up * 0.55 + fw * 0.35)));
-    c = mix(c, vec3(1.0), hl);
-    emit += uEyes * iris * (1.0 - pupil) * (0.22 + 0.75 * uNight);
+    // Nictitating membrane: a milky, translucent inner lid sweeping back across the eye from its
+    // front corner (ex = +1), its leading edge a touch denser.
+    float nf = 1.0 - 2.25 * uNictitate;
+    float nm = uNictitate > 0.001 ? smoothstep(nf - 0.05, nf + 0.02, ex) : 0.0;
+    float nEdge = nm * (1.0 - smoothstep(nf + 0.02, nf + 0.16, ex));
+    c = mix(c, mix(vec3(0.72, 0.8, 0.86), c, 0.35), nm * (0.42 + 0.3 * nEdge));
+    c = mix(c, vec3(1.0), hl * (1.0 - 0.5 * nm));
+    emit += uEyes * iris * (1.0 - pupil) * (0.22 + 0.75 * uNight) * (1.0 - 0.75 * nm);
     return c;
   }
   if (region == 3) return vec3(0.32, 0.09, 0.11);
@@ -327,6 +340,10 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
     return vec3(1.0, 0.85, 0.55);
   }
   if (region == 11) return mix(vec3(0.82, 0.76, 0.64), uCloth, 0.25) * (0.9 + 0.1 * n2);
+  if (region == 12) {
+    // Forked tongue: a dusky violet-rose, darker toward the prongs.
+    return mix(vec3(0.55, 0.17, 0.34), vec3(0.26, 0.09, 0.24), smoothstep(0.4, 1.0, vUv2.x)) * (0.9 + 0.15 * n2);
+  }
   return uPrimary;
 }
 `;

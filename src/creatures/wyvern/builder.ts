@@ -22,6 +22,7 @@ export const REGION = {
   claw: 9,
   glass: 10,
   wool: 11,
+  tongue: 12,
 } as const;
 
 /** Membrane regions (aMat.x in group 1). */

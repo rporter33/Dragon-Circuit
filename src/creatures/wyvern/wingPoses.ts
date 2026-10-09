@@ -255,38 +255,29 @@ export function adjustPose(out: WingPose, gLoad: number, asym: number, buffet: n
 }
 
 /**
- * Wing shake-out (a dog-like ruffle): half open and raised, then shuddering at `shudder`
- * (−1..1, the oscillation value) with the fingers flicking. Blend weight is the caller's.
+ * Basking (the end of a reptile's stretch after resting): wings spread wide and raised toward
+ * the sun like a cormorant drying out — arms up and out, the leading edge turned up so the
+ * membrane faces the light, fingers splayed and their tips drooping. Blend weight is the caller's.
  */
-export const RUFFLE = pose({
-  humEl: 34,
-  humSw: 22,
-  humTw: -6,
-  foreEl: 8,
-  foreSw: -78,
+export const BASK = pose({
+  humEl: 30,
+  humSw: 4,
+  humTw: -12,
+  foreEl: -6,
+  foreSw: -12,
+  foreTw: -6,
   handEl: -10,
-  handSw: 92,
-  f0El: 4,
-  f0Sw: 4,
-  f1El: 4,
-  f1Sw: -16,
-  f2El: 4,
-  f2Sw: -34,
-  f0bEl: -4,
-  f1bEl: -4,
-  f2bEl: -4,
+  handSw: 10,
+  f0El: -10,
+  f0Sw: 2,
+  f1El: -12,
+  f1Sw: 6,
+  f2El: -14,
+  f2Sw: 12,
+  f0bEl: -12,
+  f1bEl: -10,
+  f2bEl: -8,
 });
-
-export function shudderPose(out: WingPose, shudder: number, flick: number): void {
-  out[W.humEl] += 9 * shudder * DEG;
-  out[W.humTw] += 7 * shudder * DEG;
-  out[W.foreSw] += 10 * shudder * DEG;
-  out[W.handSw] += -12 * shudder * DEG;
-  for (let f = 0; f < 3; f++) {
-    out[W.f0El + f * 3] += (6 + 2 * f) * flick * DEG;
-    out[W.f0bEl + f * 2] += (10 + 3 * f) * flick * DEG;
-  }
-}
 
 /** Ease for the takeoff/landing opening of the wings on the ground. */
 export const openEase = (x: number) => smoothstep(0, 1, x);

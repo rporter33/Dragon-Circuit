@@ -48,6 +48,8 @@ export interface RigIndex {
   neck: number[];
   head: number;
   jaw: number;
+  /** Forked tongue on the jaw floor: [base, fork]. Retracted inside the closed mouth at rest. */
+  tongue: [number, number];
   fans: [number, number];
   tail: number[];
   wings: [WingIdx, WingIdx];
@@ -80,6 +82,13 @@ export const NECK_BONES = 6;
  * ribcage a little ahead of the center of mass, well behind the shoulder joints (0.3).
  */
 export const SEAT_Z = 0.08;
+
+/**
+ * Forked tongue along the head (fractions of head length from the head pivot): its base, where
+ * it forks, the tips at rest (inside the snout, which ends at 1.0) and how far a flick slides it
+ * out.
+ */
+export const TONGUE = { base: 0.3, fork: 0.74, tip: 0.92, reach: 0.5 } as const;
 export const TAIL_BONES = 10;
 
 export interface RigDef {
@@ -316,6 +325,10 @@ export function buildRig(breed: BreedId): RigDef {
   const head = add('head', parent, headPos);
   const L = S.headLength;
   const jaw = add('jaw', head, headPos.clone().add(new Vector3(0, -0.5 * S.headHalfHeight, 0.08 * L)));
+  // Tongue: lies along the jaw floor just under the mouth line, wholly inside the closed mouth;
+  // the animator slides the base bone forward to flick it out through the front (lingual notch).
+  const tongue0 = add('tongue0', jaw, headPos.clone().add(new Vector3(0, -0.44 * S.headHalfHeight, TONGUE.base * L)));
+  const tongue1 = add('tongue1', tongue0, headPos.clone().add(new Vector3(0, -0.46 * S.headHalfHeight, TONGUE.fork * L)));
   const fans: [number, number] = [
     add('fanL', head, headPos.clone().add(new Vector3(0.75 * S.headHalfWidth, -0.15 * S.headHalfHeight, -0.02 * L))),
     add('fanR', head, headPos.clone().add(new Vector3(-0.75 * S.headHalfWidth, -0.15 * S.headHalfHeight, -0.02 * L))),
@@ -441,7 +454,7 @@ export function buildRig(breed: BreedId): RigDef {
   return {
     props: P,
     bones,
-    idx: { root, spine, chest, breath, pelvis, neck, head, jaw, fans, tail, wings, legs },
+    idx: { root, spine, chest, breath, pelvis, neck, head, jaw, tongue: [tongue0, tongue1], fans, tail, wings, legs },
     plan,
     elbow,
     wrist,

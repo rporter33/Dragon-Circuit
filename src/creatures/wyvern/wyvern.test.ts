@@ -578,30 +578,160 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
     w.dispose();
   });
 
-  it('shakes out on the ruffle (head, wings, tail) and settles back to the folded stance', () => {
+  it('stretches and basks after resting: neck up, a slight gape, wings spread wide, then folds away', () => {
     const w = new Wyvern(look('harrier'));
     const pose = standing('harrier');
     for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
     const l0 = new Vector3();
     const r0 = new Vector3();
     w.getWingtips(l0, r0);
-    const head0 = w.getHead(new Vector3());
-    let headSwing = 0;
-    let wingLift = 0;
-    for (let i = 0; i <= 84; i++) {
-      pose.ruffle = Math.min(1, i / 84);
+    const head0 = w.getHead(new Vector3()).y;
+    const jaw = w.skinnedMesh!.skeleton.bones.find((b) => b.name === 'jaw')!;
+    let span = 0;
+    let headUp = 0;
+    let gape = 0;
+    let lids = 1;
+    let fold = 1;
+    const dur = (w as unknown as { animator: { baskDuration: number } }).animator.baskDuration;
+    expect(dur).toBeGreaterThan(2.5);
+    // The player drives ruffle 0 -> 1 over 1.4 s; the animator plays its own, slower bask.
+    for (let i = 0; i < 60 * 4.5; i++) {
+      pose.ruffle = i < 84 ? i / 84 : 0;
       w.update(1 / 60, pose);
-      headSwing = Math.max(headSwing, Math.abs(w.getHead(_p).x - head0.x));
       w.getWingtips(_p, _q);
-      wingLift = Math.max(wingLift, _p.y - l0.y);
+      span = Math.max(span, _p.distanceTo(_q));
+      headUp = Math.max(headUp, w.getHead(_p).y - head0);
+      gape = Math.max(gape, 2 * Math.acos(Math.min(1, Math.abs(jaw.quaternion.w))));
+      // Through the full bask the eyes stay half-lidded (a blink only closes them further).
+      const u = i / 60 / dur;
+      if (u > 0.55 && u < 0.75) lids = Math.min(lids, w.uniforms.uBlink.value);
+      fold = Math.min(fold, w.uniforms.uFold.value);
     }
-    expect(headSwing).toBeGreaterThan(0.15);
-    expect(wingLift).toBeGreaterThan(1);
-    pose.ruffle = 0;
+    // Wings spread wide (most of the span), membranes unfolded to the light.
+    expect(span).toBeGreaterThan(0.7 * BREEDS.harrier.wingspan);
+    expect(fold).toBeLessThan(0.2);
+    // The neck reaches up; a slight gape, not a yawn; eyes half-lidded in the sun.
+    expect(headUp).toBeGreaterThan(0.25);
+    expect(gape).toBeGreaterThan(0.08);
+    expect(gape).toBeLessThan(0.3);
+    expect(lids).toBeGreaterThan(0.3);
+    // ...and settles back into the folded stance.
     for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
     w.getWingtips(_p, _q);
     expect(_p.distanceTo(l0)).toBeLessThan(0.1);
+    expect(w.uniforms.uFold.value).toBeGreaterThan(0.95);
     w.dispose();
+  });
+
+  it('cuts the bask short, smoothly, when the wyvern walks off', () => {
+    const w = new Wyvern(look('harrier'));
+    const pose = standing('harrier');
+    for (let i = 0; i < 60; i++) w.update(1 / 60, pose);
+    for (let i = 0; i < 100; i++) {
+      pose.ruffle = Math.min(1, i / 84);
+      w.update(1 / 60, pose);
+    }
+    expect(w.uniforms.uFold.value).toBeLessThan(0.6);
+    pose.gait = 'walk';
+    pose.groundSpeed = 2;
+    pose.velocity.set(0, 0, 2);
+    let last = w.uniforms.uFold.value;
+    let maxStep = 0;
+    for (let i = 0; i < 90; i++) {
+      pose.position.z += 2 / 60;
+      pose.lookTarget.z += 2 / 60;
+      w.update(1 / 60, pose);
+      maxStep = Math.max(maxStep, Math.abs(w.uniforms.uFold.value - last));
+      last = w.uniforms.uFold.value;
+    }
+    expect(last).toBeGreaterThan(0.9);
+    expect(maxStep).toBeLessThan(0.12);
+    w.dispose();
+  });
+
+  it('blinks like a reptile: sideways sweeps of the nictitating membrane, held half-drawn in a fast dive', () => {
+    const w = new Wyvern(look('harrier'));
+    const pose = standing('harrier');
+    let nict = 0;
+    let both = 0;
+    for (let i = 0; i < 60 * 12; i++) {
+      w.update(1 / 60, pose);
+      nict = Math.max(nict, w.uniforms.uNictitate.value);
+      if (w.uniforms.uNictitate.value > 0.5 && w.uniforms.uBlink.value > 0.5) both++;
+    }
+    expect(nict).toBeGreaterThan(0.9);
+    // The inner and outer lids are separate.
+    expect(both).toBeLessThan(5);
+    const dive = gliding();
+    dive.airspeed = 62;
+    dive.velocity.set(0, -40, 47);
+    let minN = 1;
+    for (let i = 0; i < 120; i++) {
+      w.update(1 / 60, dive);
+      if (i > 60) minN = Math.min(minN, w.uniforms.uNictitate.value);
+    }
+    expect(minN).toBeGreaterThan(0.4);
+    w.dispose();
+  });
+
+  it('flicks a forked tongue out past the snout to taste the air when idle, never in flight', () => {
+    const w = new Wyvern(look('harrier'));
+    const anim = (w as unknown as { animator: { tongueExt: number } }).animator;
+    const pose = standing('harrier');
+    const L = w.rigDef.props.shape.headLength;
+    let out = 0;
+    for (let i = 0; i < 60 * 14; i++) {
+      w.update(1 / 60, pose);
+      out = Math.max(out, anim.tongueExt);
+    }
+    // The fork (0.92 of the head length at rest) slides out beyond the snout tip (1.0).
+    expect(out / L).toBeGreaterThan(0.3);
+    const air = gliding();
+    let flying = 0;
+    for (let i = 0; i < 60 * 14; i++) {
+      w.update(1 / 60, air);
+      flying = Math.max(flying, anim.tongueExt);
+    }
+    expect(flying).toBe(0);
+    w.dispose();
+  });
+
+  it('breathes with its ribs: the flanks swell sideways, the body hardly rises', () => {
+    const w = new Wyvern(look('harrier'));
+    const pose = standing('harrier');
+    const br = w.skinnedMesh!.skeleton.bones.find((b) => b.name === 'breath')!;
+    let sx = 0;
+    let sy = 0;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (let i = 0; i < 60 * 8; i++) {
+      w.update(1 / 60, pose);
+      sx = Math.max(sx, Math.abs(br.scale.x - 1));
+      sy = Math.max(sy, Math.abs(br.scale.y - 1));
+      if (i > 120) {
+        const y = w.saddle.getWorldPosition(_p).y;
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
+      }
+    }
+    expect(sx).toBeGreaterThan(0.025);
+    expect(sx).toBeGreaterThan(sy * 3);
+    expect(y1 - y0).toBeLessThan(0.02);
+    w.dispose();
+  });
+
+  it('swings the tail against the head as a counterweight on the ground', () => {
+    const tailX = (target: number) => {
+      const w = new Wyvern(look('harrier'));
+      const pose = standing('harrier');
+      pose.lookTarget.set(target, 13, 6);
+      for (let i = 0; i < 240; i++) w.update(1 / 60, pose);
+      const x = boneWorld(w, 'tail9').x;
+      w.dispose();
+      return x;
+    };
+    // Looking left (+x), the tail swings right (-x), and the other way round.
+    expect(tailX(30)).toBeLessThan(tailX(-30) - 0.5);
   });
 
   it('builds up exertion on a long climb and pants it off at rest', () => {
