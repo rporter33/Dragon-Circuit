@@ -21,6 +21,8 @@ export const GAIT = {
   runOffsets: [0, 0.08, 0.5, 0.58] as const,
   walkCycle: 1.55,
   runCycle: 2.5,
+  /** Turning on the spot (TURN_CYCLE in gait.ts). */
+  turnCycle: 0.6,
   /** Walk → run blend between these × the breed's run speed (m/s). */
   runFrom: 0.7,
   runTo: 1.25,
@@ -89,8 +91,12 @@ export class GroundWalker {
   yaw = 0;
   /** Forward ground speed (m/s). */
   speed = 0;
+  /** Yaw rate (rad/s, + = left), limited in acceleration. */
+  yawRate = 0;
   /** Smoothed yaw rate (rad/s), for leaning and tail swing. */
   turnRate = 0;
+  /** Horizontal velocity of the body center (m/s): the walk plus the pivot of a turn. */
+  readonly velocity = new Vector3();
   groundY = 0;
   readonly normal = new Vector3(0, 1, 0);
   surface: SurfaceKind = 'grass';
@@ -122,33 +128,65 @@ export class GroundWalker {
   /**
    * Turn toward `dir` (horizontal, any length; null = stop) and run toward `targetSpeed`.
    * Stops at slopes steeper than ~40°; at a cliff edge either stops (`allowEdge` false) or
-   * reports 'edge' without moving so the caller can launch into the air.
+   * reports 'edge' without moving so the caller can launch into the air. With `keepOut` (the
+   * riderless wyvern's rider, on foot), its chest never comes within `riderKeepOut` of that point.
    */
-  step(dt: number, dir: Vector3 | null, targetSpeed: number, breed: BreedStats, terrain: TerrainQuery, allowEdge: boolean): WalkResult {
-    // Heavier, slower-rolling breeds also turn more slowly on the ground.
-    const maxTurn = 1.2 + breed.maxRollRate * 0.8;
+  step(
+    dt: number,
+    dir: Vector3 | null,
+    targetSpeed: number,
+    breed: BreedStats,
+    terrain: TerrainQuery,
+    allowEdge: boolean,
+    keepOut: Vector3 | null = null,
+  ): WalkResult {
+    // A big animal turns slowly (each breed its own rate), winding the turn up and easing it out
+    // at the yaw-acceleration limit, and on the spot it pivots on its haunches.
+    const maxTurn = P.groundTurnRate[breed.id];
+    const yawAccel = P.groundYawAccel;
     let speedTarget = 0;
     let rate = 0;
     if (dir && dir.x * dir.x + dir.z * dir.z > 1e-6) {
       const want = Math.atan2(dir.x, dir.z);
       const err = angleDelta(this.yaw, want);
-      rate = clamp(err * 6, -maxTurn, maxTurn);
+      const ae = Math.abs(err);
+      // The fastest rate that can still stop on the heading at the yaw-acceleration limit
+      // (proportional close in, so it settles without hunting).
+      rate = Math.sign(err) * Math.min(maxTurn, ae * 6, Math.sqrt(2 * yawAccel * ae));
       // Turn on the spot when facing away; slow down through tight turns.
       speedTarget = targetSpeed * Math.max(0, Math.cos(err));
     }
-    this.yaw += rate * dt;
-    this.turnRate = damp(this.turnRate, rate, 10, dt);
+    const dRate = clamp(rate - this.yawRate, -yawAccel * dt, yawAccel * dt);
+    this.yawRate += dRate;
+    const dYaw = this.yawRate * dt;
+    const s0 = Math.sin(this.yaw);
+    const c0 = Math.cos(this.yaw);
+    this.yaw += dYaw;
+    this.turnRate = damp(this.turnRate, this.yawRate, 10, dt);
     const accel = speedTarget > this.speed ? P.wyvernAccel : P.wyvernBrake;
     this.speed += clamp(speedTarget - this.speed, -accel * dt, accel * dt);
+    // Pivot: the body center swings about the hind point instead of turning about itself.
+    const pivotW = 1 - smoothstep(P.turnPivotSpeed, 2 * P.turnPivotSpeed, this.speed);
+    let px = 0;
+    let pz = 0;
+    if (pivotW > 0 && dYaw !== 0) {
+      const k = pivotW * P.turnPivot * breed.standHeight;
+      px = (Math.sin(this.yaw) - s0) * k;
+      pz = (Math.cos(this.yaw) - c0) * k;
+    }
     if (this.speed < 1e-3) {
       this.speed = 0;
-      // Standing (or turning on the spot) still mustn't leave the head in a wall.
+      if (px !== 0 || pz !== 0) this.pivot(px, pz, terrain);
+      this.velocity.set(dt > 0 ? px / dt : 0, 0, dt > 0 ? pz / dt : 0);
+      // Standing (or turning on the spot) still mustn't leave the head in a wall, or the chest
+      // on its rider.
       this.resolveWalls(terrain, breed.standHeight, 0);
+      if (keepOut) this.stayClear(keepOut, breed.standHeight);
       return 'ok';
     }
 
-    const nx = this.position.x + Math.sin(this.yaw) * this.speed * dt;
-    const nz = this.position.z + Math.cos(this.yaw) * this.speed * dt;
+    const nx = this.position.x + Math.sin(this.yaw) * this.speed * dt + px;
+    const nz = this.position.z + Math.cos(this.yaw) * this.speed * dt + pz;
     const g = terrain.groundAt(nx, nz, this.groundY + 2.5);
     if (!g || g.y < this.groundY - P.edgeDrop) {
       if (allowEdge) return 'edge';
@@ -186,8 +224,56 @@ export class GroundWalker {
         this.islandId = gw.islandId;
       }
     }
+    if (keepOut) this.stayClear(keepOut, breed.standHeight);
+    this.velocity.set(Math.sin(this.yaw) * this.speed + px / dt, 0, Math.cos(this.yaw) * this.speed + pz / dt);
     this.stride += this.speed * dt;
     return 'ok';
+  }
+
+  /** Swing the standing body by (dx, dz) about its pivot, if there is ground to stand on there. */
+  private pivot(dx: number, dz: number, terrain: TerrainQuery): void {
+    const x = this.position.x + dx;
+    const z = this.position.z + dz;
+    const g = terrain.groundAt(x, z, this.groundY + 2.5);
+    // Not over a drop or up a step it couldn't walk: then it turns about its middle instead.
+    if (!g || Math.abs(g.y - this.groundY) > 0.5) return;
+    const standHeight = this.position.y - this.groundY;
+    this.position.x = x;
+    this.position.z = z;
+    this.groundY = g.y;
+    this.position.y = g.y + standHeight;
+    this.normal.copy(g.normal);
+    this.surface = g.surface;
+    this.islandId = g.islandId;
+  }
+
+  /** Chest point (world, at the body center's height): `chestAhead` × standHeight ahead of it. */
+  chest(standHeight: number, out: Vector3): Vector3 {
+    const k = P.chestAhead * standHeight;
+    return out.set(this.position.x + Math.sin(this.yaw) * k, this.position.y, this.position.z + Math.cos(this.yaw) * k);
+  }
+
+  /**
+   * Keep the chest `riderKeepOut` m clear of `p` (horizontally): the body is pushed straight back
+   * out, and a wyvern that walked into it stops. True if it pushed.
+   */
+  private stayClear(p: Vector3, standHeight: number): boolean {
+    const s = Math.sin(this.yaw);
+    const c = Math.cos(this.yaw);
+    const k = P.chestAhead * standHeight;
+    const dx = this.position.x + s * k - p.x;
+    const dz = this.position.z + c * k - p.z;
+    const r = P.riderKeepOut;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= r * r) return false;
+    const d = Math.sqrt(d2);
+    // Straight back along its heading when the point is dead on the chest.
+    const nx = d > 1e-4 ? dx / d : -s;
+    const nz = d > 1e-4 ? dz / d : -c;
+    this.position.x += nx * (r - d);
+    this.position.z += nz * (r - d);
+    if (nx * s + nz * c < 0) this.speed = 0;
+    return true;
   }
 
   /**
@@ -222,8 +308,11 @@ export class GroundWalker {
     const go = moving && (speed > 0.35 || Math.abs(this.turnRate) > 0.35);
     if (!go) return 0;
     const run = smoothstep(gaitRunSpeed(breed) * GAIT.runFrom, gaitRunSpeed(breed) * GAIT.runTo, speed);
-    const cycle = lerp(GAIT.walkCycle, GAIT.runCycle, run) * sh;
-    const speedEff = Math.max(speed, Math.abs(this.turnRate) * 0.9 * sh);
+    const turnEff = Math.abs(this.turnRate) * 0.9 * sh;
+    const speedEff = Math.max(speed, turnEff);
+    // Turning on the spot: short, quick steps round the pivot.
+    const turning = speedEff > 1e-6 ? clamp((turnEff - speed) / speedEff, 0, 1) : 0;
+    const cycle = lerp(lerp(GAIT.walkCycle, GAIT.runCycle, run), GAIT.turnCycle, turning) * sh;
     const prev = this.gaitPhase;
     const next = prev + (speedEff / cycle) * dt;
     for (let i = 0; i < 4; i++) {

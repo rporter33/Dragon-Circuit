@@ -92,6 +92,8 @@ export class Player implements PlayerSystem {
   readonly wyvernPose: WyvernPose = Object.assign(createWyvernPose(), {
     control: { pitch: 0, roll: 0, yaw: 0 },
     gust: { l: 0, r: 0 },
+    // A called arrival greets the rider: the id follows Companion.greetings.
+    cue: { kind: 'greet' as const, id: 0 },
   });
   readonly riderPose: RiderPose = createRiderPose();
   readonly riderPosition = new Vector3();
@@ -602,6 +604,7 @@ export class Player implements PlayerSystem {
     w.yaw = hs > 2 ? Math.atan2(s.velocity.x, s.velocity.z) : yawOf(_fwd.set(0, 0, 1).applyQuaternion(s.orientation));
     w.speed = Math.min(hs, P.landSpeed);
     w.turnRate = 0;
+    w.yawRate = 0;
     this.companion.state = 'idle';
     this.touchdownQuat.copy(s.orientation);
     this.landBlend = 0;
@@ -1063,7 +1066,8 @@ export class Player implements PlayerSystem {
     if (this.mode === 'landed' && this.landBlend < 1) {
       s.orientation.slerpQuaternions(this.touchdownQuat, stand, smoothstep(0, 1, this.landBlend));
     } else s.orientation.copy(stand);
-    s.velocity.set(Math.sin(w.yaw) * w.speed, 0, Math.cos(w.yaw) * w.speed);
+    // (The walk plus the swing of a turn on the haunches.)
+    s.velocity.copy(w.velocity);
     s.angularVelocity.set(0, w.turnRate, 0);
     s.airspeed = w.speed;
     s.stall = 0;
@@ -1282,6 +1286,7 @@ export class Player implements PlayerSystem {
     const tips = this.model.tipUpdraft;
     wp.gust!.l = inAir ? tips.l : 0;
     wp.gust!.r = inAir ? tips.r : 0;
+    wp.cue!.id = this.companion.greetings;
     if (this.lookFresh) {
       this.lookSmooth.copy(this.lookTarget);
       this.lookFresh = false;

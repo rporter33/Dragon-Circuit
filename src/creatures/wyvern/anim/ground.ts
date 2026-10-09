@@ -16,11 +16,11 @@
 // Methods take no number arguments (see frame.ts).
 
 import { Quaternion, Vector3 } from 'three';
-import type { TerrainQuery } from '../../../core/types';
-import { TAU, clamp, clamp01, smoothstep } from '../../../core/math';
+import type { GroundHit, TerrainQuery } from '../../../core/types';
+import { DEG, TAU, clamp, clamp01, smoothstep } from '../../../core/math';
 import { SIDE_SIGN, type RigDef } from '../rig';
 import { LEG_ANGLES } from '../proportions';
-import { Bouncy, aimRotation, solveTwoBone } from '../ik';
+import { Bouncy, aimRotation, solveTwoBoneAt } from '../ik';
 import { Gait, type GaitContext } from '../gait';
 import { FLAP_STYLES, WING_CHANNELS, blendPose, flapPose, type WingPose } from '../wingPoses';
 import type { WyvernAnimator } from '../animator';
@@ -73,6 +73,10 @@ export class GroundLayer {
   private ikW = 0;
   /** Toe curl for setEulerAt (x, y, z). */
   private readonly toeAng = new Float64Array(3);
+  /** Two-bone lengths for solveTwoBoneAt: humerus, forearm, thigh, shin. */
+  private readonly lens: Float64Array;
+  /** Reused terrain query result. */
+  private readonly hit: GroundHit = { y: 0, normal: new Vector3(), islandId: -1, surface: 'grass' };
 
   constructor(a: WyvernAnimator, terrain?: Pick<TerrainQuery, 'groundAt'>) {
     this.a = a;
@@ -81,6 +85,7 @@ export class GroundLayer {
     this.terrain = terrain;
     const rig = a.rig;
     const heft = a.heft;
+    this.lens = new Float64Array([rig.props.arm.humerus, rig.props.arm.forearm, rig.props.leg.thigh, rig.props.leg.shin]);
     // Heavier bodies settle slower and bounce less.
     this.dip = new Bouncy(8.5 - 2.5 * heft, 0.42 + 0.1 * heft);
     const B = rig.bones;
@@ -120,6 +125,7 @@ export class GroundLayer {
       standHeight: sh,
       runBlend: 0,
       moving: false,
+      groundKey: 0.5,
     };
   }
 
@@ -131,7 +137,7 @@ export class GroundLayer {
   private groundHeight(x: number, z: number, y: number): number {
     const fallback = this.a.groundRef;
     if (this.terrain) {
-      const g = this.terrain.groundAt(x, z, y);
+      const g = this.terrain.groundAt(x, z, y, this.hit);
       // Ignore ground far from the body's own (decks over the void, cliff bottoms).
       if (g && Math.abs(g.y - fallback) < 1.6) return g.y;
     }
@@ -163,6 +169,7 @@ export class GroundLayer {
       c.velocity.y = 0;
       c.yawRate = f.om.y;
       c.standHeight = f.sh;
+      c.groundKey = this.a.groundRef;
       const gs = Math.sqrt(c.velocity.x * c.velocity.x + c.velocity.z * c.velocity.z);
       const runSpeed = this.rig.props.breed === 'galewing' ? 5 : 5.5;
       c.runBlend = smoothstep(runSpeed * 0.7, runSpeed * 1.25, gs);
@@ -188,6 +195,8 @@ export class GroundLayer {
     f.dipPitch = (dipV / sh) * (0.5 + 0.2 * heft);
     f.gaitRoll = moving ? 0.03 * Math.sin(gaitPhase * TAU) * (1 - runBlend) : 0;
     f.crouchPitch = f.takeoffCrouch ? -0.08 * f.openAmt : 0;
+    // Turning on the ground, the chest leans into the turn (3° at a full turn).
+    f.turnLean = f.groundW * clamp(-0.05 * f.om.y, -3 * DEG, 3 * DEG);
     // The folded-stance wing IK weight for this frame: knuckles on the ground as front feet
     // (lifted off them to shuffle, brace or bask).
     this.ikW = f.groundW * (1 - f.openAmt) * (1 - f.shuffle * 0.65) * (1 - 0.85 * f.brace) * (1 - f.bask);
@@ -214,59 +223,86 @@ export class GroundLayer {
     const weight = this.ikW;
     if (!(weight > 0.001)) return;
     const a = this.a;
+    a.blend = weight;
     const rig = this.rig;
     const sh = this.f.sh;
     const w = rig.idx.wings[side];
-    const A = rig.props.arm;
     const sx = SIDE_SIGN[side];
     const rest = this.wingRestDir[side];
     const up = a.upM;
-    const fwdG = this.fwdG.copy(FWD).addScaledVector(up, -up.z).normalize();
+    // (Scalar arithmetic in place of three.js calls taking computed numbers: in a function this
+    // size the JIT may not inline them, and every double passed would be boxed on the heap.)
+    const fwdG = this.fwdG.copy(FWD);
+    fwdG.x -= up.x * up.z;
+    fwdG.y -= up.y * up.z;
+    fwdG.z -= up.z * up.z;
+    fwdG.normalize();
     // Wrist target (model space) from the planted foot, the claws resting on the ground.
     const foot = this.gait.feet[2 + side];
-    const Wt = a.toModel(foot.pos, _v3).addScaledVector(up, 0.07 * sh);
+    const Wt = a.toModel(foot.pos, _v3);
+    const lift = 0.07 * sh;
+    Wt.x += up.x * lift;
+    Wt.y += up.y * lift;
+    Wt.z += up.z * lift;
     const S = _v2.copy(a.modelP[w.humerus]);
     // Pole: back and up, a little out, so the elbow juts up behind the shoulder.
-    _v4.set(0.25 * sx, 0.75, -0.62);
+    _v4.x = 0.25 * sx;
+    _v4.y = 0.75;
+    _v4.z = -0.62;
     const E = _v5;
-    solveTwoBone(S, A.humerus, A.forearm, Wt, _v4, E);
+    solveTwoBoneAt(S, this.lens, 0, Wt, _v4, E);
     const hum = _hum.subVectors(E, S);
     const fore = _fore.subVectors(Wt, E);
     // Wing surface "up" in the bind is −(humerus × forearm) for the left wing.
-    const ref = _ref.crossVectors(hum, fore).multiplyScalar(-sx);
+    const ref = _ref.crossVectors(hum, fore);
+    ref.x *= -sx;
+    ref.y *= -sx;
+    ref.z *= -sx;
     if (ref.lengthSq() < 1e-8) ref.copy(UP);
     ref.normalize();
     aimRotation(rest[0], UP, hum, ref, _q);
-    a.setModel(w.humerus, _q, weight);
+    a.setModelBlend(w.humerus, _q);
     aimRotation(rest[1], UP, fore, ref, _q);
-    a.setModel(w.forearm, _q, weight);
+    a.setModelBlend(w.forearm, _q);
     // Hand folds back up along the forearm, just outside it.
     const back = _handD.subVectors(E, Wt).normalize();
-    _fd.copy(back).addScaledVector(LEFT, 0.12 * sx).addScaledVector(fwdG, -0.06).normalize();
+    _fd.x = back.x + LEFT.x * (0.12 * sx) + fwdG.x * -0.06;
+    _fd.y = back.y + LEFT.y * (0.12 * sx) + fwdG.y * -0.06;
+    _fd.z = back.z + LEFT.z * (0.12 * sx) + fwdG.z * -0.06;
+    _fd.normalize();
     aimRotation(rest[2], UP, _fd, ref, _q);
-    a.setModel(w.hand, _q, weight);
+    a.setModelBlend(w.hand, _q);
     for (let f = 0; f < 3; f++) {
       // Inner segment: up beside the forearm, bundled (outside and a little behind it).
-      _fd.copy(back)
-        .addScaledVector(LEFT, (0.07 + 0.02 * f) * sx)
-        .addScaledVector(fwdG, -0.1 - 0.06 * f)
-        .normalize();
+      const out = (0.07 + 0.02 * f) * sx;
+      const behind = -0.1 - 0.06 * f;
+      _fd.x = back.x + LEFT.x * out + fwdG.x * behind;
+      _fd.y = back.y + LEFT.y * out + fwdG.y * behind;
+      _fd.z = back.z + LEFT.z * out + fwdG.z * behind;
+      _fd.normalize();
       aimRotation(rest[3 + f], UP, _fd, ref, _q);
-      a.setModel(w.fingers[f][0], _q, weight);
+      a.setModelBlend(w.fingers[f][0], _q);
       // Outer segment: folded back along the flank, tips toward the tail; the wingtip finger
       // rides highest, the inner ones fan a little lower. Membrane side faces outward.
-      _fd.copy(fwdG)
-        .multiplyScalar(-0.92)
-        .addScaledVector(up, 0.3 - 0.13 * f)
-        .addScaledVector(LEFT, (0.07 - 0.02 * f) * sx)
-        .normalize();
-      aimRotation(rest[3 + f], UP, _fd, _refN.copy(LEFT).multiplyScalar(sx), _q);
-      a.setModel(w.fingers[f][1], _q, weight);
+      const rise = 0.3 - 0.13 * f;
+      const flank = (0.07 - 0.02 * f) * sx;
+      _fd.x = fwdG.x * -0.92 + up.x * rise + LEFT.x * flank;
+      _fd.y = fwdG.y * -0.92 + up.y * rise + LEFT.y * flank;
+      _fd.z = fwdG.z * -0.92 + up.z * rise + LEFT.z * flank;
+      _fd.normalize();
+      _refN.x = LEFT.x * sx;
+      _refN.y = LEFT.y * sx;
+      _refN.z = LEFT.z * sx;
+      aimRotation(rest[3 + f], UP, _fd, _refN, _q);
+      a.setModelBlend(w.fingers[f][1], _q);
     }
     // Claws point forward along the ground.
-    _fd.copy(fwdG).addScaledVector(up, -0.25).addScaledVector(LEFT, 0.2 * sx).normalize();
+    _fd.x = fwdG.x + up.x * -0.25 + LEFT.x * (0.2 * sx);
+    _fd.y = fwdG.y + up.y * -0.25 + LEFT.y * (0.2 * sx);
+    _fd.z = fwdG.z + up.z * -0.25 + LEFT.z * (0.2 * sx);
+    _fd.normalize();
     aimRotation(FWD, UP, _fd, up, _q);
-    a.setModel(w.claw, _q, weight);
+    a.setModelBlend(w.claw, _q);
   }
 
   /** Both legs: the flight poses (FK) blended with ground IK to the planted feet. */
@@ -367,33 +403,60 @@ export class GroundLayer {
   private applyLegIK(side: number): void {
     const a = this.a;
     const rig = this.rig;
-    const weight = 1 - this.f.legAirW;
+    a.blend = 1 - this.f.legAirW;
     const l = rig.idx.legs[side];
     const G = rig.props.leg;
     const rest = this.legRestDir[side];
     const foot = this.gait.feet[side];
     const up = a.upM;
-    const fwdG = this.fwdG.copy(FWD).addScaledVector(up, -up.z).normalize();
+    // (Scalar arithmetic in place of three.js calls taking computed numbers; see applyWingIK.)
+    const fwdG = this.fwdG.copy(FWD);
+    fwdG.x -= up.x * up.z;
+    fwdG.y -= up.y * up.z;
+    fwdG.z -= up.z * up.z;
+    fwdG.normalize();
     // Ball of the foot above the planted sole.
-    const ball = a.toModel(foot.pos, _v).addScaledVector(up, G.sole);
+    const sole = G.sole;
+    const ball = a.toModel(foot.pos, _v);
+    ball.x += up.x * sole;
+    ball.y += up.y * sole;
+    ball.z += up.z * sole;
     // Metatarsus leans forward; more when the heel lifts during a swing.
     const ang = LEG_ANGLES.meta + foot.airborne * 0.5;
-    const metaDir = _v3.copy(up).multiplyScalar(-Math.cos(ang)).addScaledVector(fwdG, Math.sin(ang));
-    const ankle = _v4.copy(ball).addScaledVector(metaDir, -G.meta);
+    const ca = -Math.cos(ang);
+    const sa = Math.sin(ang);
+    const metaDir = _v3;
+    metaDir.x = up.x * ca + fwdG.x * sa;
+    metaDir.y = up.y * ca + fwdG.y * sa;
+    metaDir.z = up.z * ca + fwdG.z * sa;
+    const ml = -G.meta;
+    const ankle = _v4;
+    ankle.x = ball.x + metaDir.x * ml;
+    ankle.y = ball.y + metaDir.y * ml;
+    ankle.z = ball.z + metaDir.z * ml;
     const hip = a.modelP[l.thigh];
-    const pole = _v5.copy(fwdG).addScaledVector(LEFT, 0.12 * SIDE_SIGN[side]);
+    const out = 0.12 * SIDE_SIGN[side];
+    const pole = _v5;
+    pole.x = fwdG.x + LEFT.x * out;
+    pole.y = fwdG.y + LEFT.y * out;
+    pole.z = fwdG.z + LEFT.z * out;
     const knee = _hum;
-    solveTwoBone(hip, G.thigh, G.shin, ankle, pole, knee);
+    solveTwoBoneAt(hip, this.lens, 2, ankle, pole, knee);
     const lat = _ref.copy(LEFT).applyQuaternion(a.modelQ[a.parent[l.thigh]]);
     aimRotation(rest[0], LEFT, _fore.subVectors(knee, hip), lat, _q);
-    a.setModel(l.thigh, _q, weight);
+    a.setModelBlend(l.thigh, _q);
     aimRotation(rest[1], LEFT, _fore.subVectors(ankle, a.pivot(l.shin)), lat, _q);
-    a.setModel(l.shin, _q, weight);
+    a.setModelBlend(l.shin, _q);
     aimRotation(rest[2], LEFT, _fore.subVectors(ball, a.pivot(l.meta)), lat, _q);
-    a.setModel(l.meta, _q, weight);
+    a.setModelBlend(l.meta, _q);
     // Toes flat on the ground in stance, pointing down as the foot lifts.
-    _fd.copy(fwdG).addScaledVector(up, -0.9 * foot.airborne).normalize();
+    const down = -0.9 * foot.airborne;
+    _fd.x = fwdG.x + up.x * down;
+    _fd.y = fwdG.y + up.y * down;
+    _fd.z = fwdG.z + up.z * down;
+    _fd.normalize();
     aimRotation(FWD, UP, _fd, up, _q);
-    a.setModel(l.toes, _q, weight);
+    a.setModelBlend(l.toes, _q);
   }
+
 }

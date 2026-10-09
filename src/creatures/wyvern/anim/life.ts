@@ -31,9 +31,18 @@ const NECK_TUCK = [5, 5, 4, 4, 3, 2];
 const NECK_FLARE = [-5, -4, -3, -1, 1, 3];
 /** The stretch: neck reaching out and up, the S-curve straightened. */
 const NECK_STRETCH = [-16, -8, -3, 0, 1, 3];
+/** The greeting: the neck sloping down from the withers, curling up at the top to carry the head level. */
+const NECK_GREET = [16, 12, 7, 1, -6, -12];
 const NECK_YAW_SHARE = [0.08, 0.12, 0.14, 0.15, 0.14, 0.12];
 /** How the neck bends when the body moves faster than the head can follow (base → top). */
 const NECK_LAG_SHARE = [0.34, 0.28, 0.2, 0.08, -0.06, -0.14];
+/** The head-height hold's bend along the neck (base → top; the head is re-aimed after it). */
+const HOLD_SHARE = [0.4, 0.3, 0.2, 0.1, 0, 0];
+/** How much of the head's beat-by-beat height change the hold takes out, its limit (rad), and the
+ * low-pass that sets the height it holds (× the breed's beat rate). */
+const HOLD_GAIN = 0.85;
+const HOLD_MAX = 0.25;
+const HOLD_CUTOFF = 0.6;
 
 // Scratch (module-level: the animator never re-enters).
 const _q = new Quaternion();
@@ -43,6 +52,11 @@ const _v2 = new Vector3();
 const _e = new Euler();
 
 export type IdleCue = 'blink' | 'nictitate' | 'tongue';
+
+/** Seconds the greeting takes, and when its nictitating sweep and tongue burst come. */
+const GREET_TIME = 3.8;
+const GREET_NICT = 0.35;
+const GREET_TONGUE = 0.85;
 
 export class LifeLayer {
   private readonly a: WyvernAnimator;
@@ -73,6 +87,8 @@ export class LifeLayer {
   private baskU = 1;
   private baskW = 0;
   private prevRuffle = 0;
+  /** The greeting (cue 'greet'): time into it, < 0 when not playing. */
+  private greetT = -1;
   /** Seconds the stretch-and-bask takes (heavier breeds are slower about it). */
   readonly baskDuration: number;
   private readonly jaw = new Spring(10);
@@ -87,6 +103,10 @@ export class LifeLayer {
   private pant = 0;
   /** This frame's neck bend against the heave lag (rad, shared out along the neck). */
   private neckSag = 0;
+  /** This frame's head-height hold (rad, shared out along the neck), and the height it holds to. */
+  private neckHold = 0;
+  private readonly headLP: Spring;
+  private holdInit = false;
   /** Euler angles for setEulerAt: one neck bone; jaw, fans and tongue (x, y, z each). */
   private readonly neckAng = new Float64Array(3);
   private readonly headAng = new Float64Array(15);
@@ -100,6 +120,7 @@ export class LifeLayer {
     // a tenth of a cycle whatever the beat rate (and follows slower motions, landings, closely).
     this.neckLag = new Bouncy(TAU * BREEDS[a.rig.props.breed].flapRate * 1.25, 0.5);
     this.neckReach = 0.62 * a.rig.props.shape.neckLength;
+    this.headLP = new Spring(TAU * BREEDS[a.rig.props.breed].flapRate * HOLD_CUTOFF);
     this.baskDuration = 3.0 + 0.8 * heft;
   }
 
@@ -114,6 +135,7 @@ export class LifeLayer {
 
   /** After a teleport: the neck and look springs start from rest. */
   reset(): void {
+    this.holdInit = false;
     this.neckLag.reset();
     this.lookYaw.reset();
     this.lookPitch.reset();
@@ -135,6 +157,14 @@ export class LifeLayer {
   startBask(): void {
     this.baskT = 0;
     this.baskU = 0;
+  }
+
+  /**
+   * Greet the rider (a called arrival): the head comes down to them (the look target), with a
+   * nictitating sweep and then a burst of tongue flicks toward them. Ground only.
+   */
+  startGreet(): void {
+    this.greetT = 0;
   }
 
   private rand(): number {
@@ -178,6 +208,18 @@ export class LifeLayer {
     f.bask = bask;
     f.baskOn = baskOn;
     f.fold = f.groundW * (1 - f.openAmt) * (1 - bask);
+
+    // The greeting: the head comes down to the rider, a nictitating sweep, a tongue burst.
+    if (this.greetT >= 0) {
+      const t0 = this.greetT;
+      this.greetT += dt;
+      if (airborne || f.teleport || this.greetT > GREET_TIME) this.greetT = -1;
+      else {
+        if (t0 < GREET_NICT && this.greetT >= GREET_NICT) this.nictTimer = 0;
+        if (t0 < GREET_TONGUE && this.greetT >= GREET_TONGUE) this.tongueTimer = 0;
+      }
+    }
+    f.greet = this.greetT >= 0 ? bump(this.greetT, 0, 1.0, 2.8, GREET_TIME) : 0;
 
     // Idle life: blinks, breathing, the odd wing shuffle and yawn.
     const idle = !airborne && pose.gait === 'idle' && pose.groundSpeed < 0.3;
@@ -260,11 +302,10 @@ export class LifeLayer {
     const bodyY = f.heave + f.gaitBob + f.dipV;
     const lagY = this.neckLag.step(bodyY, dt);
     // Bend the neck so the head sits most of the way back toward where the spring says it should
-    // be (more on heavier breeds). Slower beats (the retuned 1.45 Hz harrier) need the stronger
-    // take-up to keep the head steadier than the saddle. Known gap: on the slowest beats (galewing
-    // 0.95 Hz) the chest's pitch swing still lifts the head with the body, because this only
-    // offsets the trunk's heave; the dragon fidelity pass replaces it with a head-height hold.
-    this.neckSag = clamp(((0.75 + 0.15 * heft) * (bodyY - lagY)) / this.neckReach, -0.16, 0.16);
+    // be (more on heavier breeds): the landing's dip and the gait's bob. In the air the head-height
+    // hold (neckBones) takes over: it sees everything that lifts the head, the chest's pitch swing
+    // about the hips as well as the heave, on every beat rate.
+    this.neckSag = clamp(((0.75 + 0.15 * heft) * (bodyY - lagY)) / this.neckReach, -0.16, 0.16) * (1 - airW);
     a.toModel(f.pose.lookTarget, _v);
     _v.sub(a.modelP[I.head]);
     let lookYaw = Math.atan2(_v.x, _v.z);
@@ -273,7 +314,9 @@ export class LifeLayer {
       lookYaw = 0;
       lookPitch = 0;
     }
-    const maxYaw = airborne ? 1.0 : 1.35;
+    // Greeting, the head comes round to a rider standing at the shoulder.
+    const greet = f.greet;
+    const maxYaw = airborne ? 1.0 : 1.35 + 1.1 * greet;
     lookYaw = clamp(lookYaw, -maxYaw, maxYaw);
     lookPitch = clamp(lookPitch, -0.85, 0.7);
     // Basking: the head turns up toward the sun (when it is up).
@@ -287,17 +330,55 @@ export class LifeLayer {
     }
     // Yawn: head up and back; stall: looking down at what went wrong; tired: head hangs; the
     // stretch reaches up; tasting the air lifts the nose a touch.
-    lookPitch += yawn * 0.5 - buffet * 0.25 - fatigue * 0.12 * airW - effort * 0.08 * groundW + stretch * 0.22 + (this.tongueT >= 0 ? 0.06 : 0);
+    lookPitch += yawn * 0.5 - buffet * 0.25 - fatigue * 0.12 * airW - effort * 0.08 * groundW + stretch * 0.22 + (this.tongueT >= 0 ? 0.06 * (1 - greet) : 0);
     f.lookYaw = this.lookYaw.step(lookYaw, dt);
     f.lookPitch = this.lookPitch.step(lookPitch, dt);
   }
 
-  /** The neck's posture and bend, and the head aimed and held level. */
+  /**
+   * The neck's posture and bend, and the head aimed and held level. In the air the head's height
+   * is then held too: the neck is posed once, the head's height (above the body origin, world up)
+   * compared with a low-passed copy of itself that follows the flight path but not the wingbeat,
+   * and the neck posed again bent to take out most of the difference. The heave and the chest's
+   * pitch swing about the hips both lift the head on a long lever; this cancels whatever moves it,
+   * on every breed and beat rate, as birds and big predators hold the head steady.
+   */
   private neckBones(): void {
     const a = this.a;
     const f = this.f;
     const I = this.rig.idx;
+    this.neckHold = 0;
+    this.poseNeck();
+    const hp = a.modelP[I.head];
+    _v.copy(hp).applyQuaternion(a.qW);
+    const y = _v.y;
+    if (f.teleport || !this.holdInit) {
+      this.headLP.reset(y);
+      this.holdInit = true;
+    }
+    const target = this.headLP.step(y, f.dt);
+    if (f.airW > 0.01) {
+      // How far the head moves per radian of the hold's bend (its share at each neck joint times
+      // the head's reach ahead of that joint).
+      let lever = 0;
+      for (let i = 0; i < I.neck.length; i++) lever += HOLD_SHARE[i] * (hp.z - a.modelP[I.neck[i]].z);
+      if (lever > 0.2) {
+        const hold = clamp((HOLD_GAIN * (y - target)) / lever, -HOLD_MAX, HOLD_MAX) * f.airW;
+        if (hold > 1e-5 || hold < -1e-5) {
+          this.neckHold = hold;
+          this.poseNeck();
+        }
+      }
+    }
+  }
+
+  /** One pass of the neck (posture, bends, look, plus this frame's height hold) and the head. */
+  private poseNeck(): void {
+    const a = this.a;
+    const f = this.f;
+    const I = this.rig.idx;
     const { airW, groundW, tuck, flare, stretch, fatigue, effort, buffet, breath, breathAmp } = f;
+    const neckHold = this.neckHold;
     const ly = f.lookYaw;
     const lp = f.lookPitch;
     const neckSag = this.neckSag;
@@ -306,21 +387,27 @@ export class LifeLayer {
     const chestLift = f.chestLift;
     const moving = f.moving;
     const gaitSway = f.gaitSway;
+    // Greeting a rider at its shoulder, the neck curls round toward them (but stops short: the
+    // head turns the rest of the way on its own, so the snout ends a little way off their face).
+    const greet = f.greet;
+    const neckYawMax = 1.35 + 0.35 * greet;
+    const neckYaw = clamp(ly, -neckYawMax, neckYawMax) * (1 + 0.35 * greet);
     for (let i = 0; i < neckN; i++) {
       let pitch = lerp(NECK_FLIGHT[i], NECK_GROUND[i], groundW);
       pitch = lerp(pitch, NECK_TUCK[i], tuck);
       pitch = lerp(pitch, NECK_FLARE[i], flare * airW);
       pitch = lerp(pitch, NECK_STRETCH[i], stretch);
+      pitch = lerp(pitch, NECK_GREET[i], greet);
       pitch += fatigue * (2 + i * 0.4) * (1 - 0.4 * groundW) + effort * 1.5 * groundW;
       pitch *= DEG;
-      pitch += neckSag * NECK_LAG_SHARE[i];
+      pitch += neckSag * NECK_LAG_SHARE[i] + neckHold * HOLD_SHARE[i];
       // The neck base takes out most of the chest's beat pitch (the head is held, not flung).
       if (i === 0) pitch -= 1.6 * chestLift * 0.85;
       pitch += -lp * 0.35 * NECK_YAW_SHARE[i];
       pitch += breath * breathAmp * 0.2;
       const e = this.neckAng;
       e[0] = pitch;
-      e[1] = ly * NECK_YAW_SHARE[i] + (moving ? -gaitSway * 0.4 : 0);
+      e[1] = neckYaw * NECK_YAW_SHARE[i] + (moving ? -gaitSway * 0.4 : 0);
       e[2] = bankComp * 0.06;
       a.setEulerAt(I.neck[i], e, 0);
     }

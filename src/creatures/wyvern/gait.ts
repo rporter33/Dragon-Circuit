@@ -23,6 +23,8 @@ export interface GaitTiming {
 
 /** Lateral-sequence walk: LH, LF, RH, RF. */
 export const WALK: GaitTiming = { offsets: [0, 0.5, 0.25, 0.75], duty: 0.62, cycle: 1.55 };
+/** Cycle length (× standHeight) when turning on the spot: short, quick steps round the pivot. */
+export const TURN_CYCLE = 0.6;
 /** Bounding run: the hind pair pushes off, then the knuckles catch. */
 export const RUN: GaitTiming = { offsets: [0, 0.08, 0.5, 0.58], duty: 0.36, cycle: 2.5 };
 
@@ -57,6 +59,11 @@ export interface GaitContext {
   toWorld(model: Vector3, out: Vector3): Vector3;
   /** Ground height under (x, z) near height y (world). */
   groundAt(x: number, z: number, y: number): number;
+  /**
+   * Anything else groundAt's answers depend on (e.g. the ground height under the body it falls
+   * back to): a cached answer is reused only while this is unchanged.
+   */
+  groundKey?: number;
   /** Horizontal body velocity (world, m/s). */
   velocity: Vector3;
   /** Yaw rate (rad/s, + = left). */
@@ -83,7 +90,20 @@ export class Foot {
   lift = 0;
   /** 0..1 how much the foot is off the ground right now (for toe curl etc.). */
   airborne = 0;
+  /** The last ground query for this foot's landing spot (x, z, the height asked from, the answer). */
+  // (All start as doubles, so the fields never change representation once the gait runs.)
+  gx = NaN;
+  gz = NaN;
+  gFrom = NaN;
+  gy = NaN;
+  gKey = NaN;
 }
+
+/**
+ * Ground under a foot's landing spot, re-queried only when the spot has moved (the terrain is
+ * smooth on this scale): standing still the feet ask nothing, walking a few times a stride.
+ */
+const GROUND_CACHE = 0.15;
 
 const _n = new Vector3();
 const _v = new Vector3();
@@ -94,6 +114,8 @@ export class Gait {
   /** Rest spots of the feet in body space (on the ground plane y = -standHeight). */
   readonly rest: Vector3[];
   private timing: GaitTiming = { offsets: [0, 0, 0, 0], duty: 0.5, cycle: 2 };
+  /** Seconds per cycle at this frame's speed. */
+  private cycleTime = 0.5;
   private initialized = false;
 
   constructor(rest: Vector3[]) {
@@ -110,6 +132,7 @@ export class Gait {
       foot.swinging = false;
       foot.s = 0;
       foot.airborne = 0;
+      foot.gx = NaN;
     }
     this.initialized = true;
   }
@@ -123,6 +146,7 @@ export class Gait {
       foot.pos.copy(foot.plant);
       foot.swinging = false;
       foot.airborne = 0;
+      foot.gx = NaN;
     }
     this.initialized = true;
   }
@@ -130,11 +154,21 @@ export class Gait {
   update(ctx: GaitContext): void {
     if (!this.initialized) this.reset(ctx);
     const sh = ctx.standHeight;
-    const T = gaitTiming(ctx.runBlend, this.timing);
+    // (gaitTiming and footPhase inline: numbers passed into a call the JIT doesn't inline are
+    // boxed on the heap, every foot, every frame.)
+    const T = this.timing;
+    const rb = ctx.runBlend;
+    for (let k = 0; k < 4; k++) T.offsets[k] = WALK.offsets[k] + (RUN.offsets[k] - WALK.offsets[k]) * rb;
+    T.duty = WALK.duty + (RUN.duty - WALK.duty) * rb;
+    T.cycle = WALK.cycle + (RUN.cycle - WALK.cycle) * rb;
     const speed = Math.hypot(ctx.velocity.x, ctx.velocity.z);
-    const speedEff = Math.max(speed, Math.abs(ctx.yawRate) * 0.9 * sh);
-    const cycleLen = T.cycle * sh;
-    const cycleTime = cycleLen / Math.max(0.3, speedEff);
+    const turnEff = Math.abs(ctx.yawRate) * 0.9 * sh;
+    const speedEff = Math.max(speed, turnEff);
+    // Turning on the spot the feet step short and quick round the pivot (TURN_CYCLE), not the
+    // long strides of a straight walk.
+    const turning = speedEff > 1e-6 ? clamp((turnEff - speed) / speedEff, 0, 1) : 0;
+    const cycleLen = lerp(T.cycle, TURN_CYCLE, turning) * sh;
+    this.cycleTime = cycleLen / Math.max(0.3, speedEff);
     if (ctx.moving) this.phase = (this.phase + (speedEff / cycleLen) * ctx.dt) % 1;
 
     let swingingCount = 0;
@@ -143,18 +177,15 @@ export class Gait {
     for (let i = 0; i < FOOT_COUNT; i++) {
       const foot = this.feet[i];
       const fore = isFore(i);
-      // Predicted landing: the rest spot, carried forward by the body's motion and turn.
-      const swingLeft = foot.swinging ? (1 - foot.s) * (foot.stepTime > 0 ? foot.stepTime : (1 - T.duty) * cycleTime) : 0;
-      const ahead = ctx.moving ? swingLeft + 0.5 * T.duty * cycleTime : 0;
-      const turn = clamp(ctx.yawRate * ahead, -0.6, 0.6);
-      const r = this.rest[i];
-      _n.set(r.x * Math.cos(turn) + r.z * Math.sin(turn), r.y, -r.x * Math.sin(turn) + r.z * Math.cos(turn));
-      ctx.toWorld(_n, foot.target);
-      foot.target.addScaledVector(ctx.velocity, Math.min(ahead, 1.2));
-      foot.target.y = ctx.groundAt(foot.target.x, foot.target.z, foot.target.y + sh);
-
+      // First the foot's state this frame (lifting, how far through its swing), then where it is
+      // headed from there: the landing spot is predicted from the swing time actually left, so an
+      // update that takes no time (a render-only frame) changes nothing.
       if (ctx.moving) {
-        const ph = footPhase(this.phase, T.offsets[i], T.duty, _ph);
+        const ph = _ph;
+        let p = (this.phase + T.offsets[i]) % 1;
+        if (p < 0) p += 1;
+        ph.swing = p >= T.duty;
+        ph.t = ph.swing ? (p - T.duty) / (1 - T.duty) : p / T.duty;
         if (ph.swing && !foot.swinging) {
           foot.swinging = true;
           foot.stepTime = 0;
@@ -165,7 +196,9 @@ export class Gait {
           if (ph.swing) foot.s = Math.max(foot.s, ph.t);
           else foot.s = 1;
         }
-      } else if (!foot.swinging) {
+      }
+      this.predict(foot, i, ctx);
+      if (!ctx.moving && !foot.swinging) {
         // Standing: step only if this foot has drifted, one foot at a time.
         _v.subVectors(foot.target, foot.plant);
         _v.y = 0;
@@ -198,5 +231,41 @@ export class Gait {
         foot.airborne = 0;
       }
     }
+  }
+
+  /**
+   * Predicted landing spot for foot i: its rest spot, carried forward by the body's motion and
+   * turn over the swing time it has left plus half a stance (nothing ahead when standing).
+   */
+  private predict(foot: Foot, i: number, ctx: GaitContext): void {
+    const T = this.timing;
+    const cycleTime = this.cycleTime;
+    const swingLeft = foot.swinging ? (1 - foot.s) * (foot.stepTime > 0 ? foot.stepTime : (1 - T.duty) * cycleTime) : 0;
+    const ahead = ctx.moving ? swingLeft + 0.5 * T.duty * cycleTime : 0;
+    const turn = clamp(ctx.yawRate * ahead, -0.6, 0.6);
+    const r = this.rest[i];
+    _n.set(r.x * Math.cos(turn) + r.z * Math.sin(turn), r.y, -r.x * Math.sin(turn) + r.z * Math.cos(turn));
+    ctx.toWorld(_n, foot.target);
+    foot.target.addScaledVector(ctx.velocity, Math.min(ahead, 1.2));
+    // A planted foot of a moving gait doesn't need its next landing's height until it lifts.
+    if (ctx.moving && !foot.swinging && foot.gy === foot.gy) {
+      foot.target.y = foot.gy;
+      return;
+    }
+    const x = foot.target.x;
+    const z = foot.target.z;
+    const from = foot.target.y + ctx.standHeight;
+    const dx = x - foot.gx;
+    const dz = z - foot.gz;
+    // (NaN after a reset fails the test: always ask then.)
+    const key = ctx.groundKey ?? 0;
+    if (!(dx * dx + dz * dz < GROUND_CACHE * GROUND_CACHE && Math.abs(from - foot.gFrom) < 0.5 && key === foot.gKey)) {
+      foot.gy = ctx.groundAt(x, z, from);
+      foot.gx = x;
+      foot.gz = z;
+      foot.gFrom = from;
+      foot.gKey = key;
+    }
+    foot.target.y = foot.gy;
   }
 }

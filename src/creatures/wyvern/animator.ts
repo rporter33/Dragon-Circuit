@@ -36,6 +36,7 @@ import type { Bone } from 'three';
 import { AnimFrame, LEFT, UP } from './anim/frame';
 import { FlightLayer } from './anim/flight';
 import { GroundLayer } from './anim/ground';
+import type { Gait } from './gait';
 import { LifeLayer, type IdleCue } from './anim/life';
 import { TailLayer } from './anim/tail';
 
@@ -147,6 +148,8 @@ export class WyvernAnimator {
     this.spreadVis = o.spreadVis;
     this.prevAirborne = o.prevAirborne;
     this.exertion = o.exertion;
+    // A rebuilt look must not replay the last cue.
+    this.lastCueId = o.lastCueId;
     this.life.copyStateFrom(o.life);
   }
 
@@ -159,11 +162,17 @@ export class WyvernAnimator {
     this.life.cueIdle(event, hold);
   }
 
-  /** Play a one-shot behaviour now (see WyvernCue). Stub until the behaviour layer lands. */
+  /** Play a one-shot behaviour now (see WyvernCue). */
   cue(kind: WyvernCue): void {
     // 'display' shows the wings through the stretch-and-bask for now (C10 gives it its own
-    // display); 'greet' and 'present' are no-ops until C2 and C10.
+    // display); 'present' is a no-op until C10.
     if (kind === 'display') this.life.startBask();
+    else if (kind === 'greet') this.life.startGreet();
+  }
+
+  /** The ground gait (feet, phase, timing): the capture harness labels walk strips with it. */
+  get gait(): Gait {
+    return this.ground.gait;
   }
 
   /** How far the tongue is slid out (m, along the head). */
@@ -206,6 +215,22 @@ export class WyvernAnimator {
     return this.modelP[i];
   }
 
+  /**
+   * Blend weight for setModelBlend (set once, then pose several bones with it): the weight travels
+   * in a field because a double passed into a call the JIT doesn't inline is boxed on the heap.
+   */
+  blend = 0.5;
+
+  /** setModel at this.blend. */
+  setModelBlend(i: number, q: Quaternion): void {
+    const p = this.parent[i];
+    _qi.copy(this.modelQ[p]).invert().multiply(q);
+    const weight = this.blend;
+    if (weight >= 1) this.local[i].copy(_qi);
+    else if (weight > 0) this.local[i].slerp(_qi, weight);
+    this.fk(i);
+  }
+
   /** Set a bone's model-space rotation (local derived from the parent), with FK. */
   setModel(i: number, q: Quaternion, weight = 1): void {
     const p = this.parent[i];
@@ -241,12 +266,14 @@ export class WyvernAnimator {
 
   update(dtIn: number, pose: WyvernPose, uniforms?: WyvernUniforms): void {
     const f = this.frame;
-    this.signals(dtIn, pose);
-    const I = this.rig.idx;
+    // (Before signals() marks the animator initialized: a new animator, e.g. after a breed change,
+    // takes the pose's current cue as already played.)
     if (pose.cue && pose.cue.id !== this.lastCueId) {
       this.lastCueId = pose.cue.id;
-      this.cue(pose.cue.kind);
+      if (this.initialized) this.cue(pose.cue.kind);
     }
+    this.signals(dtIn, pose);
+    const I = this.rig.idx;
 
     if (f.touchdown) this.ground.touchdown();
     this.landT += f.dt;
@@ -284,7 +311,7 @@ export class WyvernAnimator {
     e[5] = lean;
     e[6] = f.chestAir;
     e[7] = spineYaw * 0.5;
-    e[8] = lean * 0.5;
+    e[8] = lean * 0.5 + f.turnLean;
     // The stretch lifts the tail root level with the back.
     e[9] = f.pelvisAir + stretch * 0.05;
     e[10] = -spineYaw * 0.55;

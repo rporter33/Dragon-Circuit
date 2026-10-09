@@ -2,6 +2,7 @@
 // respawns. Flight itself is tuned in flight/FlightModel.ts and flight/breeds.ts.
 
 import { DEG } from '../core/math';
+import type { BreedId } from '../core/types';
 
 export const PLAYER_TUNING = {
   // --- Landing -------------------------------------------------------------------------------
@@ -32,6 +33,19 @@ export const PLAYER_TUNING = {
   /** Ground acceleration / braking (m/s²). */
   wyvernAccel: 6,
   wyvernBrake: 8,
+  /**
+   * Ground turning: the most each breed turns (rad/s; a big animal comes round at 45–90°/s, the
+   * heaviest slowest), and how quickly a turn winds up and settles (rad/s²).
+   */
+  groundTurnRate: { skimmer: 1.6, harrier: 1.2, galewing: 1.0, ironback: 0.8 } as Readonly<Record<BreedId, number>>,
+  groundYawAccel: 3,
+  /**
+   * Turning on the spot it pivots on its haunches: about a point this × standHeight behind the
+   * body center (the hind feet, GAIT.hind), so the hind feet step in place and the wrists walk
+   * round. Fully below `turnPivotSpeed` m/s, fading out by twice that.
+   */
+  turnPivot: 0.2,
+  turnPivotSpeed: 1,
   /** Below this fraction of groundSpeed the gait is a walk. */
   walkFraction: 0.55,
   /** Keyboard keys are all or nothing: W walks at this fraction of groundSpeed, Shift gallops. */
@@ -105,11 +119,36 @@ export const PLAYER_TUNING = {
   mountReach: 6.5,
   mountTime: 0.7,
   dismountTime: 0.6,
-  /** The wyvern follows a rider who wanders further than this, stopping this close. */
+  /** The wyvern follows a rider who wanders further than this, stopping with its chest this close. */
   followDistance: 30,
   followStop: 8,
-  /** A called wyvern comes closer than that: right up to its rider, facing them. */
-  calledStop: 3.5,
+  /**
+   * A called wyvern walks up alongside its rider and stops with them beside its shoulder, on its
+   * near (left) side, ready to mount — never standing over them, never with them between its
+   * wrists. The rider ends `greetSide` m out from the line of its wrists (which stand
+   * `greetWrist` × standHeight either side of its midline), level with a point `greetAlong` ×
+   * standHeight ahead of its body center (the shoulder).
+   */
+  greetSide: 1.2,
+  greetWrist: 0.42,
+  greetAlong: 0.4,
+  /** The chest point, this × standHeight ahead of the body center: stops are measured from it. */
+  chestAhead: 0.6,
+  /** A called wyvern's chest stops at least this far from its rider (m). */
+  calledStop: 2.2,
+  /** Walking, the wyvern's chest never comes nearer its rider than this (m). */
+  riderKeepOut: 1.5,
+  /**
+   * The approach, called or following: a big animal walks (this fraction of its groundSpeed) to a
+   * rider nearer than `approachRunFrom` m and only runs from further, easing down to the walk as it
+   * comes in; it slows ahead of its stop at `approachDecel` m/s² and covers the last
+   * `approachSlowFrom` m at `approachSlowSpeed` m/s.
+   */
+  approachWalk: 0.35,
+  approachRunFrom: 25,
+  approachDecel: 3,
+  approachSlowFrom: 4,
+  approachSlowSpeed: 1.5,
   /** Opening the Stable, a wyvern further than this from its rider comes to a stall beside it. */
   stableSettleRange: 15,
   /** Seconds a wave (calling the wyvern) lasts. */

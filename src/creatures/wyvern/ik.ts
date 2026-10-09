@@ -100,12 +100,28 @@ function basis(dir: Vector3, ref: Vector3, out: Float64Array): void {
   out[8] = ax * by - ay * bx;
 }
 
+const _lens = new Float64Array(2);
+
 /**
  * Two-bone IK: from `root` with segment lengths l1, l2 toward `target`, bending toward `pole`
  * (a direction). Writes the middle joint position. Returns how far the target is beyond reach
  * (0 when reachable).
  */
 export function solveTwoBone(root: Vector3, l1: number, l2: number, target: Vector3, pole: Vector3, outMid: Vector3): number {
+  _lens[0] = l1;
+  _lens[1] = l2;
+  solveTwoBoneAt(root, _lens, 0, target, pole, outMid);
+  return Math.max(0, root.distanceTo(target) - (l1 + l2) * 0.9995);
+}
+
+/**
+ * solveTwoBone with the bone lengths read from `lens` at `at`, `at + 1` and no result: the hot
+ * paths call this one (doubles passed into or returned from a call the JIT doesn't inline are
+ * boxed on the heap).
+ */
+export function solveTwoBoneAt(root: Vector3, lens: Float64Array, at: number, target: Vector3, pole: Vector3, outMid: Vector3): void {
+  const l1 = lens[at];
+  const l2 = lens[at + 1];
   let dx = target.x - root.x;
   let dy = target.y - root.y;
   let dz = target.z - root.z;
@@ -142,7 +158,6 @@ export function solveTwoBone(root: Vector3, l1: number, l2: number, target: Vect
   outMid.x = root.x + dx * a + (ex / el) * h;
   outMid.y = root.y + dy * a + (ey / el) * h;
   outMid.z = root.z + dz * a + (ez / el) * h;
-  return Math.max(0, dist - maxReach);
 }
 
 /** Rotate `v` about unit `axis` by `angle` (Rodrigues), in place. */

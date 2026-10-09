@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
+import type { BreedId, GroundHit, WyvernPose } from '../../core/types';
 import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { createWyvernPose } from '../../player/poses';
 import { mulberry32 } from '../../core/rng';
@@ -83,6 +84,211 @@ describe('animator robustness', { timeout: 60000 }, () => {
   });
 });
 
+/** Tail segment directions (body frame) after the last update, root → tip, plus the pelvis's rest direction for segment 0. */
+function tailDirs(w: Wyvern): { dirs: Vector3[]; base: Vector3 } {
+  const a = (w as unknown as { animator: { modelQ: Quaternion[]; parent: number[] } }).animator;
+  const rig = w.rigDef;
+  const T = rig.idx.tail;
+  const dirs = T.map((b, i) => {
+    const q = i + 1 < T.length ? rig.bones[T[i + 1]].pos : rig.tailTip;
+    return q.clone().sub(rig.bones[b].pos).normalize().applyQuaternion(a.modelQ[b]);
+  });
+  const base = rig.bones[T[1]].pos.clone().sub(rig.bones[T[0]].pos).normalize().applyQuaternion(a.modelQ[a.parent[T[0]]]);
+  return { dirs, base };
+}
+
+const angleDeg = (a: Vector3, b: Vector3) => (Math.acos(Math.min(1, a.dot(b))) * 180) / Math.PI;
+
+/**
+ * Two seconds (after a settle) of a ground walk or run, a flapping climb, or a flared landing, at
+ * 60 fps with a render-only (dt 0) frame after every second update, as the capture harness and a
+ * paused game do. Reports the largest bend between tail segments (joints past the root), the root
+ * joint's, and the tip's pitch excursion over the last wingbeat.
+ */
+function tailRun(breed: BreedId, kind: 'walk' | 'run' | 'flap' | 'landing') {
+  const B = BREEDS[breed];
+  const sh = B.standHeight;
+  const w = new Wyvern(look(breed));
+  const pose: WyvernPose = kind === 'flap' ? gliding() : standing(breed);
+  if (kind === 'flap') pose.flapStrength = 1;
+  let maxJoint = 0;
+  let maxRoot = 0;
+  const tip: number[] = [];
+  const frames = kind === 'landing' ? 90 + 150 : 60 + 120;
+  for (let i = 0; i < frames; i++) {
+    if (kind === 'walk' || kind === 'run') {
+      const v = kind === 'walk' ? 0.4 * B.groundSpeed : B.groundSpeed;
+      pose.gait = kind;
+      pose.groundSpeed = v;
+      pose.velocity.set(0, 0, v);
+      pose.position.z += v / 60;
+      pose.lookTarget.z += v / 60;
+    } else if (kind === 'flap') {
+      pose.flapPhase = ((i / 60) * B.flapRate) % 1;
+      pose.position.z += 24 / 60;
+      pose.lookTarget.z += 24 / 60;
+    } else if (i < 90) {
+      // Flaring in, sinking at 6 m/s, then down hard.
+      pose.airborne = true;
+      pose.wingSpread = 1;
+      pose.flare = 1;
+      pose.flapStrength = 0.5;
+      pose.flapPhase = ((i / 60) * B.flapRate) % 1;
+      pose.velocity.set(0, -6, 6);
+      pose.position.y = 10 + sh + (90 - i) * 0.05;
+    } else {
+      pose.airborne = false;
+      pose.wingSpread = 0.22;
+      pose.flare = 0;
+      pose.flapStrength = 0;
+      pose.velocity.set(0, 0, 0);
+      pose.position.y = 10 + sh;
+      pose.gait = i < 130 ? 'landing' : 'idle';
+    }
+    w.update(1 / 60, pose);
+    if (i % 2 === 1) w.update(0, pose);
+    if (kind !== 'landing' && i < 60) continue;
+    const { dirs, base } = tailDirs(w);
+    for (let j = 1; j < dirs.length; j++) maxJoint = Math.max(maxJoint, angleDeg(dirs[j], dirs[j - 1]));
+    maxRoot = Math.max(maxRoot, angleDeg(dirs[0], base));
+    const d = dirs[dirs.length - 1];
+    tip.push((Math.atan2(d.y, -d.z) * 180) / Math.PI);
+  }
+  w.dispose();
+  const beat = tip.slice(-Math.round(60 / B.flapRate));
+  return { maxJoint, maxRoot, tipExcursion: (Math.max(...beat) - Math.min(...beat)) / 2 };
+}
+
+describe('the tail: a heavy reptile counterweight (C1)', { timeout: 120000 }, () => {
+  it('never kinks: every joint stays inside its cone in the walk, run, flapping and landing, for every breed', () => {
+    for (const breed of BREED_ORDER) {
+      // 20° on the light skimmer's whippy tail, 15° on the others.
+      const limit = breed === 'skimmer' ? 20 : 15;
+      for (const kind of ['walk', 'run', 'flap', 'landing'] as const) {
+        const r = tailRun(breed, kind);
+        expect(r.maxJoint, `${breed} ${kind}`).toBeLessThan(limit + 0.01);
+        // The root joint follows the authored curve (down to −14° in the flare) within its cone.
+        expect(r.maxRoot, `${breed} ${kind} root`).toBeLessThan(24);
+      }
+    }
+  });
+
+  it('sends a gentle wave down the tail on each wingbeat, not a flick at the tip', () => {
+    for (const breed of BREED_ORDER) {
+      const r = tailRun(breed, 'flap');
+      expect(r.tipExcursion, breed).toBeLessThan(breed === 'ironback' ? 15 : 20);
+    }
+  });
+
+  it('hangs in an S air brake while flaring: dropped at the root, curling back up toward the tip', () => {
+    for (const breed of BREED_ORDER) {
+      const w = new Wyvern(look(breed));
+      const pose = gliding();
+      pose.airspeed = 12;
+      pose.velocity.set(0, -1, 12);
+      pose.flare = 1;
+      pose.flapStrength = 0.6;
+      for (let i = 0; i < 180; i++) {
+        pose.flapPhase = ((i / 60) * BREEDS[breed].flapRate) % 1;
+        pose.position.addScaledVector(pose.velocity, 1 / 60);
+        w.update(1 / 60, pose);
+      }
+      const { dirs, base } = tailDirs(w);
+      const pitch = (v: Vector3) => Math.atan2(v.y, Math.hypot(v.x, v.z));
+      // The root bends down from the pelvis...
+      expect(pitch(dirs[0]) - pitch(base), breed).toBeLessThan(-0.12);
+      // ...and the distal half curls back up.
+      expect(pitch(dirs[dirs.length - 1]) - pitch(dirs[4]), breed).toBeGreaterThan(0.12);
+      w.dispose();
+    }
+  });
+
+  it('settles at rest: the tail sinks to the ground in a sideways S, and holds still', () => {
+    for (const breed of ['harrier', 'ironback'] as const) {
+      const sh = BREEDS[breed].standHeight;
+      const w = new Wyvern(look(breed));
+      const pose = standing(breed);
+      for (let i = 0; i < 60 * 8; i++) w.update(1 / 60, pose);
+      const pts = Array.from({ length: 10 }, (_, k) => boneWorld(w, `tail${k}`));
+      // Low at the tip (lying out along the ground)...
+      expect(pts[9].y - 10, breed).toBeLessThan(0.35 * sh);
+      // ...curved to one side and back (the lateral offset's slope changes sign: an S, not a C).
+      const slopes = pts.slice(1).map((p, k) => (p.x - pts[k].x) / Math.max(1e-6, pts[k].z - p.z));
+      expect(Math.max(...slopes) * Math.min(...slopes), breed).toBeLessThan(0);
+      // Still: over the next two seconds the tip moves less than 5 cm.
+      const tip0 = pts[9].clone();
+      let drift = 0;
+      for (let i = 0; i < 120; i++) {
+        w.update(1 / 60, pose);
+        drift = Math.max(drift, boneWorld(w, 'tail9').distanceTo(tip0));
+      }
+      expect(drift, breed).toBeLessThan(0.05);
+      w.dispose();
+    }
+  });
+
+  it('ignores render-only frames: a dt 0 update changes nothing', () => {
+    const a = new Wyvern(look('harrier'));
+    const b = new Wyvern(look('harrier'));
+    const pa = standing('harrier');
+    const pb = standing('harrier');
+    for (let i = 0; i < 120; i++) {
+      for (const p of [pa, pb]) {
+        p.gait = 'run';
+        p.groundSpeed = 9;
+        p.velocity.set(0, 0, 9);
+        p.position.z += 9 / 60;
+        p.lookTarget.z += 9 / 60;
+      }
+      a.update(1 / 60, pa);
+      b.update(1 / 60, pb);
+      b.update(0, pb);
+    }
+    const ba = a.skinnedMesh!.skeleton.bones;
+    const bb = b.skinnedMesh!.skeleton.bones;
+    // (Component differences: an angle from acos near 1 turns 1e-13 of rounding into 1e-6 rad.)
+    for (let i = 0; i < ba.length; i++) {
+      const qa = ba[i].quaternion;
+      const qb = bb[i].quaternion;
+      const d = Math.max(Math.abs(qa.x - qb.x), Math.abs(qa.y - qb.y), Math.abs(qa.z - qb.z), Math.abs(qa.w - qb.w));
+      expect(d, ba[i].name).toBeLessThan(1e-9);
+    }
+    a.dispose();
+    b.dispose();
+  });
+});
+
+describe('budget (animator cost)', () => {
+  it('queries the terrain only when a landing spot moves: none standing, a few a stride walking', () => {
+    let calls = 0;
+    const terrain = {
+      groundAt: (x: number, _z: number, _y: number, out?: GroundHit) => {
+        calls++;
+        const h = out ?? { y: 0, normal: new Vector3(0, 1, 0), islandId: 1, surface: 'grass' as const };
+        h.y = 10 + 0.02 * Math.sin(x);
+        return h;
+      },
+    };
+    const w = new Wyvern(look('harrier'), { terrain });
+    const pose = standing('harrier');
+    for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
+    calls = 0;
+    for (let i = 0; i < 300; i++) w.update(1 / 60, pose);
+    expect(calls).toBe(0);
+    pose.gait = 'walk';
+    pose.groundSpeed = 3;
+    pose.velocity.set(0, 0, 3);
+    calls = 0;
+    for (let i = 0; i < 300; i++) {
+      pose.position.z += 3 / 60;
+      w.update(1 / 60, pose);
+    }
+    // (It was four per update: every foot, every frame.)
+    expect(calls / 300).toBeLessThan(0.25);
+    w.dispose();
+  });
+});
+
 describe('pure helpers', () => {
   it('two-bone IK preserves segment lengths and bends toward the pole', () => {
     const root = new Vector3(0, 0, 0);
@@ -148,16 +354,19 @@ describe('pure helpers', () => {
 });
 
 describe('weight and life (client direction: a big, heavy dragon)', { timeout: 60000 }, () => {
-  it('holds the head steadier than the body, trailing the shoulders it hangs from (neck lag)', () => {
-    // The harrier at its retuned 1.45 Hz beat. (All four breeds are the dragon fidelity pass's job:
-    // the galewing's 0.95 Hz beat still lifts the head with the chest.)
-    const h = beat('harrier');
-    expect(h.headRange).toBeLessThan(h.saddleRange * 0.8);
-    expect(h.headRange).toBeLessThan(h.shoulderRange * 0.8);
-    // The head's high point comes after the shoulders' (modulo the cycle).
-    const lag = (h.headPeak - h.shoulderPeak + 1) % 1;
-    expect(lag).toBeGreaterThan(0.01);
-    expect(lag).toBeLessThan(0.3);
+  it('holds the head steadier than the body, trailing the shoulders it hangs from (neck lag), on every breed and beat rate', () => {
+    // The head-height hold (C12) holds it on the slow galewing and ironback beats as well as the
+    // quick ones (before it, the galewing's 0.95 Hz beat lifted the head with the chest: 1.05× the
+    // saddle's travel).
+    for (const breed of BREED_ORDER) {
+      const h = beat(breed);
+      expect(h.headRange, breed).toBeLessThan(h.saddleRange * 0.55);
+      expect(h.headRange, breed).toBeLessThan(h.shoulderRange * 0.55);
+      // The head's high point comes after the shoulders' (modulo the cycle).
+      const lag = (h.headPeak - h.shoulderPeak + 1) % 1;
+      expect(lag, breed).toBeGreaterThan(0.01);
+      expect(lag, breed).toBeLessThan(0.3);
+    }
   });
 
   it('folds the wings back along the flank on the ground: tips up off the ground, behind the shoulder (VIS-17)', () => {
@@ -361,6 +570,44 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
     };
     // Looking left (+x), the tail swings right (-x), and the other way round.
     expect(tailX(30)).toBeLessThan(tailX(-30) - 0.5);
+  });
+
+  it('greets its rider on a called arrival: the head comes down and round to them, a nictitating sweep, a tongue burst (C2)', () => {
+    for (const breed of BREED_ORDER) {
+      const sh = BREEDS[breed].standHeight;
+      const w = new Wyvern(look(breed));
+      const pose = standing(breed);
+      // The rider beside its near (left) shoulder, where a called wyvern stops (player/companion.ts).
+      const riderHead = new Vector3(0.42 * sh + 1.2, 10 + 1.6, 0.4 * sh);
+      pose.lookTarget.copy(riderHead);
+      w.cueIdle(null, 1e4);
+      for (let i = 0; i < 180; i++) w.update(1 / 60, pose);
+      const y0 = w.getHead(_p).y;
+      const d0 = _p.distanceTo(riderHead);
+      pose.cue = { kind: 'greet', id: 1 };
+      let nict = 0;
+      let tongue = 0;
+      for (let i = 0; i < 90; i++) {
+        w.update(1 / 60, pose);
+        nict = Math.max(nict, w.uniforms.uNictitate.value);
+        tongue = Math.max(tongue, (w as unknown as { animator: { tongueExt: number } }).animator.tongueExt);
+      }
+      // Within 1.5 s the head is well down and in toward the rider, the mouth still clear of them.
+      const mouth = w.getHead(_p);
+      expect(y0 - mouth.y).toBeGreaterThan(0.25 * sh);
+      expect(d0 - mouth.distanceTo(riderHead)).toBeGreaterThan(0.25 * sh);
+      expect(mouth.distanceTo(riderHead)).toBeGreaterThan(0.8);
+      // ...facing them (the head's forward within 60° of the way to their face).
+      const head = w.skinnedMesh!.skeleton.bones.find((b) => b.name === 'head')!;
+      const fwd = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+      expect(fwd.dot(riderHead.clone().sub(mouth).normalize())).toBeGreaterThan(Math.cos((60 * Math.PI) / 180));
+      expect(nict).toBeGreaterThan(0.9);
+      expect(tongue).toBeGreaterThan(0);
+      // A cue plays once: the same id again does nothing; and the head comes back up afterwards.
+      for (let i = 0; i < 180; i++) w.update(1 / 60, pose);
+      expect(w.getHead(_p).y).toBeGreaterThan(y0 - 0.15);
+      w.dispose();
+    }
   });
 
   it('builds up exertion on a long climb and pants it off at rest', () => {
