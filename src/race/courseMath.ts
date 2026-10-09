@@ -3,7 +3,7 @@
 // Medal times come from a speed model, not from guesswork. Each tier is an average airspeed
 // over the course line (gold 34 m/s, silver 29, bronze 24 — cruise is 22–27 m/s), adjusted for
 // the height the line asks for. Holding a tier's pace costs height: sink at that speed minus
-// what sustainable flapping (about half the time, stamina-limited) gives back — measured with
+// what sustainable flapping (about 60% of the time, stamina-limited) gives back — measured with
 // src/flight/telemetry.ts: the harrier sinks 4.8 m/s at 34 m/s and holds ~29 m/s level on
 // flaps alone. Descents bank height (as speed) that later climbs and the pace can spend; what
 // the line can't pay for is climbed at the tier's rate (flapping, or thermals on legs that
@@ -41,8 +41,9 @@ export interface PaceModel {
 export const MEDAL_PACE = { gold: 34, silver: 29, bronze: 24 } as const;
 
 /**
- * Harrier sink rate at each airspeed (m/s, measured: telemetry glide polar) minus the ~3.5 m/s
- * that flapping half the time (the stamina-sustainable duty) gives back.
+ * Harrier sink rate at each airspeed (m/s, measured: telemetry glide polar) minus the ~4.2 m/s
+ * that flapping about 60% of the time (the stamina-sustainable duty: a 13.5 s pool refilling at
+ * 12%/s) gives back.
  */
 const POLAR: [number, number][] = [
   [20, 2.45],
@@ -52,7 +53,7 @@ const POLAR: [number, number][] = [
   [34, 4.8],
   [40, 7.07],
 ];
-const FLAP_GAIN = 3.5;
+const FLAP_GAIN = 4.2;
 
 export function netSink(v: number): number {
   if (v <= POLAR[0][0]) return POLAR[0][1] - FLAP_GAIN;
@@ -64,9 +65,12 @@ export function netSink(v: number): number {
   return POLAR[POLAR.length - 1][1] - FLAP_GAIN;
 }
 
-/** Climb rates for a skilled rider: flapping alone, and circling in a thermal (m/s). */
+/**
+ * Climb rates for a skilled rider: flapping alone, and circling in a thermal (m/s). The thermals'
+ * cores are wider than any wyvern's circling turn: a harrier climbs 4–8 m/s in them (telemetry).
+ */
 const CLIMB_RATE = 2.6;
-const THERMAL_RATE = 4.5;
+const THERMAL_RATE = 5.5;
 
 /** Height-equivalent of the speed carried through the gate (m) and the most that can be banked. */
 const ENERGY_START = 20;

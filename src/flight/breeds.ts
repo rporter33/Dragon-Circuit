@@ -66,7 +66,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     stallAngle: 18 * DEG,
     cd0: 0.036,
     inducedK: inducedK(11.2, 30),
-    flapThrust: 10700,
+    flapThrust: 12000,
     flapLift: 4800,
     flapRate: 2.1,
     staminaSeconds: 10,
