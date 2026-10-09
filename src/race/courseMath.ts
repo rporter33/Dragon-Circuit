@@ -4,8 +4,8 @@
 // over the course line (gold 34 m/s, silver 29, bronze 24 — cruise is 22–27 m/s), adjusted for
 // the height the line asks for. Holding a tier's pace costs height: sink at that speed minus
 // what sustainable flapping (about 60% of the time, stamina-limited) gives back — measured with
-// src/flight/telemetry.ts: the harrier sinks 4.8 m/s at 34 m/s and holds ~29 m/s level on
-// flaps alone. Descents bank height (as speed) that later climbs and the pace can spend; what
+// src/flight/telemetry.ts: the harrier (15.5 m span) sinks 4.9 m/s at 34 m/s, and flapping
+// gives back 4.65 m/s, so it holds about 33 m/s level on flaps alone. Descents bank height (as speed) that later climbs and the pace can spend; what
 // the line can't pay for is climbed at the tier's rate (flapping, or thermals on legs that
 // climb in one). The course tests then fly every course with the autopilot and the real
 // flight model to prove the times are achievable.
@@ -41,19 +41,22 @@ export interface PaceModel {
 export const MEDAL_PACE = { gold: 34, silver: 29, bronze: 24 } as const;
 
 /**
- * Harrier sink rate at each airspeed (m/s, measured: telemetry glide polar) minus the ~4.2 m/s
- * that flapping about 60% of the time (the stamina-sustainable duty: a 13.5 s pool refilling at
- * 12%/s) gives back.
+ * Harrier sink rate at each airspeed (m/s, measured: telemetry glide polar) minus the ~4.65 m/s
+ * that flapping about 60% of the time (the stamina-sustainable duty) gives back. Re-measured for
+ * the bigger wings (B8: 15.5 m, 41.5 m²): against the 13 m wing it sinks 15% less at 20 m/s, the
+ * same at 30 and 2% more at 34–40 (more membrane, more profile drag), and a full beat gives back
+ * 11% more at race pace. The bigger stamina pool (13.5 → 16.5 s) is not credited: a racer still
+ * flaps in bursts between rests, and the autopilot's times moved only 0.3–1.6% with it.
  */
 const POLAR: [number, number][] = [
-  [20, 2.45],
-  [22, 2.55],
-  [26, 3.0],
-  [30, 3.76],
-  [34, 4.8],
-  [40, 7.07],
+  [20, 2.1],
+  [22, 2.27],
+  [26, 2.85],
+  [30, 3.73],
+  [34, 4.88],
+  [40, 7.2],
 ];
-const FLAP_GAIN = 4.2;
+const FLAP_GAIN = 4.65;
 
 export function netSink(v: number): number {
   if (v <= POLAR[0][0]) return POLAR[0][1] - FLAP_GAIN;
@@ -67,10 +70,12 @@ export function netSink(v: number): number {
 
 /**
  * Climb rates for a skilled rider: flapping alone, and circling in a thermal (m/s). The thermals'
- * cores are wider than any wyvern's circling turn: a harrier climbs 4–8 m/s in them (telemetry).
+ * cores are wider than any wyvern's circling turn: a harrier climbs 4.5–9 m/s in them
+ * (telemetry). The bigger wings (B8) climb 25% faster on the flaps (sustained 6.3 m/s against
+ * 5.0) and sink 0.5 m/s less circling (2.35 against 2.9 m/s at 35° of bank).
  */
-const CLIMB_RATE = 2.6;
-const THERMAL_RATE = 5.5;
+const CLIMB_RATE = 3.2;
+const THERMAL_RATE = 6.0;
 
 /** Height-equivalent of the speed carried through the gate (m) and the most that can be banked. */
 const ENERGY_START = 20;

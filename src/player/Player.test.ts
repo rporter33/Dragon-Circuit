@@ -596,7 +596,8 @@ describe('respawn', () => {
     let maxFade = 0;
     let respawnAt = -1;
     r.events.on('respawn', () => (respawnAt = r.t));
-    r.run(3, () => {
+    // (Long enough to sink the 5 m into the cloud, fade out, hold and fade in: B8's bigger wings sink slower.)
+    r.run(4, () => {
       maxFade = Math.max(maxFade, r.player.fade);
     });
     expect(maxFade).toBeCloseTo(1, 2);
