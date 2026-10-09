@@ -20,6 +20,15 @@ import { PLAYER_TUNING } from '../../player/tuning';
 
 const P = PLAYER_TUNING;
 const SIDES = [1, -1] as const;
+/** Bone chains for the IK pass (module tables: no per-frame arrays). */
+const LEG_BONES = [
+  [B.thighL, B.shinL, B.footL, B.toeL],
+  [B.thighR, B.shinR, B.footR, B.toeR],
+] as const;
+const ARM_BONES = [
+  [B.clavL, B.upperArmL, B.foreArmL, B.handL, B.fingersL, B.fingers2L, B.thumbL],
+  [B.clavR, B.upperArmR, B.foreArmR, B.handR, B.fingersR, B.fingers2R, B.thumbR],
+] as const;
 
 /** Anchor-space vs chest-space targets for the hands. */
 const enum Space {
@@ -68,6 +77,29 @@ export function flankHalfWidth(f: SaddleFlank, y: number): number {
   const t = Math.abs(y - f.cy) / f.ry;
   if (t >= 1) return y > f.cy ? 0 : f.rx;
   return f.rx * Math.pow(1 - Math.pow(t, f.sq), 1 / f.sq);
+}
+
+/**
+ * The lowest angle in [a0, a0 + maxLift] (radians, in the side plane: x out, y up) at which a
+ * limb of length r from (px, py) ends outside the barrel by `clear`; bisection, since the
+ * barrel's width changes with height. Returns a0 when it already clears.
+ */
+function lowestClearing(f: SaddleFlank, px: number, py: number, r: number, a0: number, maxLift: number, clear: number): number {
+  if (outside(f, px, py, r, a0) >= clear) return a0;
+  let lo = a0;
+  let hi = a0 + maxLift;
+  if (outside(f, px, py, r, hi) < clear) return hi;
+  for (let k = 0; k < 7; k++) {
+    const mid = 0.5 * (lo + hi);
+    if (outside(f, px, py, r, mid) >= clear) hi = mid;
+    else lo = mid;
+  }
+  return hi;
+}
+
+/** How far outside the barrel the end of a limb at angle a ends up (m; negative inside). */
+function outside(f: SaddleFlank, px: number, py: number, r: number, a: number): number {
+  return px + r * Math.cos(a) - flankHalfWidth(f, py + r * Math.sin(a));
 }
 
 export interface AnimContext {
@@ -236,7 +268,7 @@ export class RiderAnimator {
     const a = pose.action;
     const t = pose.actionTime;
     const v = pose.velocity;
-    const speed = Math.hypot(v.x, v.z);
+    const speed = Math.sqrt(v.x * v.x + v.z * v.z);
     const d = this.rig.dims;
     const time = this.time;
 
@@ -389,7 +421,9 @@ export class RiderAnimator {
         const ft = L.foot[i];
         // Only feet on the ground pull the hips down; a swinging foot just tucks.
         if (!g.feet[i].planted && g.feet[i].lift > 0.02) continue;
-        const hz = Math.hypot(ft.x - hj.x, ft.z - hj.z);
+        const hzx = ft.x - hj.x;
+        const hzz = ft.z - hj.z;
+        const hz = Math.sqrt(hzx * hzx + hzz * hzz);
         if (hz >= reach) continue;
         const yMax = ft.y + Math.sqrt(reach * reach - hz * hz) - (hj.y - L.hip.y);
         maxY = Math.min(maxY, yMax);
@@ -541,7 +575,7 @@ export class RiderAnimator {
       const hx = Math.abs(H.x);
       const dx = -hx;
       const dyy = cy - H.y;
-      const dist = Math.hypot(dx, dyy);
+      const dist = Math.sqrt(dx * dx + dyy * dyy);
       let kx: number;
       let ky: number;
       if (dist < r1 + r2 && dist > Math.abs(r1 - r2) && hw > 0.05) {
@@ -569,43 +603,35 @@ export class RiderAnimator {
       // out (about the hip, keeping its length) until the knee clears the body.
       const fl = ctx.flank;
       if (fl) {
+        // Raise the thigh just enough (the lowest angle whose knee clears, by bisection), at
+        // most ~48 degrees.
         const clear = 0.05 * d.g;
-        for (let k = 0; k < 14 && kx < flankHalfWidth(fl, ky) + clear; k++) {
-          const ax = kx - hx;
-          const ay = ky - H.y;
-          const c = Math.cos(0.06);
-          const sn = Math.sin(0.06);
-          // Rotate (ax, ay) outward-up (counter-clockwise in the x-out / y-up plane).
-          kx = hx + ax * c - ay * sn;
-          ky = H.y + ax * sn + ay * c;
-        }
+        const ax = kx - hx;
+        const ay = ky - H.y;
+        const r = Math.sqrt(ax * ax + ay * ay);
+        const a = lowestClearing(fl, hx, H.y, r, Math.atan2(ay, ax), 0.84, clear);
+        kx = hx + r * Math.cos(a);
+        ky = H.y + r * Math.sin(a);
       }
       const knee = _v2.set(side * kx, ky, kz);
       // Shin along the flank: tangent of the body curve, blended toward straight down.
       let tx = ky - cy;
       let ty = -kx;
-      const tl = Math.hypot(tx, ty) || 1;
+      const tl = Math.sqrt(tx * tx + ty * ty) || 1;
       tx /= tl;
       ty /= tl;
       let sxo = tx * 0.65;
       let syo = ty * 0.65 - 0.35;
       const szo = -0.62 - 0.5 * crouch + 0.62 * brace;
       if (fl) {
-        // Wrap the shin around the barrel: turn it outward (in the side plane) until the ankle
-        // clears the ribs, so the lower legs hug the flank instead of sinking into it.
+        // Wrap the shin around the barrel: turn it outward (in the side plane) just enough that
+        // the ankle clears the ribs, so the lower legs hug the flank instead of sinking into it.
         const clear = 0.07 * d.g;
-        const len = this.lens.shin * 0.99;
-        for (let k = 0; k < 16; k++) {
-          const n = Math.hypot(sxo, syo, szo) || 1;
-          const fx = kx + (sxo / n) * len;
-          const fy = ky + (syo / n) * len;
-          if (fx >= flankHalfWidth(fl, fy) + clear) break;
-          const c = Math.cos(0.07);
-          const sn = Math.sin(0.07);
-          const nx = sxo * c - syo * sn;
-          syo = sxo * sn + syo * c;
-          sxo = nx;
-        }
+        const rho = Math.sqrt(sxo * sxo + syo * syo);
+        const R = (this.lens.shin * 0.99 * rho) / (Math.sqrt(rho * rho + szo * szo) || 1);
+        const a = lowestClearing(fl, kx, ky, R, Math.atan2(syo, sxo), 1.12, clear);
+        sxo = rho * Math.cos(a);
+        syo = rho * Math.sin(a);
       }
       const shinDir = _v3.set(side * sxo, syo, szo).normalize();
       L.foot[i].copy(knee).addScaledVector(shinDir, this.lens.shin * 0.99);
@@ -639,15 +665,14 @@ export class RiderAnimator {
     const F = this.LF;
     const M = this.LM;
     const w = wM <= 0.001 ? 0 : wM >= 0.999 ? 1 : wM;
-    const mix = (out: Vector3, a: Vector3, b: Vector3) => out.lerpVectors(a, b, w);
-    mix(U.hip, F.hip, M.hip);
-    mix(U.hipRot, F.hipRot, M.hipRot);
-    mix(U.spine, F.spine, M.spine);
-    mix(U.chest, F.chest, M.chest);
-    mix(U.neck, F.neck, M.neck);
-    mix(U.head, F.head, M.head);
-    mix(U.clav[0], F.clav[0], M.clav[0]);
-    mix(U.clav[1], F.clav[1], M.clav[1]);
+    U.hip.lerpVectors(F.hip, M.hip, w);
+    U.hipRot.lerpVectors(F.hipRot, M.hipRot, w);
+    U.spine.lerpVectors(F.spine, M.spine, w);
+    U.chest.lerpVectors(F.chest, M.chest, w);
+    U.neck.lerpVectors(F.neck, M.neck, w);
+    U.head.lerpVectors(F.head, M.head, w);
+    U.clav[0].lerpVectors(F.clav[0], M.clav[0], w);
+    U.clav[1].lerpVectors(F.clav[1], M.clav[1], w);
 
     const bones = this.bones;
     const hips = bones[B.hips];
@@ -663,12 +688,12 @@ export class RiderAnimator {
     hips.updateMatrixWorld(true);
 
     // Legs.
-    const legs = [
-      [B.thighL, B.shinL, B.footL, B.toeL],
-      [B.thighR, B.shinR, B.footR, B.toeR],
-    ] as const;
     for (let i = 0; i < 2; i++) {
-      const [th, sh, ft, to] = legs[i];
+      const leg = LEG_BONES[i];
+      const th = leg[0];
+      const sh = leg[1];
+      const ft = leg[2];
+      const to = leg[3];
       const target = _v.lerpVectors(F.foot[i], M.foot[i], w).applyMatrix4(ctx.anchor);
       const pole = _v2.lerpVectors(F.knee[i], M.knee[i], w).transformDirection(ctx.anchor);
       const root = _v3.setFromMatrixPosition(bones[th].matrixWorld);
@@ -686,13 +711,16 @@ export class RiderAnimator {
 
     // Arms: convert both layers' targets to world, blend, solve.
     const chestW = bones[B.chest].matrixWorld;
-    const arms = [
-      [B.clavL, B.upperArmL, B.foreArmL, B.handL, B.fingersL, B.fingers2L, B.thumbL],
-      [B.clavR, B.upperArmR, B.foreArmR, B.handR, B.fingersR, B.fingers2R, B.thumbR],
-    ] as const;
     for (let i = 0; i < 2; i++) {
       const side = SIDES[i];
-      const [cl, up, fo, ha, f1, f2, thb] = arms[i];
+      const arm = ARM_BONES[i];
+      const cl = arm[0];
+      const up = arm[1];
+      const fo = arm[2];
+      const ha = arm[3];
+      const f1 = arm[4];
+      const f2 = arm[5];
+      const thb = arm[6];
       const tF = this.layerHandWorld(F, i, chestW, ctx.anchor, _v);
       const tM = this.layerHandWorld(M, i, chestW, ctx.anchor, _v2);
       const target = tF.lerp(tM, w);

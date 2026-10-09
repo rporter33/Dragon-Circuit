@@ -95,6 +95,15 @@ const NECK_FLARE = [-5, -4, -3, -1, 1, 3];
 /** The stretch: neck reaching out and up, the S-curve straightened. */
 const NECK_STRETCH = [-16, -8, -3, 0, 1, 3];
 const NECK_YAW_SHARE = [0.08, 0.12, 0.14, 0.15, 0.14, 0.12];
+/**
+ * Leg bone directions (pelvis space, left leg) for the flight poses, one row of 12 per bone
+ * (thigh, shin, metatarsus): tucked, dangling, reaching for the ground, pushing off (xyz each).
+ */
+const LEG_POSES = new Float64Array([
+  0.06, -0.5, -0.86, 0.1, -0.86, 0.48, 0.14, -0.62, 0.78, 0.05, -0.92, -0.38,
+  0.0, 0.25, -0.97, 0.02, -0.82, -0.56, 0.03, -0.97, 0.24, 0.0, -0.94, -0.33,
+  0.0, -0.18, -0.98, 0.0, -0.9, 0.22, 0.0, -0.94, 0.32, 0.0, -0.8, -0.6,
+]);
 /** How the neck bends when the body moves faster than the head can follow (base → top). */
 const NECK_LAG_SHARE = [0.34, 0.28, 0.2, 0.08, -0.06, -0.14];
 
@@ -182,6 +191,8 @@ export class WyvernAnimator {
   private readonly rootOffW = new Vector3();
   private readonly rootOffWPrev = new Vector3();
   private readonly flapSide = new Float32Array(WING_CHANNELS);
+  /** Leg pose weights this frame: tuck, reach, push, side sign, fatigue, swing (see legDir). */
+  private readonly legW = new Float64Array(6);
 
   // Wings
   private readonly wingFK: [WingPose, WingPose] = [new Float32Array(WING_CHANNELS), new Float32Array(WING_CHANNELS)];
@@ -632,7 +643,7 @@ export class WyvernAnimator {
       if (sd.y > 0.02) {
         _v2.copy(sd).applyQuaternion(this.qWInv);
         lookYaw = lerp(lookYaw, clamp(Math.atan2(_v2.x, _v2.z), -1.1, 1.1), bask);
-        lookPitch = lerp(lookPitch, clamp(Math.atan2(_v2.y, Math.hypot(_v2.x, _v2.z)), 0, 0.6), bask * 0.7);
+        lookPitch = lerp(lookPitch, clamp(Math.atan2(_v2.y, Math.sqrt(_v2.x * _v2.x + _v2.z * _v2.z)), 0, 0.6), bask * 0.7);
       }
     }
     // Yawn: head up and back; stall: looking down at what went wrong; tired: head hangs; the
@@ -838,19 +849,23 @@ export class WyvernAnimator {
 
   private applyWingFK(side: number, p: WingPose): void {
     const w = this.rig.idx.wings[side];
-    this.wingJoint(side, w.humerus, p[W.humEl], p[W.humSw], p[W.humTw]);
-    this.wingJoint(side, w.forearm, p[W.foreEl], p[W.foreSw], p[W.foreTw]);
-    this.wingJoint(side, w.hand, p[W.handEl], p[W.handSw], p[W.handTw]);
-    this.wingJoint(side, w.claw, p[W.clawEl], p[W.clawSw], 0);
+    this.wingJoint(side, w.humerus, p, W.humEl, W.humSw, W.humTw);
+    this.wingJoint(side, w.forearm, p, W.foreEl, W.foreSw, W.foreTw);
+    this.wingJoint(side, w.hand, p, W.handEl, W.handSw, W.handTw);
+    this.wingJoint(side, w.claw, p, W.clawEl, W.clawSw, -1);
     for (let f = 0; f < 3; f++) {
-      this.wingJoint(side, w.fingers[f][0], p[W.f0El + f * 3], p[W.f0Sw + f * 3], p[W.f0Tw + f * 3]);
-      this.wingJoint(side, w.fingers[f][1], p[W.f0bEl + f * 2], p[W.f0bSw + f * 2], 0);
+      this.wingJoint(side, w.fingers[f][0], p, W.f0El + f * 3, W.f0Sw + f * 3, W.f0Tw + f * 3);
+      this.wingJoint(side, w.fingers[f][1], p, W.f0bEl + f * 2, W.f0bSw + f * 2, -1);
     }
   }
 
-  /** One wing joint from channels (left convention, mirrored for the right wing). */
-  private wingJoint(side: number, bone: number, el: number, sw: number, tw: number): void {
-    _e.set(tw, sw, el, 'ZYX');
+  /**
+   * One wing joint from the pose's channels (left convention, mirrored for the right wing). Takes
+   * channel indices rather than angles: numbers passed into a call the JIT doesn't inline get
+   * boxed, every joint, every frame.
+   */
+  private wingJoint(side: number, bone: number, p: WingPose, iEl: number, iSw: number, iTw: number): void {
+    _e.set(iTw >= 0 ? p[iTw] : 0, p[iSw], p[iEl], 'ZYX');
     _q.setFromEuler(_e);
     if (side === 1) mirrorQuat(_q, _q);
     this.local[bone].copy(_q);
@@ -922,37 +937,41 @@ export class WyvernAnimator {
 
   // --- Legs --------------------------------------------------------------------------------------
 
-  /** Blend a leg bone direction (pelvis space, left; mirrored by sx) from four poses. */
-  private legDir(
-    out: Vector3,
-    tuckAmt: number,
-    reach: number,
-    push: number,
-    sx: number,
-    tx: number, ty: number, tz: number,
-    dx: number, dy: number, dz: number,
-    rx: number, ry: number, rz: number,
-    px: number, py: number, pz: number,
-  ): Vector3 {
+  /**
+   * Blend a leg bone direction (pelvis space, left; mirrored) from the four poses in LEG_POSES
+   * (row 0 thigh, 1 shin, 2 meta), with this frame's weights in `legW`.
+   */
+  private legDir(out: Vector3, row: number): Vector3 {
+    const P = LEG_POSES;
+    const g = this.legW;
+    const tuckAmt = g[0];
     const dangle = 1 - tuckAmt;
-    out.set(tx * tuckAmt + dx * dangle, ty * tuckAmt + dy * dangle, tz * tuckAmt + dz * dangle);
-    out.lerp(_lv.set(rx, ry, rz), reach);
-    out.lerp(_lv.set(px, py, pz), push);
-    out.x *= sx;
+    const o = row * 12;
+    // The dangling pose swings with the body (legSwing) and droops when tired.
+    const dy = P[o + 4] - (row === 0 ? 0.05 * g[4] : 0);
+    const dz = P[o + 5] - g[5] * (row === 2 ? 0.5 : 1);
+    out.set(P[o] * tuckAmt + P[o + 3] * dangle, P[o + 1] * tuckAmt + dy * dangle, P[o + 2] * tuckAmt + dz * dangle);
+    out.lerp(_lv.set(P[o + 6], P[o + 7], P[o + 8]), g[1]);
+    out.lerp(_lv.set(P[o + 9], P[o + 10], P[o + 11]), g[2]);
+    out.x *= g[3];
     return out.normalize();
   }
 
   private applyLegFK(side: number, tuckAmt: number, reach: number, push: number, fatigue: number): void {
     const l = this.rig.idx.legs[side];
-    const sx = SIDE_SIGN[side];
     const rest = this.legRestDir[side];
     const pq = this.modelQ[this.parent[l.thigh]];
+    const g = this.legW;
+    g[0] = tuckAmt;
+    g[1] = reach;
+    g[2] = push;
+    g[3] = SIDE_SIGN[side];
+    g[4] = fatigue;
     // Dangling legs swing back and forth with the body's fore-aft acceleration.
-    const sw = this.legSwing.value * (1 - tuckAmt);
-    //                                       tucked              dangling                          reaching           pushing off
-    const thigh = this.legDir(_v, tuckAmt, reach, push, sx, 0.06, -0.5, -0.86, 0.1, -0.86 - 0.05 * fatigue, 0.48 - sw, 0.14, -0.62, 0.78, 0.05, -0.92, -0.38);
-    const shin = this.legDir(_v2, tuckAmt, reach, push, sx, 0.0, 0.25, -0.97, 0.02, -0.82, -0.56 - sw, 0.03, -0.97, 0.24, 0.0, -0.94, -0.33);
-    const meta = this.legDir(_v3, tuckAmt, reach, push, sx, 0.0, -0.18, -0.98, 0.0, -0.9, 0.22 - sw * 0.5, 0.0, -0.94, 0.32, 0.0, -0.8, -0.6);
+    g[5] = this.legSwing.value * (1 - tuckAmt);
+    const thigh = this.legDir(_v, 0);
+    const shin = this.legDir(_v2, 1);
+    const meta = this.legDir(_v3, 2);
     thigh.applyQuaternion(pq);
     shin.applyQuaternion(pq);
     meta.applyQuaternion(pq);
@@ -1057,7 +1076,7 @@ export class WyvernAnimator {
       X[0].copy(this.tailBase);
       const d = _v4.copy(baseDir);
       for (let i = 0; i < n; i++) {
-        this.bendDir(d, bodyUp, tp[i], ty[i]);
+        this.bendDir(d, bodyUp, i);
         X[i + 1].copy(X[i]).addScaledVector(d, this.tailLen[i]);
       }
       for (let i = 0; i <= n; i++) Xp[i].copy(X[i]);
@@ -1106,7 +1125,7 @@ export class WyvernAnimator {
         const d = _v4.copy(baseDir);
         for (let i = 1; i <= n; i++) {
           if (i > 1) d.subVectors(X[i - 1], X[i - 2]).normalize();
-          this.bendDir(d, bodyUp, tp[i - 1], ty[i - 1]);
+          this.bendDir(d, bodyUp, i - 1);
           const kStiff = lerp(0.42, 0.16, (i - 1) / (n - 1));
           const len = this.tailLen[i - 1];
           const xi = X[i];
@@ -1149,9 +1168,15 @@ export class WyvernAnimator {
     }
   }
 
-  /** Bend a direction by pitch (raise) and yaw (to the body's left) relative to itself. */
-  private bendDir(d: Vector3, up: Vector3, pitch: number, yaw: number): void {
-    // Scalar Rodrigues rotations (this runs ~30 times a frame; no boxed temporaries).
+  /**
+   * Bend a direction by tail segment i's target pitch (raise) and yaw (to the body's left)
+   * relative to itself. Takes the index, not the angles: numbers passed into a call the JIT
+   * doesn't inline get boxed, and this runs ~30 times a frame.
+   */
+  private bendDir(d: Vector3, up: Vector3, i: number): void {
+    const pitch = this.tailPitch[i];
+    const yaw = this.tailYaw[i];
+    // Scalar Rodrigues rotations (no temporaries).
     let dx = d.x;
     let dy = d.y;
     let dz = d.z;

@@ -230,9 +230,9 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   // rows, so smaller on the neck and in rings down the tail); elsewhere a granular 3D cell.
   vec2 tq = vec2(vUv2.x / (0.13 * uBodyScale), (vMat.w - 2.0) * 20.0);
   vec2 tw = fwidth(tq);
-  float tubeFade = 1.0 - smoothstep(0.25, 0.6, length(tw));
+  float tubeFade = 1.0 - smoothstep(0.16, 0.42, length(tw));
   vec3 sq = bp * vec3(11.0, 11.0, 8.0);
-  float scaleFade = 1.0 - smoothstep(0.22, 0.55, length(fwidth(sq)));
+  float scaleFade = 1.0 - smoothstep(0.16, 0.4, length(fwidth(sq)));
   if (region == 0 || region == 8) {
     float belly = vMat.y;
     float dorsal = vMat.z;

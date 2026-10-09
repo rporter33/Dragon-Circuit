@@ -110,12 +110,20 @@ export function clothMaterial(pattern: ClothPattern, color: Color, trim: Color):
   return m;
 }
 
-/** Centripetal-free uniform Catmull-Rom on scalars. */
-function cr(p0: number, p1: number, p2: number, p3: number, t: number): number {
+/**
+ * Uniform Catmull-Rom basis weights at t into `out` (w0..w3 for p0..p3). The draw loops apply
+ * them inline: a helper returning a number per sample boxes thousands of doubles a frame once the
+ * JIT stops inlining it.
+ */
+function crWeights(t: number, out: Float64Array): void {
   const t2 = t * t;
   const t3 = t2 * t;
-  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+  out[0] = 0.5 * (-t + 2 * t2 - t3);
+  out[1] = 0.5 * (2 - 5 * t2 + 3 * t3);
+  out[2] = 0.5 * (t + 4 * t2 - 3 * t3);
+  out[3] = 0.5 * (-t2 + t3);
 }
+const _cw = new Float64Array(4);
 
 interface Piece {
   spec: ClothSpec;
@@ -139,6 +147,8 @@ interface Piece {
   flip: boolean;
   /** Visual subdivisions per particle span (quality dependent). */
   sub: number;
+  /** Tubes: radius at each visual row (static, from the spec). */
+  radii?: Float64Array;
   /** How the piece's color and trim derive from the look (undefined = constant). */
   colorRecipe?: ColorRecipe;
   trimRecipe?: ColorRecipe;
@@ -162,6 +172,8 @@ export class ClothRig {
   readonly pieces: Piece[] = [];
   private readonly parent: Group;
   readonly origin = new Vector3();
+  /** Reused every step (no per-frame object). */
+  private readonly env = { airX: 0, airY: 0, airZ: 0, time: 0 };
 
   private readonly lod: ClothLod;
 
@@ -257,7 +269,14 @@ export class ClothRig {
     this.parent.add(mesh);
     const capsules = spec.colliders.map((c) => colliderSets[c]).filter(Boolean);
     cloth.setColliders(capsules);
+    let radii: Float64Array | undefined;
+    if (spec.render.kind === 'tube') {
+      const radius = spec.render.radius ?? (() => 0.02);
+      radii = new Float64Array(vv);
+      for (let j = 0; j < vv; j++) radii[j] = Math.max(0.002, radius(j / (vv - 1)));
+    }
     return {
+      radii,
       spec,
       cloth,
       mesh,
@@ -326,7 +345,12 @@ export class ClothRig {
       }
       pc.cloth.setAnchors(tg);
       pc.cloth.frameVelocityChange(dv.x, dv.y, dv.z);
-      pc.cloth.update(dt, { airX: air.x, airY: air.y, airZ: air.z, time });
+      const env = this.env;
+      env.airX = air.x;
+      env.airY = air.y;
+      env.airZ = air.z;
+      env.time = time;
+      pc.cloth.update(dt, env);
       this.draw(pc);
       _m.makeTranslation(origin.x, origin.y, origin.z);
       pc.mesh.matrixWorld.copy(_m);
@@ -350,16 +374,20 @@ export class ClothRig {
     // Pass 1: Catmull-Rom down every particle column at each visual row.
     if (!pc.line || pc.line.length !== vv * cols * 3) pc.line = new Float64Array(vv * cols * 3);
     const tmp = pc.line;
+    const W = _cw;
     for (let j = 0; j < vv; j++) {
       const r = Math.min(rows - 2, Math.floor(j / sub));
-      const tv = j / sub - r;
-      const r0 = Math.max(0, r - 1);
-      const r3 = Math.min(rows - 1, r + 2);
-      for (let c = 0; c < cols; c++) {
-        for (let k = 0; k < 3; k++) {
-          tmp[(j * cols + c) * 3 + k] = cr(p[(r0 * cols + c) * 3 + k], p[(r * cols + c) * 3 + k], p[((r + 1) * cols + c) * 3 + k], p[(r3 * cols + c) * 3 + k], tv);
-        }
-      }
+      crWeights(j / sub - r, W);
+      const w0 = W[0];
+      const w1 = W[1];
+      const w2 = W[2];
+      const w3 = W[3];
+      const b0 = Math.max(0, r - 1) * cols * 3;
+      const b1 = r * cols * 3;
+      const b2 = (r + 1) * cols * 3;
+      const b3 = Math.min(rows - 1, r + 2) * cols * 3;
+      const o = j * cols * 3;
+      for (let q = 0; q < cols * 3; q++) tmp[o + q] = w0 * p[b0 + q] + w1 * p[b1 + q] + w2 * p[b2 + q] + w3 * p[b3 + q];
     }
     // Two-wide ribbons: drawn about their centerline with a minimum width and a twist that
     // builds along the length, so a scarf tail shows its face from any side (never a string).
@@ -368,16 +396,22 @@ export class ClothRig {
       return this.sheetNormals(pc);
     }
     // Pass 2: across the columns.
-    for (let j = 0; j < vv; j++) {
-      const rowBase = j * cols * 3;
-      for (let i = 0; i < vu; i++) {
+    for (let i = 0; i < vu; i++) {
+      const c = Math.min(cols - 2, Math.floor(i / sub));
+      crWeights(i / sub - c, W);
+      const w0 = W[0];
+      const w1 = W[1];
+      const w2 = W[2];
+      const w3 = W[3];
+      const c0 = Math.max(0, c - 1) * 3;
+      const c1 = c * 3;
+      const c2 = (c + 1) * 3;
+      const c3 = Math.min(cols - 1, c + 2) * 3;
+      for (let j = 0; j < vv; j++) {
+        const rowBase = j * cols * 3;
         const o = (j * vu + i) * 3;
-        const c = Math.min(cols - 2, Math.floor(i / sub));
-        const tu = i / sub - c;
-        const c0 = Math.max(0, c - 1);
-        const c3 = Math.min(cols - 1, c + 2);
         for (let k = 0; k < 3; k++) {
-          out[o + k] = cr(tmp[rowBase + c0 * 3 + k], tmp[rowBase + c * 3 + k], tmp[rowBase + (c + 1) * 3 + k], tmp[rowBase + c3 * 3 + k], tu);
+          out[o + k] = w0 * tmp[rowBase + c0 + k] + w1 * tmp[rowBase + c1 + k] + w2 * tmp[rowBase + c2 + k] + w3 * tmp[rowBase + c3 + k];
         }
       }
     }
@@ -483,15 +517,19 @@ export class ClothRig {
     const ring = vu - 1;
     const out = pc.pos;
     const nrm = pc.nrm;
-    const radius = pc.spec.render.radius ?? (() => 0.02);
+    const radii = pc.radii!;
     const braid = pc.spec.render.pattern === 'braid';
-    const at = (r: number, k: number) => p[(r < 0 ? 0 : r >= rows ? rows - 1 : r) * 3 + k];
     if (!pc.line) pc.line = new Float64Array(vv * 3);
     const line = pc.line;
+    const W = _cw;
     for (let j = 0; j < vv; j++) {
       const r = Math.min(rows - 2, Math.floor(j / sub));
-      const t = j / sub - r;
-      for (let k = 0; k < 3; k++) line[j * 3 + k] = cr(at(r - 1, k), at(r, k), at(r + 1, k), at(r + 2, k), t);
+      crWeights(j / sub - r, W);
+      const b0 = Math.max(0, r - 1) * 3;
+      const b1 = r * 3;
+      const b2 = Math.min(rows - 1, r + 1) * 3;
+      const b3 = Math.min(rows - 1, r + 2) * 3;
+      for (let k = 0; k < 3; k++) line[j * 3 + k] = W[0] * p[b0 + k] + W[1] * p[b1 + k] + W[2] * p[b2 + k] + W[3] * p[b3 + k];
     }
     // Parallel-transport frames down the line.
     _prevN.set(1, 0, 0);
@@ -505,7 +543,7 @@ export class ClothRig {
       _prevN.copy(_n);
       _b.crossVectors(_t, _n);
       const f = j / (vv - 1);
-      let rad = Math.max(0.002, radius(f));
+      let rad = radii[j];
       for (let i = 0; i <= ring; i++) {
         const th = (i / ring) * Math.PI * 2;
         let rr = rad;
