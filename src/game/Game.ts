@@ -281,6 +281,8 @@ export class Game implements GameActions {
   openStable(): void {
     // No breed swaps mid-race: the pause menu asks first; anything else stands the race down.
     if (this.races.state === 'running' || this.races.state === 'countdown') this.races.abort('quit');
+    // A wyvern left across the island walks up to a stall beside the door, so the Stable frames both.
+    this.player.settleAtStable();
     this.setScreen('stable');
   }
 

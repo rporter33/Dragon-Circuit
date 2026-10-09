@@ -74,7 +74,7 @@ const NEUTRAL: FlightInput = { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flar
 
 /** The Rested bonus, announced the first few times: basking by day, a rest by night. */
 const SUN_WARMED_TOAST = { text: 'Sun-warmed — your wyvern spreads its wings to the sun', sub: 'Its stamina lasts longer for a while', icon: 'info' } as const;
-const RESTED_TOAST = { text: 'Rested — your wyvern shakes out its wings', sub: 'Its stamina lasts longer for a while', icon: 'info' } as const;
+const RESTED_TOAST = { text: 'Rested — your wyvern stretches and settles', sub: 'Its stamina lasts longer for a while', icon: 'info' } as const;
 
 /** Seat (where the rider's hips rest) in body space, as a fraction of standHeight. */
 const SEAT_UP = 0.5;
