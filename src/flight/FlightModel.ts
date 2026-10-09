@@ -107,6 +107,12 @@ export const FLIGHT_TUNING = {
   protectTo: 1.12,
   protectMargin: 3 * DEG,
   /**
+   * Zoom limiter: below `zoomFrom` × stall speed in a climb, a held pull asks for only
+   * `zoomLoad` × the lift the climb needs (fully by `protectTo`), so the path tops out.
+   */
+  zoomFrom: 2.6,
+  zoomLoad: 0.4,
+  /**
    * Pull-out after a stall: while stalled and for `recoverTime` s after, the hands-off trim
    * asks for at least `recoverCl` × clMax (capped at `recoverN` g) so letting go flies out of
    * the dive firmly instead of hanging nose-down.
@@ -914,6 +920,21 @@ export class FlightModel {
       // breaking the stall.
       const protect = T.stallProtect * smoothstep(T.protectFrom * d.vStall, T.protectTo * d.vStall, V) * (1 - s.flare);
       if (protect > 0) alphaCmd = lerp(alphaCmd, Math.min(alphaCmd, Math.max(alphaTrim, alphaEdge - T.protectMargin)), protect);
+      // Zoom limiter: hauling back in a steep, unpowered climb as the speed runs out, the pull
+      // eases to less lift than the climb needs, so the path tops out and the wyvern floats over
+      // into a dive instead of hanging until the air runs out. (A big zoom from dive speeds, or
+      // coasting straight up, still ends in a stall.)
+      const climb = airVel.y / Math.max(V, 1);
+      const zoom =
+        smoothstep(T.zoomFrom * d.vStall, T.protectTo * d.vStall, V) *
+        smoothstep(0.15, 0.45, climb) *
+        smoothstep(0.05, 0.5, pitchIn) *
+        (1 - clamp01(s.flapStrength / 0.5)) *
+        (1 - s.flare);
+      if (zoom > 0) {
+        const nOver = Math.sqrt(Math.max(0, 1 - climb * climb)) * T.zoomLoad;
+        alphaCmd = lerp(alphaCmd, Math.min(alphaCmd, (nOver * d.weight) / (qSafe * area * b.liftSlope) - T.incidence), zoom);
+      }
     } else {
       // Forward stick asks for a load factor between trim and nMin (not a fixed α offset, which
       // would steepen a dive into a bunt as speed builds).

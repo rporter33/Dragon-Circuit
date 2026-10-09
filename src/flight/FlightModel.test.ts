@@ -210,6 +210,24 @@ describe('stall', () => {
     }
   });
 
+  it('hauling back from above cruise zooms and floats over the top instead of stalling (FLT-04)', () => {
+    for (const id of BREED_ORDER) {
+      const { events, counts } = bus();
+      const m = launch(BREEDS[id], 1.15 * new FlightModel(BREEDS[id]).derived.vCruise);
+      const y0 = m.state.position.y;
+      const input = neutralInput();
+      input.pitch = 1;
+      let top = y0;
+      for (let i = 0; i < 6 / SIM_DT; i++) {
+        m.step(SIM_DT, input, stillAir(), events);
+        top = Math.max(top, m.state.position.y);
+      }
+      expect(counts.stallStart ?? 0, id).toBe(0);
+      // Still a real zoom: the speed is traded for height.
+      expect(top - y0, id).toBeGreaterThan(8);
+    }
+  });
+
   it('slowed in level flight it settles into a sinking mush just above stall speed', () => {
     for (const id of BREED_ORDER) {
       const d = new FlightModel(BREEDS[id]).derived;
