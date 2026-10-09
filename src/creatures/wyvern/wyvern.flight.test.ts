@@ -623,3 +623,51 @@ describe('the living glide (B4: a gliding wing is never still; gusts, load and f
     w.dispose();
   });
 });
+
+describe('landing (B5: a height-driven flare, backwing beats, legs reaching)', { timeout: 60000 }, () => {
+  /** One beat flared and flapping at `feet` m above flat ground; the left tip against the shoulder (body frame). */
+  function flaredBeat(breed: BreedId, feet: number) {
+    const w = new Wyvern(look(breed));
+    const p = gliding();
+    const sh = BREEDS[breed].standHeight;
+    p.position.set(0, 10 + sh + feet, 0);
+    p.groundY = 10;
+    p.velocity.set(0, -3, 10);
+    p.airspeed = 10.4;
+    p.flare = 1;
+    p.flapStrength = 1;
+    const rate = BREEDS[breed].flapRate * 1.4;
+    const hum = w.skinnedMesh!.skeleton.bones.find((b) => b.name === 'humerusL')!;
+    const els: number[] = [];
+    const zs: number[] = [];
+    const ys: number[] = [];
+    const n = Math.round(60 / rate);
+    for (let i = 0; i < 4 * n; i++) {
+      p.flapPhase = ((i / 60) * rate) % 1;
+      w.update(1 / 60, p);
+      if (i < 3 * n) continue;
+      w.getWingtips(_p, _q);
+      const sl = hum.getWorldPosition(new Vector3());
+      els.push((Math.atan2(_p.y - sl.y, _p.x - sl.x) * 180) / Math.PI);
+      zs.push(_p.z - sl.z);
+      ys.push(_p.y - sl.y);
+    }
+    w.dispose();
+    const range = (xs: number[]) => Math.max(...xs) - Math.min(...xs);
+    return { top: Math.max(...els), bottom: Math.min(...els), plane: range(zs) / range(ys) };
+  }
+
+  it('beats backwing strokes over the last metres: high, short and swept far forward, with real travel', () => {
+    for (const b of BREED_ORDER) {
+      const low = flaredBeat(b, 1);
+      const high = flaredBeat(b, 40);
+      // A short stroke that stays high (never driven down past the shoulder's level by much)...
+      expect(low.bottom, b).toBeGreaterThan(high.bottom + 5);
+      // ...with real travel (the strip's ≥ 40° between the extremes)...
+      expect(low.top - low.bottom, b).toBeGreaterThan(30);
+      // ...and the stroke plane laid back toward the horizontal: more fore-aft travel per metre
+      // of rise and fall than a flaring beat up high.
+      expect(low.plane, b).toBeGreaterThan(1.3 * high.plane);
+    }
+  });
+});

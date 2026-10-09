@@ -22,6 +22,7 @@ import { BREEDS } from '../../../flight/breeds';
 import { SIDE_SIGN } from '../rig';
 import { Bouncy, Spring, noise1 } from '../ik';
 import {
+  BACKWING_STYLES,
   FLAP_STYLES,
   FLARE,
   GLIDE,
@@ -97,6 +98,12 @@ export class FlightLayer {
   private readonly loadSpring: [Spring, Spring] = [new Spring(18), new Spring(18)];
   readonly wingLoad = [0, 0];
   private readonly flapSide = new Float32Array(WING_CHANNELS);
+  /** The breed's backwing stroke (B5) and the scratch pose it is sampled into. */
+  private readonly backStyle: FlapStyle;
+  private readonly flapBack = new Float32Array(WING_CHANNELS);
+  /** The landing flare this frame (0..1, the last metres of an approach) and its backwing weight. */
+  private landFlare = 0;
+  private backW = 0;
   /** adjustPose's inputs for the wing being posed (a record: no doubles through call arguments). */
   private readonly adj = wingAdjust();
   private readonly legSwing = new Bouncy(5, 0.35);
@@ -135,6 +142,7 @@ export class FlightLayer {
     this.a = a;
     this.f = a.frame;
     this.style = FLAP_STYLES[a.rig.props.breed];
+    this.backStyle = BACKWING_STYLES[a.rig.props.breed];
     this.planeMean = strokePlaneMean(this.style);
     const D = this.style.down;
     this.clockS = Math.sin(Math.PI * D);
@@ -261,8 +269,14 @@ export class FlightLayer {
     const chestLift = -flap * airW * (0.05 + 0.03 * heft) * Math.sin((sp - 0.02) * TAU);
     f.chestLift = chestLift;
     f.lean = clamp(f.bank * 0.1 + om.z * 0.1, -0.22, 0.22) * airW;
-    f.spineAir = chestLift - flare * 0.06 * airW;
-    f.chestAir = chestLift * 0.6 - flare * 0.04;
+    // Landing (B5): the last metres of an approach (feet within 1.6·sh of the ground, coming
+    // down) the chest and spine pitch up a further 10° and a flaring beat becomes a backwing.
+    const feet = f.height - sh;
+    this.landFlare = f.airborne && f.pose.velocity.y < 0.5 ? smoothstep(1.6 * sh, 0.4 * sh, feet) : 0;
+    this.backW = this.landFlare * smoothstep(0.3, 0.6, flare);
+    const landPitch = this.landFlare * flare * airW;
+    f.spineAir = chestLift - flare * 0.06 * airW - 0.1 * landPitch;
+    f.chestAir = chestLift * 0.6 - flare * 0.04 - 0.075 * landPitch;
     f.pelvisAir = flare * 0.05 * airW - tuck * 0.02;
     // Wing prelude. Turning: the outer (rising) wing reaches and works harder, the inner one
     // unloads.
@@ -297,11 +311,15 @@ export class FlightLayer {
       fp[W.foreEl] *= amp;
       fp[W.handEl] *= amp;
       // Flaring beats reach 16° forward of the shoulder's neutral (the stroke plane already sits
-      // part of the way there: the flare adds the rest rather than stacking on it).
+      // part of the way there: the flare adds the rest rather than stacking on it)...
+      const backW = this.backW;
       if (flare > 0) {
-        fp[W.humSw] += (-16 * DEG - this.planeMean) * flare;
-        fp[W.humTw] += -14 * DEG * flare;
+        fp[W.humSw] += (-16 * DEG - this.planeMean) * flare * (1 - backW);
+        fp[W.humTw] += -14 * DEG * flare * (1 - backW);
       }
+      // ...and over the last metres to the ground they are backwing strokes, beating against the
+      // sink in front of the body.
+      if (backW > 0.001) blendPose(fp, flapPoseAt(f, this.flapBack, this.backStyle), backW, fp);
       blendPose(out, fp, flap, out);
     }
     // The living glide: each wing trims on its own, the tips most; the resettle lifts both.
@@ -360,7 +378,8 @@ export class FlightLayer {
     const f = this.f;
     const pose = f.pose;
     const { airborne, sh, speed, accel } = f;
-    const approach = airborne && pose.velocity.y < 0.5 ? 1 - smoothstep(sh * 1.4, sh * 3.2, f.height) : 0;
+    // The hind legs reach for the ground from 3.5·sh up on an approach.
+    const approach = airborne && pose.velocity.y < 0.5 ? 1 - smoothstep(sh * 1.4, sh * 3.5, f.height) : 0;
     const reach = clamp01(Math.max(f.flare, approach * smoothstep(26, 14, speed)));
     const push = airborne && pose.gait === 'takeoff' ? 1 - smoothstep(0.15, 0.55, pose.gaitTime) : 0;
     f.legReach = reach;

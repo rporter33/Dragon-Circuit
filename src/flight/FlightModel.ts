@@ -260,6 +260,23 @@ export const FLIGHT_TUNING = {
   backwingMaxG: 1.2,
   backwingCost: 0.6,
   /**
+   * Feet first: flaring with the feet within `landPitchFrom` × standHeight of the ground, the body
+   * pitches up toward `landPitch` (fully by `landPitchFull` × standHeight), so the hind feet reach
+   * the ground before the chest and the wings brake in front of it (a deep, deliberate stall). The
+   * braking wings give the pitch its authority however slow the air (`landAuthority`).
+   */
+  landPitch: 30 * DEG,
+  landPitchFrom: 2.5,
+  landPitchFull: 1,
+  landAuthority: 0.6,
+  /**
+   * No balloon: in that low flare the wyvern rises about `zoomCap` m at most above the lowest point
+   * of its approach: from half of it the wings spill their lift (upward speed damped at
+   * `zoomSpill` /s).
+   */
+  zoomCap: 0.3,
+  zoomSpill: 20,
+  /**
    * Terrain queries, kept cheap. The clearance (a conservative distance to the nearest solid)
    * minus the distance flown since it was measured is still a safe bound, so it is re-measured
    * only once that bound drops under `clearanceRemeasure` m (or it is `clearanceMaxAge` s old,
@@ -483,6 +500,10 @@ export class FlightModel {
   /** Smoothed vertical air at the body (m/s): thermals and ridge lift make for a restful glide. */
   private updraft = 0;
   private contactInfo: ContactInfo = { soft: false };
+  /** The lowest point of a low landing flare so far (m; Infinity when not in one). */
+  private landLow = Infinity;
+  /** How far into the landing flare's feet-first pitch (0..1) this step. */
+  private landW = 0;
 
   constructor(breed: BreedStats) {
     this.breed = breed;
@@ -524,6 +545,8 @@ export class FlightModel {
     this.clearance = Infinity;
     this.clearanceMeasured = -Infinity;
     this.groundTick = 0;
+    this.landLow = Infinity;
+    this.landW = 0;
     // Listeners saw a stall/tuck start: tell them it's over.
     if (this.stalled) this.bus?.emit('stallEnd', {});
     if (this.tucked) this.bus?.emit('tuckEnd', {});
@@ -710,6 +733,14 @@ export class FlightModel {
       geLift = T.groundEffectLift * (1 - geInduced);
     }
 
+    // A low landing flare: the feet-first pitch (rotate) and the cap on its zoom (below).
+    this.landW = 0;
+    if (s.flare > 0.3 && this.ground) {
+      const feet = s.position.y - this.ground.y - b.standHeight;
+      this.landW = smoothstep(0.3, 0.6, s.flare) * smoothstep(T.landPitchFrom * b.standHeight, T.landPitchFull * b.standHeight, feet);
+      this.landLow = feet < T.backwingHeight ? Math.min(this.landLow, s.position.y) : Infinity;
+    } else this.landLow = Infinity;
+
     // --- Lift coefficient and stall -----------------------------------------------------------
     const aw = alpha + T.incidence;
     const clAttached = softClamp(b.liftSlope * aw, -b.clMax * 0.65, b.clMax);
@@ -856,6 +887,11 @@ export class FlightModel {
     }
     s.flapStrength = damp(s.flapStrength, this.beatActive ? this.beatStrength : 0, this.beatActive ? 10 : 3, dt);
 
+    // No balloon: above the cap the flared wings spill lift rather than zoom the wyvern up.
+    if (this.landLow < Infinity && s.position.y > this.landLow + 0.5 * T.zoomCap && s.velocity.y > 0) {
+      force.y -= b.mass * T.zoomSpill * s.velocity.y;
+    }
+
     // --- Linear integration ---------------------------------------------------------------------
     // Along-path acceleration, smoothed over a beat, for the phugoid damper.
     if (V > 0.5) this.vDotSmooth = damp(this.vDotSmooth, force.dot(airVel) / (V * b.mass), 2.5, dt);
@@ -983,6 +1019,14 @@ export class FlightModel {
       wx = lerp(wx, wxAttitude, slow);
     }
 
+    // A low landing flare pitches the body up toward the feet-first attitude (the flight path
+    // falls away below it: the wings brake in a deep stall, the hind feet reach down first).
+    if (this.landW > 0) {
+      const theta = Math.asin(clamp(fwd.y, -1, 1));
+      const wxLand = clamp(-T.attitudeGain * (T.landPitch - theta), -d.maxPitchRate, d.maxPitchRate);
+      wx = lerp(wx, wxLand, this.landW);
+    }
+
     // Yaw: follow the path, swing the nose into the relative wind, plus rudder.
     const wy = pathRate.y + T.betaGain * beta - yawIn * d.maxYawRate;
 
@@ -1009,7 +1053,7 @@ export class FlightModel {
     // Authority: proportional to dynamic pressure, with a floor while beating the wings (the
     // stroke makes its own airflow over the wing) and during the launch grace.
     let auth = clamp(q / d.qRef, T.authorityMin, T.authorityMax);
-    auth = Math.max(auth, 0.5 * s.flapStrength, this.grace > 0 ? 0.45 : 0);
+    auth = Math.max(auth, 0.5 * s.flapStrength, this.grace > 0 ? 0.45 : 0, T.landAuthority * this.landW);
     const rollAuth = auth * (0.55 + 0.45 * s.wingSpread) * (1 - 0.55 * s.stall);
     const gain = b.angularDamping * T.trackGainScale;
     w.x += clamp((target.x - w.x) * gain, -b.pitchAuthority * auth, b.pitchAuthority * auth) * dt;
