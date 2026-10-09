@@ -533,3 +533,93 @@ describe('turns that lead (B3: the head turns first, the wings answer the stick,
     expect(bowR).toBeLessThan(bowL);
   });
 });
+
+describe('the living glide (B4: a gliding wing is never still; gusts, load and flutter)', { timeout: 60000 }, () => {
+  /** Glide hands-off for `secs`, sampling each wingtip's elevation from its shoulder (degrees, body frame). */
+  function glideTips(breed: BreedId, secs: number, gust?: { l: number; r: number }) {
+    const w = new Wyvern(look(breed));
+    const p = gliding();
+    p.control = { pitch: 0, roll: 0, yaw: 0 };
+    if (gust) p.gust = gust;
+    const bones = w.skinnedMesh!.skeleton.bones;
+    const humL = bones.find((b) => b.name === 'humerusL')!;
+    const humR = bones.find((b) => b.name === 'humerusR')!;
+    const L: number[] = [];
+    const R: number[] = [];
+    const loads: [number, number][] = [];
+    const el = (tip: Vector3, sh: Vector3) => (Math.atan2(tip.y - sh.y, Math.abs(tip.x - sh.x)) * 180) / Math.PI;
+    for (let i = 0; i < secs * 60; i++) {
+      p.position.z += 24 / 60;
+      p.lookTarget.z += 24 / 60;
+      w.update(1 / 60, p);
+      w.getWingtips(_p, _q);
+      const sl = humL.getWorldPosition(new Vector3());
+      const sr = humR.getWorldPosition(new Vector3());
+      L.push(el(_p, sl));
+      R.push(el(_q, sr));
+      loads.push([w.uniforms.uWingLoad.value.x, w.uniforms.uWingLoad.value.y]);
+    }
+    w.dispose();
+    return { L, R, loads };
+  }
+  const range = (xs: number[]) => Math.max(...xs) - Math.min(...xs);
+
+  it('never holds still in a 3 s glide: the tips move at least 2°, each wing trimming on its own', () => {
+    for (const b of BREED_ORDER) {
+      // The capture strip's window: 1 s in, for 3 s (the first resettle comes a moment into a glide).
+      const { L, R } = glideTips(b, 4);
+      const l = L.slice(60);
+      const r = R.slice(60);
+      expect(range(l), b).toBeGreaterThanOrEqual(2);
+      expect(range(r), b).toBeGreaterThanOrEqual(2);
+      // Independent: the two tips' elevations are not the same curve (the resettle is shared, the
+      // trim is not).
+      const diff = l.map((x, i) => x - r[i]);
+      expect(range(diff), b).toBeGreaterThan(0.4);
+    }
+  });
+
+  it('lives more on the light breeds and on the galewing’s long tips than on the ironback', () => {
+    const tipLife = (b: BreedId) => {
+      // (The trim alone: between the first resettle and the next.)
+      const { L, R } = glideTips(b, 7);
+      return range(L.slice(4 * 60)) + range(R.slice(4 * 60));
+    };
+    expect(tipLife('galewing')).toBeGreaterThan(tipLife('ironback'));
+  });
+
+  it('resettles both wings every 5–9 s: the shoulders lift together and settle back', () => {
+    const { L, R } = glideTips('harrier', 20);
+    // Both tips rise together by a few degrees at least once in 20 s (above their own drift).
+    const both = L.map((x, i) => Math.min(x - L[Math.max(0, i - 30)], R[i] - R[Math.max(0, i - 30)]));
+    expect(Math.max(...both)).toBeGreaterThan(1.5);
+  });
+
+  it('a thermal’s edge under one tip loads and lifts that wing first', () => {
+    const calm = glideTips('harrier', 2);
+    const edge = glideTips('harrier', 2, { l: 4, r: 0 });
+    const n = calm.loads.length - 1;
+    expect(edge.loads[n][0]).toBeGreaterThan(edge.loads[n][1] + 0.1);
+    // The lifted tip flexes up against the calm glide's.
+    expect(edge.L[n] - calm.L[n]).toBeGreaterThan(1);
+  });
+
+  it('luffs the trailing edge at dive speed: 0.1 m at 55 m/s, at a rate a 60 fps frame never aliases', () => {
+    const w = new Wyvern(look('harrier'));
+    const p = gliding();
+    p.airspeed = 55;
+    p.velocity.set(0, -10, 54);
+    for (let i = 0; i < 60; i++) w.update(1 / 60, p);
+    const sh = BREEDS.harrier.standHeight;
+    expect(w.uniforms.uFlutter.value).toBeGreaterThanOrEqual(0.1);
+    expect(w.uniforms.uFlutter.value).toBeLessThan(0.05 * sh * 1.5);
+    // The fastest component (the ×2.3 harmonic) stays well under the 60 fps Nyquist rate (30 Hz).
+    expect((w.uniforms.uFlutterRate.value * 2.3) / (2 * Math.PI)).toBeLessThan(20);
+    // Calm at cruise.
+    p.airspeed = 24;
+    p.velocity.set(0, 0, 24);
+    for (let i = 0; i < 60; i++) w.update(1 / 60, p);
+    expect(w.uniforms.uFlutter.value).toBeLessThan(0.03);
+    w.dispose();
+  });
+});

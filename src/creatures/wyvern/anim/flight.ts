@@ -55,6 +55,25 @@ const ROLL_OMEGA = 6;
  */
 const INNER_FORE = 42;
 const INNER_HAND = 58;
+/**
+ * The living glide (B4): per wing, two octaves of smooth value noise (GLIDE_HZ) on the shoulder's
+ * elevation and twist, the span trim at the wrist and the tips (degrees at full weight), and every
+ * RESETTLE_MIN..MAX s a resettle of both wings (the shoulders lift and settle back).
+ */
+const GLIDE_HZ0 = 0.35;
+const GLIDE_HZ1 = 0.9;
+const GLIDE_AMP = new Float64Array([1.5, 1.2, 2.5, 3]);
+/** Value noise spends most of its time inside half its range: ×1.6 makes those its typical swing. */
+const GLIDE_GAIN = 1.6;
+const RESETTLE_FIRST = 2.5;
+const RESETTLE_MIN = 5;
+const RESETTLE_MAX = 9;
+const RESETTLE_UP = 0.5;
+const RESETTLE_DOWN = 0.8;
+const RESETTLE_EL = 4;
+/** Rising air at a wingtip loads that wing (load per m/s): a thermal's edge lifts one tip first. */
+const GUST_LOAD = 0.12;
+
 /** The tail's rudder at full yaw (rad per segment), and its spring (overshoots about 0.25 s). */
 const RUDDER = 0.12;
 const RUDDER_OMEGA = 12;
@@ -71,8 +90,11 @@ export class FlightLayer {
   private readonly clockK: number;
   private readonly clockC: number;
   private readonly clockS: number;
-  /** Air load on each wing (left, right), smoothed: bends the fingers, billows the membrane. */
-  private readonly loadSpring: [Spring, Spring] = [new Spring(28), new Spring(28)];
+  /**
+   * Air load on each wing (left, right), smoothed: bends the fingers, billows the membrane. A soft
+   * spring (18 rad/s): the sail fills just after the arm starts to drive.
+   */
+  private readonly loadSpring: [Spring, Spring] = [new Spring(18), new Spring(18)];
   readonly wingLoad = [0, 0];
   private readonly flapSide = new Float32Array(WING_CHANNELS);
   /** adjustPose's inputs for the wing being posed (a record: no doubles through call arguments). */
@@ -93,6 +115,16 @@ export class FlightLayer {
   private readonly prevOm = new Vector3();
   /** The tail's rudder: follows the stick and overshoots briefly on the roll-out. */
   private readonly rudder = new Bouncy(RUDDER_OMEGA, RUDDER_ZETA);
+  /** The living glide this frame: [side × 4] humEl, humTw, handSw, tips (radians, weighted). */
+  private readonly glideLife = new Float64Array(8);
+  /**
+   * The resettle: seconds of gliding so far (its own clock, which only runs in a glide), when the
+   * next one starts on it, how many so far, and this frame's lift (rad).
+   */
+  private glideT = 0;
+  private resettleAt = RESETTLE_FIRST;
+  private resettleN = 0;
+  private resettle = 0;
   // This frame's wing prelude (flightTrunk → flightWingPose).
   private asymBase = 0;
   private rollInit = 0;
@@ -153,6 +185,60 @@ export class FlightLayer {
     f.tailSteer = dt > 0 ? this.rudder.step(steer, dt) : this.rudder.value;
   }
 
+  /**
+   * The living glide: a gliding wing is never still. Each wing trims on its own (two octaves of
+   * smooth value noise per channel, written out here rather than calling ik.noise1 sixteen times a
+   * frame: a double passed to or returned from a call the JIT doesn't inline is boxed), less on
+   * the heavy breeds, the tips by the style's glideTips; and every 5–9 s both shoulders lift and
+   * settle back (the resettle). Only while gliding: weight airW·(1 − flap)(1 − tuck)(1 − flare).
+   */
+  private glide(): void {
+    const f = this.f;
+    const t = f.time;
+    const out = this.glideLife;
+    const w = f.airW * (1 - f.flap) * (1 - f.tuck) * (1 - f.flare) * f.spreadAir;
+    if (w <= 1e-4) {
+      out.fill(0);
+    } else {
+      const amp = w * (1 - 0.5 * f.heft) * DEG;
+      for (let k = 0; k < 8; k++) {
+        let v = 0;
+        for (let o = 0; o < 2; o++) {
+          // Value noise at this octave: lattice hash at i and i + 1, smoothstep between.
+          const x = t * (o === 0 ? GLIDE_HZ0 : GLIDE_HZ1) + k * 7.31 + o * 3.7;
+          const i = Math.floor(x);
+          const u = x - i;
+          const seed = k * 2 + o + 1;
+          const s0 = Math.sin((i + seed * 17.13) * 127.1 + seed * 311.7) * 43758.5453;
+          const s1 = Math.sin((i + 1 + seed * 17.13) * 127.1 + seed * 311.7) * 43758.5453;
+          const h0 = (s0 - Math.floor(s0)) * 2 - 1;
+          const h1 = (s1 - Math.floor(s1)) * 2 - 1;
+          v += (o === 0 ? 0.6 : 0.4) * (h0 + (h1 - h0) * u * u * (3 - 2 * u));
+        }
+        const ch = k & 3;
+        out[k] = v * GLIDE_AMP[ch] * amp * (ch === 3 ? this.style.glideTips : 1) * GLIDE_GAIN;
+      }
+    }
+    // The resettle, on the glide's own clock: the first a moment into a glide (the wings settle
+    // after the last beat), then every 5–9 s (apart by a hash of the count: deterministic). A beat,
+    // a tuck or the ground starts the clock again.
+    if (f.teleport || w < 0.3) {
+      this.glideT = 0;
+      this.resettleN = 0;
+      this.resettleAt = RESETTLE_FIRST;
+    } else {
+      this.glideT += f.dt;
+    }
+    const since = this.glideT - this.resettleAt;
+    if (since >= RESETTLE_UP + RESETTLE_DOWN) {
+      this.resettleN++;
+      const h = Math.sin(this.resettleN * 12.9898) * 43758.5453;
+      this.resettleAt = this.glideT + RESETTLE_MIN + (RESETTLE_MAX - RESETTLE_MIN) * (h - Math.floor(h)) - (RESETTLE_UP + RESETTLE_DOWN);
+    }
+    const r = since < 0 ? 0 : since < RESETTLE_UP ? smoothstep(0, RESETTLE_UP, since) : 1 - smoothstep(RESETTLE_UP, RESETTLE_UP + RESETTLE_DOWN, since);
+    this.resettle = r * RESETTLE_EL * DEG * w;
+  }
+
   /** Heave, chest lift and lean, the flare's trunk pitch, and this frame's wing prelude. */
   flightTrunk(): void {
     const f = this.f;
@@ -189,6 +275,8 @@ export class FlightLayer {
     this.beatLoad = flap * strokeLoad(phase, this.style) * (1 + 0.25 * heft);
     // The stick: the roll's initiation, the head's lead and the tail's rudder (B3).
     this.controls();
+    // The living glide (B4).
+    this.glide();
     // Hover (B7): none yet.
     f.hover = 0;
   }
@@ -216,6 +304,15 @@ export class FlightLayer {
       }
       blendPose(out, fp, flap, out);
     }
+    // The living glide: each wing trims on its own, the tips most; the resettle lifts both.
+    const gl = this.glideLife;
+    const k = side * 4;
+    out[W.humEl] += gl[k] + this.resettle;
+    out[W.humTw] += gl[k + 1];
+    out[W.handSw] += gl[k + 2];
+    out[W.f0bEl] += gl[k + 3];
+    out[W.f1bEl] += 0.8 * gl[k + 3];
+    out[W.f2bEl] += 0.6 * gl[k + 3];
     // (Noise only while there is a buffet: a double passed to a call the JIT doesn't inline is
     // boxed on the heap.)
     const shake = buffet > 0;
@@ -249,7 +346,10 @@ export class FlightLayer {
       out[W.f1bEl] -= 6 * m * DEG;
       out[W.f2bEl] -= 6 * m * DEG;
     }
-    const loadT = airW * (this.glideLoad + this.beatLoad) * (1 + 0.35 * clamp(asym, -1, 1));
+    // Rising air under a wingtip loads that wing before the body rolls (a thermal's edge).
+    const gust = f.pose.gust;
+    const tipAir = gust ? (side === 0 ? gust.l : gust.r) : 0;
+    const loadT = airW * ((this.glideLoad + this.beatLoad) * (1 + 0.35 * clamp(asym, -1, 1)) + GUST_LOAD * clamp(tipAir, -4, 8) * f.spreadAir);
     const load = this.loadSpring[side].step(loadT, f.dt);
     this.wingLoad[side] = load;
     loadPose(out, load * f.spreadAir);
@@ -278,8 +378,10 @@ export class FlightLayer {
     const { sh, speed, airW, tuck, flap, buffet, bask, spreadAir } = f;
     // Trailing-edge flutter: airspeed, the power stroke's ripple, stall buffet, a breeze on the
     // spread membranes while basking.
-    u.uFlutter.value = 0.012 * sh * smoothstep(8, 40, speed) * airW * (1 - tuck * 0.5) + 0.008 * sh * flap * airW + buffet * 0.03 + bask * 0.004 * sh;
-    u.uFlutterRate.value = 14 + speed * 0.9 - bask * 8;
+    // At dive speeds the spread trailing edge luffs (0.1 m at 55 m/s), more with the wings
+    // half-tucked; the rate stays low enough (3–8 Hz) that a 60 fps frame never aliases it.
+    u.uFlutter.value = sh * (0.008 + 0.04 * smoothstep(25, 60, speed)) * (1 + 0.5 * tuck) * airW + 0.008 * sh * flap * airW + buffet * 0.03 + bask * 0.004 * sh;
+    u.uFlutterRate.value = TAU * clamp(3 + 0.08 * speed, 3, 8) * (1 - bask) + 6 * bask;
     u.uRipple.value = 0.4 + 0.6 * smoothstep(5, 35, speed);
     // Membrane billow per wing (m at full load).
     const billow = 0.022 * this.a.rig.props.wingspan;

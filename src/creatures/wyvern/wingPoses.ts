@@ -268,6 +268,11 @@ export interface FlapStyle {
    */
   readonly pronOut: number;
   readonly pronIn: number;
+  /**
+   * How much the tips live in a glide (× the living glide's tip trim, anim/flight.ts): the
+   * galewing's long, slender tips work the air most.
+   */
+  readonly glideTips: number;
   /** strokeWarp(i / WARP_N, down) for i = 0..WARP_N (derived; built by flapStyle). */
   readonly warp: Float32Array;
 }
@@ -304,10 +309,10 @@ const breedStyle = (id: BreedId, s: Omit<FlapStyle, 'down' | 'warp'>) => flapSty
  * ≥ 3 cm below the boots on every saddle (mounted.test.ts).
  */
 export const FLAP_STYLES: Readonly<Record<BreedId, FlapStyle>> = {
-  skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05, tiltBack: 0.3, pronOut: 0.13, pronIn: 0.14 }),
-  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
-  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.093, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
-  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
+  skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05, tiltBack: 0.3, pronOut: 0.13, pronIn: 0.14, glideTips: 1 }),
+  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1 }),
+  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.093, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1.3 }),
+  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1 }),
 };
 
 /**
@@ -442,8 +447,8 @@ export function loadPose(out: WingPose, load: number): void {
   out[W.handEl] += 3 * load * DEG;
   for (let f = 0; f < 3; f++) {
     const k = 1 - 0.18 * f;
-    out[W.f0El + f * 3] += 4.5 * load * k * DEG;
-    out[W.f0bEl + f * 2] += 8 * load * k * DEG;
+    out[W.f0El + f * 3] += 7 * load * k * DEG;
+    out[W.f0bEl + f * 2] += 14 * load * k * DEG;
     // Spread under load: the outer finger sweeps forward, the inner ones back.
     out[W.f0Sw + f * 3] += (f - 1) * 2 * Math.max(0, load) * DEG;
   }
