@@ -41,16 +41,19 @@ function bus() {
 }
 
 describe('glide and cruise', () => {
+  // B8's bigger wings (span +16–19%, area +8%, so a higher aspect ratio): every breed glides about
+  // 12–15% flatter than on the 13 m wings (harrier 8.9 → 10.3), and the slightly lighter wing
+  // loading lowers cruise by 4% (the client: "the stall speed may drop a little").
   const targets: Record<BreedId, [number, number]> = {
-    harrier: [8.5, 9.6],
-    galewing: [12, 13.5],
-    skimmer: [7.2, 8.2],
-    ironback: [7.5, 8.6],
+    harrier: [9.7, 10.8],
+    galewing: [13.2, 14.5],
+    skimmer: [8.3, 9.3],
+    ironback: [9.0, 10.1],
   };
   for (const id of BREED_ORDER) {
-    it(`${id}: hands-off cruise 22–30 m/s and best glide near its target`, () => {
+    it(`${id}: hands-off cruise 21–30 m/s and best glide near its target`, () => {
       const cruise = measureGlide(BREEDS[id], 0);
-      expect(cruise.speed).toBeGreaterThan(22);
+      expect(cruise.speed).toBeGreaterThan(21);
       expect(cruise.speed).toBeLessThan(30);
       const best = measureBestGlide(BREEDS[id]);
       expect(best.ratio).toBeGreaterThan(targets[id][0]);

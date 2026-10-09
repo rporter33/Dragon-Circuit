@@ -134,7 +134,7 @@ export const START_SINK_MARGIN = 1.25;
  * Open air wanted around the start point and along the run-up (m). Terrain.distance is a lower
  * bound that never reports more than 24 m once structure colliders are registered (it only
  * searches that far for them), so asking for more could never be satisfied in the game: 20 m is
- * three half-wingspans of the biggest breed.
+ * two half-wingspans of the biggest breed (the galewing's 20.5 m).
  */
 export const START_CLEARANCE = 20;
 export const RUNUP_CLEARANCE = 12;

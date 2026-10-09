@@ -52,7 +52,7 @@ const boomHit: BoomHit = { t: Infinity, soft: false };
  * skimmer ≈ 0.87.
  */
 export function breedScale(breed: { wingspan: number; mass: number }): number {
-  return 0.5 * (breed.wingspan / 13) + 0.5 * Math.cbrt(breed.mass / 650);
+  return 0.5 * (breed.wingspan / 15.5) + 0.5 * Math.cbrt(breed.mass / 650);
 }
 
 /** Body weight relative to the harrier, as a length ratio (cube root of mass): 0.89 … 1.12. */
