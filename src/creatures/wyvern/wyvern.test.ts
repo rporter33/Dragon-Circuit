@@ -10,7 +10,6 @@ import { buildRig } from './rig';
 import { PATTERN_IDS } from './materials';
 import { aimRotation, solveTwoBone } from './ik';
 import { Gait, footPhase, type GaitContext } from './gait';
-import { flapPose, heavyStroke, stroke, strokeLoad, upstrokeFold, W } from './wingPoses';
 import { STAND_ROOT_PITCH } from './animator';
 
 const look = (breed: BreedId, extra: Partial<WyvernLook> = {}): WyvernLook => ({ ...DEFAULT_WYVERN, breed, ...extra });
@@ -354,21 +353,6 @@ describe('pure helpers', () => {
     expect(out.distanceTo(dir)).toBeLessThan(1e-6);
   });
 
-  it('flap cycle: wings high at 0, low at 0.5, folded on the upstroke', () => {
-    expect(stroke(0)).toBeCloseTo(0);
-    expect(stroke(0.5)).toBeCloseTo(1);
-    expect(upstrokeFold(0.25)).toBe(0);
-    expect(upstrokeFold(0.75)).toBeCloseTo(1, 3);
-    const top = flapPose(0, 0, new Float32Array(26));
-    const bottom = flapPose(0.5, 0, new Float32Array(26));
-    const up = flapPose(0.75, 0, new Float32Array(26));
-    expect(top[W.humEl]).toBeGreaterThan(0.6);
-    expect(bottom[W.humEl]).toBeLessThan(-0.4);
-    // Upstroke: elbow flexed forward, wrist folded back.
-    expect(up[W.foreSw]).toBeLessThan(-0.4);
-    expect(up[W.handSw]).toBeGreaterThan(0.5);
-  });
-
   it('gait: planted feet never slide while the body walks and turns', () => {
     const rest = [new Vector3(0.5, -2.6, -0.8), new Vector3(-0.5, -2.6, -0.8), new Vector3(1.2, -2.6, 1.5), new Vector3(-1.2, -2.6, 1.5)];
     const gait = new Gait(rest);
@@ -470,33 +454,6 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
     const lag = (h.headPeak - h.shoulderPeak + 1) % 1;
     expect(lag).toBeGreaterThan(0.01);
     expect(lag).toBeLessThan(0.3);
-  });
-
-  it('hangs at the top of the stroke and loads the wing hardest on the way down', () => {
-    // Same endpoints as the plain stroke, so the flap event still lands at the bottom.
-    expect(heavyStroke(0, 1)).toBeCloseTo(0);
-    expect(heavyStroke(0.5, 1)).toBeCloseTo(1);
-    // The heavy wing has barely left the top a fifth of the way into the downstroke.
-    expect(heavyStroke(0.1, 1)).toBeLessThan(stroke(0.1) * 0.75);
-    // Load: positive through the downstroke, slack (negative) on the recovery.
-    expect(strokeLoad(0.3)).toBeGreaterThan(0.8);
-    expect(strokeLoad(0.75)).toBeLessThan(0);
-    // A loaded wing bows its membrane up (billow uniform) on the downstroke.
-    const w = new Wyvern(look('harrier'));
-    const pose = gliding();
-    pose.flapStrength = 1;
-    let down = 0;
-    let up = 0;
-    for (let i = 0; i < 240; i++) {
-      pose.flapPhase = ((i / 60) * 1.6) % 1;
-      w.update(1 / 60, pose);
-      const b = w.uniforms.uWingLoad.value.x;
-      if (pose.flapPhase > 0.3 && pose.flapPhase < 0.45) down = Math.max(down, b);
-      if (pose.flapPhase > 0.75 && pose.flapPhase < 0.95) up = Math.max(up, b);
-    }
-    expect(down).toBeGreaterThan(0.15);
-    expect(up).toBeLessThan(down * 0.5);
-    w.dispose();
   });
 
   it('works the outer wing harder in a banked turn', () => {

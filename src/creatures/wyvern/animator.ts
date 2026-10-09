@@ -35,6 +35,7 @@ import { Bouncy, Spring, aimRotation, mirrorQuat, noise1, rotateAbout, solveTwoB
 import { Gait, type GaitContext } from './gait';
 import {
   BASK,
+  FLAP_STYLES,
   FLARE,
   FOLDED,
   GLIDE,
@@ -718,7 +719,7 @@ export class WyvernAnimator {
     // Air load: lift at 1 g holds a gentle camber; g-load and the power stroke bow the membrane up
     // and bend the fingers, the recovery stroke lets them go slack.
     const glideLoad = 0.3 * clamp(this.gLoad, 0, 3) * spreadAir;
-    const beatLoad = flap * strokeLoad(phase) * (1 + 0.25 * heft);
+    const beatLoad = flap * strokeLoad(phase, FLAP_STYLES[P.breed]) * (1 + 0.25 * heft);
     this.fold = groundW * (1 - openAmt) * (1 - bask);
     for (let side = 0; side < 2; side++) {
       const wp = this.wingFK[side];
@@ -728,7 +729,7 @@ export class WyvernAnimator {
       blendPose(GLIDE, TUCK, tuck, wp);
       blendPose(wp, FLARE, flare * (1 - tuck), wp);
       if (flap > 0.001) {
-        const fp = flapPose(phase, fatigue, this.flapSide, heft);
+        const fp = flapPose(phase, fatigue, this.flapSide, FLAP_STYLES[P.breed]);
         // The outer wing of a turn takes the bigger stroke.
         const amp = clamp(1 + 0.3 * asym, 0.72, 1.32);
         fp[W.humEl] *= amp;
@@ -750,7 +751,7 @@ export class WyvernAnimator {
       loadPose(wp, load * spreadAir);
       // Ground pose (FK part): settle/shuffle/brace, raised for the takeoff, or spread to bask.
       const groundFK = this.tmpPose;
-      if (takeoffCrouch) blendPose(SETTLE, flapPose(0, 0, this.flapTmp, heft), openAmt, groundFK);
+      if (takeoffCrouch) blendPose(SETTLE, flapPose(0, 0, this.flapTmp, FLAP_STYLES[P.breed]), openAmt, groundFK);
       else blendPose(FOLDED, SETTLE, clamp01(openAmt * 1.4 + this.shuffle * 0.8 + brace), groundFK);
       if (bask > 0.001) blendPose(groundFK, BASK, bask, groundFK);
       blendPose(wp, groundFK, groundW, wp);

@@ -6,7 +6,9 @@
 //   twist      + turns the leading edge down (pronation), − pitches it up
 // Bind pose = fully spread, flat. Channels are blended linearly, which is fine for these ranges.
 
+import type { BreedId } from '../../core/types';
 import { DEG, clamp, smoothstep } from '../../core/math';
+import { BREEDS, DEFAULT_DOWN_FRAC } from '../../flight/breeds';
 
 /** Channel layout of a wing pose (radians). */
 export const W = {
@@ -138,77 +140,202 @@ export function blendPose(a: WingPose, b: WingPose, t: number, out: WingPose): W
   return out;
 }
 
-/** Stroke position 0 (wings high) … 1 (bottom of the downstroke). */
-export function stroke(phase: number): number {
-  return 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
+// --- The wingbeat --------------------------------------------------------------------------------
+//
+// One beat runs phase 0 → 1 (FlightState.flapPhase): the downstroke from the top of the stroke to
+// the bottom over [0, D), the recovery back up over [D, 1), where D is the breed's downstroke
+// fraction (BreedStats.downFrac, 0.54–0.62: big flyers spend most of the beat driving down). The
+// flight model's power curve, the 'flap' event (at D), the membrane load and the body's heave all
+// run on the same clock (strokePhase); the wing's visible travel is that clock eased
+// (strokeWarp), so the wing is moving fastest while it pushes hardest and reverses briskly at the
+// top instead of hanging there.
+
+/**
+ * How a breed beats its wings (angles in degrees, left wing convention). The shoulder sets the
+ * size of the stroke, the elbow and wrist fold the wing on the recovery, the fingers flex and
+ * trail the arm. Big wings beat shallow and let the tips do the work; small ones beat deep.
+ */
+export interface FlapStyle {
+  /** Downstroke fraction of the beat (the breed's BreedStats.downFrac). */
+  down: number;
+  /** Shoulder elevation at the top and at the bottom of the stroke. */
+  humTop: number;
+  humBot: number;
+  /** Shoulder sweep at the height of the downstroke (− reaches forward) and the recovery (+ draws back). */
+  sweepDown: number;
+  sweepUp: number;
+  /** How far the elbow and wrist fold on the recovery (1 = the full M-fold). */
+  fold: number;
+  /** How far the fingertips bend under the stroke (degrees) and how far they trail the arm (phase). */
+  tipFlex: number;
+  tipLag: number;
+  /**
+   * How far (phase) the arm runs ahead of the beat's clock. The bend runs out along the wing, so
+   * the tip reaches the bottom after the shoulder does; leading the arm by that much puts the
+   * wingtip's lowest point on the 'flap' event, when the flight model's power stroke ends.
+   */
+  lead: number;
 }
 
-/** How folded the upstroke is: 0 on the downstroke, peaking mid-upstroke. */
-export function upstrokeFold(phase: number): number {
-  const p = ((phase % 1) + 1) % 1;
-  return p > 0.5 ? Math.sin(((p - 0.5) / 0.5) * Math.PI) : 0;
+function flapStyle(id: BreedId, s: Omit<FlapStyle, 'down'>): FlapStyle {
+  return { down: BREEDS[id].downFrac ?? DEFAULT_DOWN_FRAC, ...s };
 }
 
 /**
- * Stroke position of a heavy wing: like `stroke` (0 high, 1 at the bottom, same timing at 0 and
- * 0.5 so the flap event still lands on the bottom), but the wing hangs at the top while it
- * loads, then drives through the middle of the downstroke; the recovery is quicker. `heft`
- * (0 light … 1 heaviest breed) deepens the hang.
+ * The breeds' strokes. The skimmer beats deep and quick with a full fold; the harrier is the
+ * all-rounder; the galewing's long, high-aspect wing beats shallow from the shoulder, its hand
+ * never fully folds and the flexing tips do the work (an albatross, not a bat); the ironback
+ * drives a deep, heavy downstroke on stiff tips.
  */
-export function heavyStroke(phase: number, heft: number): number {
-  let p = phase - Math.floor(phase);
-  if (p < 0.5) {
-    const x = p * 2;
-    return 0.5 - 0.5 * Math.cos(Math.PI * Math.pow(x, 1.25 + 0.35 * heft));
+export const FLAP_STYLES: Readonly<Record<BreedId, FlapStyle>> = {
+  skimmer: flapStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.034 }),
+  harrier: flapStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.037 }),
+  galewing: flapStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.084 }),
+  ironback: flapStyle('ironback', { humTop: 32, humBot: -42, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.03 }),
+};
+
+/**
+ * Stroke plane tilt: the shoulder sweeps back at the top of the stroke and forward at the
+ * bottom by this fraction of the elevation range, so the downstroke drives down AND forward and
+ * the wingtip traces a tilted loop in side view (about 22° from the body's vertical), not a hinge.
+ */
+const STROKE_TILT = 0.54;
+
+/**
+ * Easing of the wing's travel (cubic Béziers (0,0)–(x1,0)–(x2,1)–(1,1)). The downstroke leaves
+ * the top briskly, drives through the middle and slows into the bottom; the recovery starts
+ * slowly (the wing flips and folds) and arrives back at the top briskly: a quick reversal up
+ * there, a loaded one down below.
+ */
+const EASE_DOWN_X1 = 0.1;
+const EASE_DOWN_X2 = 0.72;
+const EASE_UP_X1 = 0.55;
+const EASE_UP_X2 = 0.9;
+
+/** y of the cubic Bézier ease (0,0)–(x1,0)–(x2,1)–(1,1) at x (Newton on x(t); no allocation). */
+function bezierEase(x: number, x1: number, x2: number): number {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  // x(t) = a·t³ + b·t² + c·t
+  const c = 3 * x1;
+  const b = 3 * (x2 - x1) - c;
+  const a = 1 - c - b;
+  let t = x;
+  for (let i = 0; i < 6; i++) {
+    const xt = ((a * t + b) * t + c) * t - x;
+    const dx = (3 * a * t + 2 * b) * t + c;
+    if (Math.abs(xt) < 1e-6) break;
+    if (Math.abs(dx) < 1e-6) break;
+    t = clamp(t - xt / dx, 0, 1);
   }
-  p = (p - 0.5) * 2;
-  return 0.5 + 0.5 * Math.cos(Math.PI * Math.pow(p, 0.85));
+  return t * t * (3 - 2 * t);
+}
+
+const frac = (x: number) => x - Math.floor(x);
+
+/**
+ * The beat's shared clock: phase 0..1 → 0..0.5 over the downstroke [0, D) and 0.5..1 over the
+ * recovery [D, 1), linear within each. The flight model's power curve, the membrane load and the
+ * heave are functions of this, so they peak together.
+ */
+export function strokePhase(phase: number, down: number): number {
+  const p = frac(phase);
+  return p < down ? (0.5 * p) / down : 0.5 + (0.5 * (p - down)) / (1 - down);
+}
+
+/**
+ * Where the wing is in its stroke as a warped phase: 0 at the top, 0.5 at the bottom (reached
+ * exactly at phase D, when the 'flap' event fires), eased so the wing moves fastest mid-stroke.
+ */
+export function strokeWarp(phase: number, down: number): number {
+  const p = frac(phase);
+  if (p < down) return 0.5 * bezierEase(p / down, EASE_DOWN_X1, EASE_DOWN_X2);
+  return 0.5 + 0.5 * bezierEase((p - down) / (1 - down), EASE_UP_X1, EASE_UP_X2);
+}
+
+/** Stroke travel: 0 with the wings at the top … 1 at the bottom of the downstroke. */
+export function strokeTravel(phase: number, down: number): number {
+  const w = strokeWarp(phase, down);
+  return w < 0.5 ? 2 * w : 2 - 2 * w;
+}
+
+/** How folded the recovery is: 0 on the downstroke, rising to 1 mid-recovery and back. */
+export function recoveryFold(phase: number, down: number): number {
+  const w = strokeWarp(phase, down);
+  return w > 0.5 ? Math.sin((w - 0.5) * 2 * Math.PI) : 0;
+}
+
+/**
+ * Leading-edge twist of the arm (degrees, + pronated): pronated through the downstroke so the
+ * wing bites as it drives down, flipped to supination within the first 15 % of the recovery
+ * (the quick flip at the bottom), held while the wing rises, and turned back over the last
+ * 40 % of the recovery ready for the next downstroke.
+ */
+const PRONATE = 15;
+const SUPINATE = -22;
+function armTwist(phase: number, down: number): number {
+  const p = frac(phase);
+  if (p < down) return PRONATE;
+  const r = (p - down) / (1 - down);
+  if (r < 0.15) return PRONATE + (SUPINATE - PRONATE) * smoothstep(0, 0.15, r);
+  if (r < 0.6) return SUPINATE;
+  return SUPINATE + (PRONATE - SUPINATE) * smoothstep(0.6, 1, r);
 }
 
 /**
  * How hard the air pushes on the wing over a beat (0 slack … 1 peak of the power stroke, slightly
- * negative while the wing feathers up through the recovery). Peaks in the second half of the
- * downstroke, when the heavy wing is moving fastest.
+ * negative while the wing feathers up through the recovery). Runs on the shared clock, so the
+ * fingers bend and the membrane billows exactly when the flight model's stroke pushes hardest.
  */
-export function strokeLoad(phase: number): number {
-  const p = phase - Math.floor(phase);
-  if (p < 0.5) return Math.pow(Math.sin(Math.PI * Math.pow(p * 2, 1.15)), 1.4);
-  return -0.35 * Math.sin(Math.PI * (p - 0.5) * 2);
+export function strokeLoad(phase: number, style: FlapStyle = FLAP_STYLES.harrier): number {
+  const w = strokePhase(phase, style.down);
+  if (w < 0.5) return Math.pow(Math.sin(2 * Math.PI * w), 1.4);
+  return -0.35 * Math.sin(2 * Math.PI * (w - 0.5));
 }
 
 /**
- * The flapping wing at a phase: a powerful, fully extended downstroke with the leading edge
- * pronated, then an upstroke with the elbow and wrist flexed so the tips fold and trail.
- * Distal joints lag the shoulder, so the wave runs out to the tips. `labor` (fatigue) deepens
- * the stroke and droops the tips; `heft` (0 light … 1 heaviest) makes the stroke bigger, the
- * hang at the top longer and the tips lag further behind the arm.
+ * The flapping wing at a phase, in the breed's style: a fully extended downstroke driving down
+ * and forward with the leading edge pronated, a quick supination flip at the bottom, then a
+ * recovery with the elbow and wrist flexed (the M-fold) drawing the wing up and back. Distal
+ * joints lag the shoulder, so the wave runs out to the tips, which bend up under the load and
+ * trail low on the way up. `labor` (fatigue) deepens the stroke and droops the tips.
  */
-export function flapPose(phase: number, labor: number, out: WingPose, heft = 0.4): WingPose {
-  const u = upstrokeFold(phase - 0.03);
-  const s2 = Math.sin((phase - 0.02) * Math.PI * 2);
+export function flapPose(beatPhase: number, labor: number, out: WingPose, style: FlapStyle = FLAP_STYLES.harrier): WingPose {
+  const D = style.down;
+  const phase = beatPhase + style.lead;
+  const fold = style.fold;
+  // Distal elevations scale with the size of the stroke: a shallow shoulder stroke keeps the wing flat.
+  const k = style.humTop / 50;
+  const top = style.humTop + 6 * labor;
+  const bottom = style.humBot - 4 * labor;
+  const s = strokeTravel(phase, D);
+  const downstroke = frac(phase) < D;
+  const u = recoveryFold(phase - 0.03, D);
   out.fill(0);
-  const top = 50 + 6 * labor + 5 * heft;
-  const bottom = -34 - 4 * labor - 4 * heft;
-  out[W.humEl] = (top + (bottom - top) * heavyStroke(phase, heft)) * DEG;
-  out[W.humSw] = (-7 * s2 + 10 * u) * DEG;
-  out[W.humTw] = (13 * s2) * DEG;
-  out[W.foreEl] = (12 - 22 * heavyStroke(phase - 0.05, heft)) * DEG;
-  out[W.foreSw] = (-34 * u) * DEG;
-  out[W.foreTw] = (4 * s2) * DEG;
-  out[W.handEl] = (10 - 22 * heavyStroke(phase - 0.09, heft) - 6 * u) * DEG;
-  out[W.handSw] = (46 * u) * DEG;
-  out[W.handTw] = (6 * s2 - 8 * u) * DEG;
+  out[W.humEl] = (top + (bottom - top) * s) * DEG;
+  // Sweep: the tilted stroke plane (back at the top, forward at the bottom), plus a forward reach
+  // late in the downstroke and a draw back through the recovery: a loop, not a hinge.
+  const loop = downstroke ? style.sweepDown * Math.sin(Math.PI * Math.pow(s, 1.94)) : style.sweepUp * Math.sin(Math.PI * s);
+  out[W.humSw] = (STROKE_TILT * (0.5 - s) * (style.humTop - style.humBot) + loop) * DEG;
+  const tw = armTwist(phase, D);
+  out[W.humTw] = tw * DEG;
+  const sw = Math.sin(2 * Math.PI * strokeWarp(phase - 0.02, D));
+  out[W.foreEl] = k * (12 - 22 * strokeTravel(phase - 0.03, D)) * DEG;
+  out[W.foreSw] = -34 * u * fold * DEG;
+  out[W.foreTw] = 4 * sw * DEG;
+  out[W.handEl] = (k * (10 - 22 * strokeTravel(phase - 0.05, D)) - 6 * u * fold) * DEG;
+  out[W.handSw] = 46 * u * fold * DEG;
+  // The hand's twist trails the arm's flip by a moment.
+  out[W.handTw] = (0.6 * (armTwist(phase - 0.04, D) - tw) - 8 * u * fold) * DEG;
   // The tips trail the arm: bent up while the arm drives down, flicking through at the bottom,
-  // trailing low on the way up. Heavier wings lag more.
-  const lag = 0.14 + 0.04 * heft;
-  const tipEl = ((14 + 9 * heft) * Math.sin((phase - lag) * Math.PI * 2) - 8 * labor * u) * DEG;
+  // trailing low on the way up.
+  const tipEl = (style.tipFlex * Math.sin(2 * Math.PI * strokeWarp(phase - style.tipLag, D)) - 8 * labor * u) * DEG;
   for (let f = 0; f < 3; f++) {
-    const el = (10 - 20 * heavyStroke(phase - 0.13 - 0.02 * f - 0.03 * heft, heft)) * DEG;
-    out[W.f0El + f * 3] = el;
-    out[W.f0Sw + f * 3] = (-(10 + 12 * f) * u) * DEG;
-    out[W.f0Tw + f * 3] = (4 * s2) * DEG;
-    out[W.f0bEl + f * 2] = tipEl * (1 - 0.2 * f) - 10 * u * DEG;
-    out[W.f0bSw + f * 2] = 6 * u * DEG;
+    out[W.f0El + f * 3] = k * (10 - 20 * strokeTravel(phase - 0.07 - 0.015 * f, D)) * DEG;
+    out[W.f0Sw + f * 3] = -(10 + 12 * f) * u * fold * DEG;
+    out[W.f0Tw + f * 3] = 4 * sw * DEG;
+    out[W.f0bEl + f * 2] = tipEl * (1 - 0.2 * f) - 10 * u * fold * DEG;
+    out[W.f0bSw + f * 2] = 6 * u * fold * DEG;
   }
   return out;
 }
