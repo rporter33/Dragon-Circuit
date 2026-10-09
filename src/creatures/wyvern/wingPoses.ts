@@ -5,8 +5,9 @@
 //   sweep      + swings the outer end back (toward the tail)
 //   twist      + turns the leading edge down (pronation), − pitches it up
 // Bind pose = fully spread, flat. Channels are blended linearly, which is fine for these ranges.
+// The ground poses (folded, settle, bask) live in anim/groundPoses.ts.
 
-import { DEG, clamp, smoothstep } from '../../core/math';
+import { DEG, clamp } from '../../core/math';
 
 /** Channel layout of a wing pose (radians). */
 export const W = {
@@ -97,40 +98,8 @@ export const FLARE = pose({
   f2bEl: -14,
 });
 
-/** Raised half-fold: the settle after landing, a resting shuffle. */
-export const SETTLE = pose({
-  humEl: 38,
-  humSw: 38,
-  humTw: -10,
-  foreEl: 10,
-  foreSw: -110,
-  foreTw: 0,
-  handEl: -20,
-  handSw: 120,
-  f0El: 6,
-  f0Sw: 8,
-  f1El: 6,
-  f1Sw: -18,
-  f2El: 6,
-  f2Sw: -42,
-  f0bEl: -6,
-  f1bEl: -6,
-  f2bEl: -6,
-});
-
-/** Folded on the ground (used where IK is not driving the arm). */
-export const FOLDED = pose({
-  humEl: -55,
-  humSw: 55,
-  humTw: 20,
-  foreEl: -40,
-  foreSw: -120,
-  handEl: 75,
-  handSw: 150,
-  f0Sw: 6,
-  f1Sw: -28,
-  f2Sw: -58,
-});
+/** A wing pose from per-channel angles in degrees (missing channels are 0). */
+export const wingPose = pose;
 
 /** Linear blend a → b by t into out. */
 export function blendPose(a: WingPose, b: WingPose, t: number, out: WingPose): WingPose {
@@ -253,31 +222,3 @@ export function adjustPose(out: WingPose, gLoad: number, asym: number, buffet: n
   out[W.handEl] += buffet * 6 * DEG;
   for (let f = 0; f < 3; f++) out[W.f0bEl + f * 2] += buffet * (8 + 3 * f) * DEG;
 }
-
-/**
- * Basking (the end of a reptile's stretch after resting): wings spread wide and raised toward
- * the sun like a cormorant drying out — arms up and out, the leading edge turned up so the
- * membrane faces the light, fingers splayed and their tips drooping. Blend weight is the caller's.
- */
-export const BASK = pose({
-  humEl: 30,
-  humSw: 4,
-  humTw: -12,
-  foreEl: -6,
-  foreSw: -12,
-  foreTw: -6,
-  handEl: -10,
-  handSw: 10,
-  f0El: -10,
-  f0Sw: 2,
-  f1El: -12,
-  f1Sw: 6,
-  f2El: -14,
-  f2Sw: 12,
-  f0bEl: -12,
-  f1bEl: -10,
-  f2bEl: -8,
-});
-
-/** Ease for the takeoff/landing opening of the wings on the ground. */
-export const openEase = (x: number) => smoothstep(0, 1, x);
