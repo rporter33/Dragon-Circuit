@@ -21,6 +21,8 @@ type Solid =
   | { type: 'arch'; shape: ArchShape; stamp: number };
 
 const tmpN = new Vector3();
+/** sqrt(a² + b²). Math.hypot allocates its argument list in V8; these run many times a frame. */
+const hyp = (a: number, b: number): number => Math.sqrt(a * a + b * b);
 const tmpP = new Vector3();
 const tmpQ = new Vector3();
 
@@ -79,7 +81,8 @@ export class Terrain implements TerrainQuery {
       for (let cz = z0; cz <= z1; cz++) {
         const list = this.grid.get(this.key(cx, cz));
         if (!list) continue;
-        for (const solid of list) {
+        for (let i = 0; i < list.length; i++) {
+          const solid = list[i];
           if (solid.stamp === s) continue;
           solid.stamp = s;
           out.push(solid);
@@ -157,7 +160,9 @@ export class Terrain implements TerrainQuery {
   private collideRock(p: Vector3, radius: number, outNormal: Vector3): boolean {
     let hit = false;
     const center = p;
-    for (const s of this.candidates(center.x, center.z, radius + 1)) {
+    const list = this.candidates(center.x, center.z, radius + 1);
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
       // Resolve against each solid in turn, accumulating the correction.
       let pushed = false;
       if (s.type === 'island') pushed = this.collideIsland(s.shape, p, radius);
@@ -177,7 +182,7 @@ export class Terrain implements TerrainQuery {
     if (p.y > shape.maxY + radius || p.y < shape.minY - radius) return false;
     const dx = p.x - d.x;
     const dz = p.z - d.z;
-    const rxz = Math.hypot(dx, dz);
+    const rxz = hyp(dx, dz);
     if (rxz > shape.maxRadius + radius) return false;
     const theta = Math.atan2(dz, dx);
     const R = shape.outlineRadius(theta);
@@ -205,7 +210,7 @@ export class Terrain implements TerrainQuery {
     let vy = 0;
     if (p.y > top) vy = p.y - top;
     else if (p.y < bottom) vy = p.y - bottom;
-    const dist = Math.hypot(out, vy);
+    const dist = hyp(out, vy);
     if (dist >= radius) return false;
     const ox = dx / rxz;
     const oz = dz / rxz;
@@ -225,7 +230,7 @@ export class Terrain implements TerrainQuery {
     if (p.y < d.tipY - radius || p.y > d.topY + radius) return false;
     const dx = p.x - d.x;
     const dz = p.z - d.z;
-    const rxz = Math.hypot(dx, dz);
+    const rxz = hyp(dx, dz);
     if (rxz > shape.maxRadius + radius) return false;
     // Flat top.
     if (p.y > d.topY - 1 && rxz < d.topRadius) {
@@ -266,7 +271,9 @@ export class Terrain implements TerrainQuery {
   distance(p: Vector3): number {
     let best = Infinity;
     // Look a generous distance around; far solids are bounded by their cylinders.
-    for (const s of this.candidates(p.x, p.z, 450)) {
+    const list = this.candidates(p.x, p.z, 450);
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
       let d: number;
       if (s.type === 'island') d = islandDistance(s.shape, p);
       else if (s.type === 'spire') d = spireDistance(s.shape, p);
@@ -325,11 +332,11 @@ function islandDistance(shape: IslandShape, p: Vector3): number {
   const d = shape.def;
   const dx = p.x - d.x;
   const dz = p.z - d.z;
-  const rxz = Math.hypot(dx, dz);
+  const rxz = hyp(dx, dz);
   // Far away: distance to the bounding cylinder is plenty.
   const boundOut = rxz - shape.maxRadius;
   const boundVy = p.y > shape.maxY ? p.y - shape.maxY : p.y < shape.minY ? shape.minY - p.y : 0;
-  if (boundOut > 30 || boundVy > 30) return Math.hypot(Math.max(0, boundOut), boundVy);
+  if (boundOut > 30 || boundVy > 30) return hyp(Math.max(0, boundOut), boundVy);
   const R = shape.outlineRadius(Math.atan2(dz, dx));
   const top = shape.topHeight(p.x, p.z);
   const bottom = shape.bottomHeight(p.x, p.z);
@@ -337,14 +344,14 @@ function islandDistance(shape: IslandShape, p: Vector3): number {
   const dy = Math.max(p.y - top, bottom - p.y);
   let dist: number;
   if (dr <= 0) dist = dy > 0 ? dy : Math.max(dy, dr);
-  else dist = dy > 0 ? Math.hypot(dr, dy) : dr;
+  else dist = dy > 0 ? hyp(dr, dy) : dr;
   return dist * 0.7;
 }
 
 function spireDistance(shape: SpireShape, p: Vector3): number {
   const d = shape.def;
-  const rxz = Math.hypot(p.x - d.x, p.z - d.z);
-  if (p.y > d.topY) return Math.hypot(Math.max(0, rxz - d.topRadius), p.y - d.topY);
-  if (p.y < d.tipY) return Math.hypot(rxz, d.tipY - p.y);
+  const rxz = hyp(p.x - d.x, p.z - d.z);
+  if (p.y > d.topY) return hyp(Math.max(0, rxz - d.topRadius), p.y - d.topY);
+  if (p.y < d.tipY) return hyp(rxz, d.tipY - p.y);
   return (rxz - shape.baseRadiusAt(p.y)) * 0.8;
 }

@@ -376,7 +376,12 @@ export class ThermalMotes {
     this.uNow.value += dt;
     this.uPresence.value = damp(this.uPresence.value, presence, 1.5, dt);
     const th = this.thermals;
-    for (let i = 0; i < th.length; i++) this.dists[i] = Math.max(0, Math.hypot(th[i].x - cam.x, th[i].z - cam.z) - th[i].radius);
+    for (let i = 0; i < th.length; i++) {
+      // sqrt, not Math.hypot (which allocates in V8), once per thermal per frame.
+      const dx = th[i].x - cam.x;
+      const dz = th[i].z - cam.z;
+      this.dists[i] = Math.max(0, Math.sqrt(dx * dx + dz * dz) - th[i].radius);
+    }
     this.order.sort(this.byDistance);
     let any = false;
     for (let s = 0; s < THERMAL_SLOTS; s++) {

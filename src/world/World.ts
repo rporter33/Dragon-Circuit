@@ -296,7 +296,9 @@ export class World implements WorldSystem {
     let bestDist = Infinity;
     let shadow: Feature | null = null;
     let shadowDist = Infinity;
-    for (const f of this.features) {
+    const features = this.features;
+    for (let i = 0; i < features.length; i++) {
+      const f = features[i];
       const dist = boundsDistance(f.bounds, cam.x, cam.y, cam.z);
       const need = this.neededLevel(f, dist);
       // The finest needed level first: a teleport should not wait on intermediate levels.
@@ -354,19 +356,23 @@ export class World implements WorldSystem {
    * can't see the underside, from underneath you can't see the top. Draw only the visible part.
    */
   private cullHiddenParts(cam: Vector3): void {
-    for (const f of this.features) {
+    const features = this.features;
+    for (let i = 0; i < features.length; i++) {
+      const f = features[i];
       const shape = f.island;
       if (!shape) continue;
       const d = shape.def;
       let part: Part = 'all';
       // Well inside the footprint only: near the rim (and across a bay) both parts can show.
-      if (Math.hypot(cam.x - d.x, cam.z - d.z) < shape.maxRadius && shape.normRadius(cam.x, cam.z) < 0.9) {
+      const dx = cam.x - d.x;
+      const dz = cam.z - d.z;
+      if (dx * dx + dz * dz < shape.maxRadius * shape.maxRadius && shape.normRadius(cam.x, cam.z) < 0.9) {
         if (cam.y > shape.topHeight(cam.x, cam.z) + 0.5) part = 'top';
         else if (cam.y < shape.bottomHeight(cam.x, cam.z) - 0.5) part = 'under';
       }
       if (part === f.part) continue;
       f.part = part;
-      for (const m of f.meshes) if (m) applyPart(m, part);
+      for (let k = 0; k < f.meshes.length; k++) if (f.meshes[k]) applyPart(f.meshes[k]!, part);
       if (f.shadowGeo) applyPartTo(f.shadowGeo, part);
     }
   }

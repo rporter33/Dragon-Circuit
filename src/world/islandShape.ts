@@ -201,7 +201,8 @@ export class IslandShape {
   normRadius(x: number, z: number): number {
     const dx = x - this.def.x;
     const dz = z - this.def.z;
-    return Math.hypot(dx, dz) / this.outlineRadius(Math.atan2(dz, dx));
+    // sqrt rather than Math.hypot (which allocates in V8): these run many times a frame.
+    return Math.sqrt(dx * dx + dz * dz) / this.outlineRadius(Math.atan2(dz, dx));
   }
 
   /** Top surface height. Defined everywhere; only meaningful where normRadius <= 1. */
@@ -209,7 +210,7 @@ export class IslandShape {
     const d = this.def;
     const dx = x - d.x;
     const dz = z - d.z;
-    const s = Math.min(1, Math.hypot(dx, dz) / this.outlineRadius(Math.atan2(dz, dx)));
+    const s = Math.min(1, Math.sqrt(dx * dx + dz * dz) / this.outlineRadius(Math.atan2(dz, dx)));
     let hill = 0.5 + 0.5 * fbm2(this.hillN, dx * this.hillFreq, dz * this.hillFreq, 4);
     if (this.ridgedMix > 0) {
       hill = hill * (1 - this.ridgedMix) + ridged2(this.hillN, dx * this.hillFreq * 1.3 + 17, dz * this.hillFreq * 1.3 - 9, 4) * this.ridgedMix;
@@ -236,7 +237,7 @@ export class IslandShape {
     const d = this.def;
     const dx = x - d.x;
     const dz = z - d.z;
-    const r = Math.hypot(dx, dz);
+    const r = Math.sqrt(dx * dx + dz * dz);
     const theta = Math.atan2(dz, dx);
     const s0 = Math.min(1, r / this.outlineRadius(theta));
     // A keel pulled off-center: the radial coordinate is warped (still 0 at the center and 1 at

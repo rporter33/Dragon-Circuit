@@ -293,7 +293,9 @@ export class HangingRoots {
   /** Near or far detail per island, by the camera's distance from its roots. */
   update(camera: PerspectiveCamera): void {
     const c = camera.position;
-    for (const e of this.islands) {
+    const islands = this.islands;
+    for (let i = 0; i < islands.length; i++) {
+      const e = islands[i];
       // Standing on (or flying low over) the island itself, its rock hides everything under it.
       const hidden = c.y > e.center.y && e.shape.normRadius(c.x, c.z) < 0.9 && c.y > e.shape.topHeight(c.x, c.z);
       const far = c.distanceTo(e.center) - e.radius > this.farDist;

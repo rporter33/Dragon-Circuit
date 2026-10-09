@@ -115,17 +115,27 @@ export function buildBanks(layout: WorldLayout, count: number, puffsPer: number,
 
 /** Horizontal gap between a bank and the nearest island it overlaps vertically (m). */
 export function islandClearance(layout: WorldLayout, x: number, y: number, z: number, width: number, height: number): number {
+  // Indexed loops and sqrt (for-of iterators and Math.hypot allocate in V8); runs per bank per
+  // refresh.
   let best = Infinity;
-  for (const isl of layout.islands) {
+  const islands = layout.islands;
+  for (let i = 0; i < islands.length; i++) {
+    const isl = islands[i];
     const top = isl.y + isl.hills + 40;
     const bottom = isl.y - isl.depth * 0.9;
     if (y > top || y + height < bottom) continue;
-    const gap = Math.hypot(x - isl.x, z - isl.z) - isl.radius * (1 + isl.outline) - width;
+    const dx = x - isl.x;
+    const dz = z - isl.z;
+    const gap = Math.sqrt(dx * dx + dz * dz) - isl.radius * (1 + isl.outline) - width;
     if (gap < best) best = gap;
   }
-  for (const sp of layout.spires) {
+  const spires = layout.spires;
+  for (let i = 0; i < spires.length; i++) {
+    const sp = spires[i];
     if (y > sp.topY + 30 || y + height < sp.tipY) continue;
-    const gap = Math.hypot(x - sp.x, z - sp.z) - sp.bellyRadius - width;
+    const dx = x - sp.x;
+    const dz = z - sp.z;
+    const gap = Math.sqrt(dx * dx + dz * dz) - sp.bellyRadius - width;
     if (gap < best) best = gap;
   }
   return best;
@@ -195,7 +205,9 @@ export class CloudBankField {
       this.bankAlpha[b] = a;
       // Fading banks also shrink: they evaporate rather than turn to glass.
       const grow = 0.55 + 0.45 * a;
-      for (const p of bank.puffs) {
+      const puffs = bank.puffs;
+      for (let i = 0; i < puffs.length; i++) {
+        const p = puffs[i];
         this.centers[k * 3] = x + p.ox * grow;
         this.centers[k * 3 + 1] = y + p.oy * grow;
         this.centers[k * 3 + 2] = z + p.oz * grow;

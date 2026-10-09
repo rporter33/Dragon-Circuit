@@ -9,12 +9,22 @@ export type Bounds =
   | { kind: 'cylinder'; x: number; z: number; radius: number; minY: number; maxY: number }
   | { kind: 'sphere'; x: number; y: number; z: number; radius: number };
 
-/** Distance (m) from a point to bounds; 0 inside. */
+/**
+ * Distance (m) from a point to bounds; 0 inside. Runs for every feature every frame: plain
+ * square roots, since Math.hypot allocates its argument list in V8.
+ */
 export function boundsDistance(b: Bounds, px: number, py: number, pz: number): number {
-  if (b.kind === 'sphere') return Math.max(0, Math.hypot(px - b.x, py - b.y, pz - b.z) - b.radius);
-  const out = Math.max(0, Math.hypot(px - b.x, pz - b.z) - b.radius);
+  if (b.kind === 'sphere') {
+    const dx = px - b.x;
+    const dy = py - b.y;
+    const dz = pz - b.z;
+    return Math.max(0, Math.sqrt(dx * dx + dy * dy + dz * dz) - b.radius);
+  }
+  const dx = px - b.x;
+  const dz = pz - b.z;
+  const out = Math.max(0, Math.sqrt(dx * dx + dz * dz) - b.radius);
   const vy = py > b.maxY ? py - b.maxY : py < b.minY ? b.minY - py : 0;
-  return Math.hypot(out, vy);
+  return Math.sqrt(out * out + vy * vy);
 }
 
 const camPos = new Vector3();

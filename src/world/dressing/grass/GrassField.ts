@@ -62,7 +62,22 @@ interface Slot {
 }
 
 const key = (cx: number, cz: number) => (cx + 4096) * 8192 + (cz + 4096);
-const byDistance = (a: { d: number }, b: { d: number }) => a.d - b.d;
+
+/**
+ * Stable in-place sort by distance. The wanted list is almost sorted frame to frame, so this is
+ * close to linear, and unlike Array.prototype.sort it allocates nothing.
+ */
+function sortByDistance(a: { d: number }[]): void {
+  for (let i = 1; i < a.length; i++) {
+    const v = a[i];
+    let j = i - 1;
+    while (j >= 0 && a[j].d > v.d) {
+      a[j + 1] = a[j];
+      j--;
+    }
+    a[j + 1] = v;
+  }
+}
 
 const tmpBox = { x: 0, z: 0 };
 
@@ -334,6 +349,18 @@ export class GrassField {
     return stored;
   }
 
+  /** Slot release for update(); a bound method so forEach needs no closure per frame. */
+  private releaseIfUnwanted = (s: Slot, k: number): void => {
+    if (this.wantedKeys.has(k)) return;
+    s.grass.mesh.removeFromParent();
+    s.flowers.mesh.removeFromParent();
+    s.key = -1;
+    s.data = null;
+    // Deleting the entry being visited is safe in Map.forEach.
+    this.slots.delete(k);
+    this.free.push(s);
+  };
+
   update(camera: PerspectiveCamera, focus: Vector3): void {
     const q = this.quality;
     const R = q.grassRadius;
@@ -357,7 +384,10 @@ export class GrassField {
         if (this.empty.has(k)) continue;
         tmpBox.x = Math.max(cx * S, Math.min(c.x, cx * S + S));
         tmpBox.z = Math.max(cz * S, Math.min(c.z, cz * S + S));
-        const dxz = Math.hypot(tmpBox.x - c.x, tmpBox.z - c.z);
+        // sqrt, not Math.hypot (which allocates in V8): this runs for every cell in range.
+        const bx = tmpBox.x - c.x;
+        const bz = tmpBox.z - c.z;
+        const dxz = Math.sqrt(bx * bx + bz * bz);
         if (dxz > R) continue;
         const b = this.cache.get(k) ?? this.band(k, cx, cz);
         if (!b) {
@@ -365,7 +395,7 @@ export class GrassField {
           continue;
         }
         const dy = c.y > b.maxY ? c.y - b.maxY : c.y < b.minY ? b.minY - c.y : 0;
-        const d = Math.hypot(dxz, dy);
+        const d = Math.sqrt(dxz * dxz + dy * dy);
         if (d > R) continue;
         // Reuse entry objects frame to frame (no per-frame garbage).
         let w = this.wantedPool[wanted.length];
@@ -379,24 +409,17 @@ export class GrassField {
       }
     }
 
-    // Release slots that left the radius.
-    for (const [k, s] of this.slots) {
-      if (this.wantedKeys.has(k)) continue;
-      s.grass.mesh.removeFromParent();
-      s.flowers.mesh.removeFromParent();
-      s.key = -1;
-      s.data = null;
-      this.slots.delete(k);
-      this.free.push(s);
-    }
+    // Release slots that left the radius (forEach: a for-of over a Map allocates per entry).
+    this.slots.forEach(this.releaseIfUnwanted);
 
     // Fill missing chunks nearest first: anything close is generated now (no bald patch at the
     // player's feet); the rest go to the worker, or (without one) a per-frame time budget.
     if (!this.workerReady) this.initWorker();
-    wanted.sort(byDistance);
+    sortByDistance(wanted);
     const t0 = performance.now();
     let generated = 0;
-    for (const w of wanted) {
+    for (let i = 0; i < wanted.length; i++) {
+      const w = wanted[i];
       if (this.slots.has(w.k)) continue;
       let data = this.cached(w.k);
       if (!data) {
@@ -435,7 +458,8 @@ export class GrassField {
     // Per-chunk LOD: draw only the rank prefix the nearest point of the chunk needs.
     let tufts = 0;
     let flowers = 0;
-    for (const w of wanted) {
+    for (let i = 0; i < wanted.length; i++) {
+      const w = wanted[i];
       const s = this.slots.get(w.k);
       if (!s || !s.data) continue;
       const keep = keepFraction(w.d);
