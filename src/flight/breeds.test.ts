@@ -84,7 +84,7 @@ describe('size-true wingbeats (FANIM-04: big wings beat slowly)', () => {
       expect(ratio, id).toBeLessThanOrEqual(1.7);
     }
     expect(rank((id) => BREEDS[id].flapRate)[0]).toBe('skimmer');
-    expect(rank((id) => BREEDS[id].flapRate)[3]).toBe('galewing');
+    expect(rank((id) => BREEDS[id].flapRate).at(-1)).toBe('galewing');
   });
 });
 

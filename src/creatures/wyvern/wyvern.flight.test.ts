@@ -189,7 +189,7 @@ describe('wingbeat: a stroke true to each breed (FANIM-01..03)', { timeout: 6000
   it('beats differently by breed: shallow galewing, deep skimmer, deep heavy ironback', () => {
     const r = Object.fromEntries(BREED_ORDER.map((b) => [b, stats(stroke(b))])) as Record<BreedId, ReturnType<typeof stats>>;
     // The galewing glider beats through a far shallower arc than anything else.
-    for (const b of ['skimmer', 'harrier', 'ironback'] as const) expect(r.galewing.range, b).toBeLessThan(r[b].range - 25);
+    for (const b of BREED_ORDER.filter((id) => id !== 'galewing')) expect(r.galewing.range, b).toBeLessThan(r[b].range - 25);
     // Every pair of breeds differs in its top elevation or in its arc.
     for (let i = 0; i < BREED_ORDER.length; i++) {
       for (let j = i + 1; j < BREED_ORDER.length; j++) {
@@ -200,8 +200,8 @@ describe('wingbeat: a stroke true to each breed (FANIM-01..03)', { timeout: 6000
       }
     }
     // The skimmer reaches highest, the ironback drives deepest.
-    for (const b of ['harrier', 'galewing', 'ironback'] as const) expect(r.skimmer.top, b).toBeGreaterThan(r[b].top);
-    for (const b of ['harrier', 'galewing', 'skimmer'] as const) expect(r.ironback.bottom, b).toBeLessThan(r[b].bottom);
+    for (const b of BREED_ORDER.filter((id) => id !== 'skimmer')) expect(r.skimmer.top, b).toBeGreaterThan(r[b].top);
+    for (const b of BREED_ORDER.filter((id) => id !== 'ironback')) expect(r.ironback.bottom, b).toBeLessThan(r[b].bottom);
   });
 
   it('drives down for most of the beat and reverses briskly at the top (no hang)', () => {
