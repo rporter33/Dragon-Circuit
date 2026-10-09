@@ -108,7 +108,7 @@ export class Wyvern implements WyvernRenderable {
    * with the breed and the saddle cosmetic (read it again after setLook).
    */
   seatOffset(out: Vector3): Vector3 {
-    // The seat rides the chest bone; standing at rest the trunk's only rotation is the root's
+    // The seat rides the spine bone; standing at rest the trunk's only rotation is the root's
     // pitch about the body origin.
     return out.copy(this.info.saddle.seat).applyAxisAngle(X_AXIS, STAND_ROOT_PITCH);
   }
@@ -175,13 +175,14 @@ export class Wyvern implements WyvernRenderable {
     this.mesh = mesh;
     this.group.add(mesh);
 
-    // Saddle anchor rides on the chest bone, like the saddle geometry.
-    const chest = bones[rig.idx.chest];
-    chest.add(this.saddle);
-    this.saddle.position.copy(this.info.saddle.seat).sub(rig.bones[rig.idx.chest].pos);
+    // Saddle anchor rides on the spine bone (over the ribcage), like the saddle's hardware.
+    const spine = bones[rig.idx.spine];
+    spine.add(this.saddle);
+    this.saddle.position.copy(this.info.saddle.seat).sub(rig.bones[rig.idx.spine].pos);
     this.saddle.quaternion.identity();
     this.saddle.userData.halfWidth = this.info.saddle.halfWidth;
     this.saddle.userData.gripOffset = this.info.saddle.grip.clone();
+    this.saddle.userData.flank = { ...this.info.saddle.flank };
 
     // Wingtip: end of the distal wingtip finger, in that bone's space. Mouth: in head space.
     const fb = rig.idx.wings[0].fingers[0][1];

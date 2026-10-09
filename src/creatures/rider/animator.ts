@@ -52,6 +52,24 @@ export class LayerPose {
   thumb = [0.2, 0.2];
 }
 
+/** Cross-section of the mount's body under the seat (see wyvern/parts/saddle.ts SaddleFlank). */
+export interface SaddleFlank {
+  /** Centre height below the seat (negative). */
+  cy: number;
+  /** Half-width and upper half-height (m). */
+  rx: number;
+  ry: number;
+  /** Superellipse exponent. */
+  sq: number;
+}
+
+/** Half-width of the barrel at height y (anchor space); 0 above it. */
+export function flankHalfWidth(f: SaddleFlank, y: number): number {
+  const t = Math.abs(y - f.cy) / f.ry;
+  if (t >= 1) return y > f.cy ? 0 : f.rx;
+  return f.rx * Math.pow(1 - Math.pow(t, f.sq), 1 / f.sq);
+}
+
 export interface AnimContext {
   /** 0 = on foot, 1 = in the saddle (posture blend). */
   mountW: number;
@@ -60,6 +78,11 @@ export interface AnimContext {
   /** Saddle body half-width (m) and grip point (anchor space) when mounted. */
   halfWidth: number;
   grip: Vector3;
+  /**
+   * The barrel under the saddle (anchor space), when the mount describes it: the shins wrap
+   * around it instead of sinking into a broad back. Null: only `halfWidth` is known.
+   */
+  flank: SaddleFlank | null;
   /** Smoothed ride motion (anchor space): hips offset from the wyvern's movement. */
   rideOffset: Vector3;
   ridePitch: number;
@@ -542,6 +565,21 @@ export class RiderAnimator {
       // Tighter, higher knees in the crouch (jockey), legs forward when bracing.
       ky += 0.06 * crouch;
       const kz = H.z + 0.12 + 0.04 * crouch + 0.02 * brace;
+      // On a broad barrel the knee rides on the saddle flap, not inside the ribs: swing the thigh
+      // out (about the hip, keeping its length) until the knee clears the body.
+      const fl = ctx.flank;
+      if (fl) {
+        const clear = 0.05 * d.g;
+        for (let k = 0; k < 14 && kx < flankHalfWidth(fl, ky) + clear; k++) {
+          const ax = kx - hx;
+          const ay = ky - H.y;
+          const c = Math.cos(0.06);
+          const sn = Math.sin(0.06);
+          // Rotate (ax, ay) outward-up (counter-clockwise in the x-out / y-up plane).
+          kx = hx + ax * c - ay * sn;
+          ky = H.y + ax * sn + ay * c;
+        }
+      }
       const knee = _v2.set(side * kx, ky, kz);
       // Shin along the flank: tangent of the body curve, blended toward straight down.
       let tx = ky - cy;
@@ -549,7 +587,27 @@ export class RiderAnimator {
       const tl = Math.hypot(tx, ty) || 1;
       tx /= tl;
       ty /= tl;
-      const shinDir = _v3.set(side * tx * 0.65, ty * 0.65 - 0.35, -0.42 - 0.45 * crouch + 0.8 * brace).normalize();
+      let sxo = tx * 0.65;
+      let syo = ty * 0.65 - 0.35;
+      const szo = -0.62 - 0.5 * crouch + 0.62 * brace;
+      if (fl) {
+        // Wrap the shin around the barrel: turn it outward (in the side plane) until the ankle
+        // clears the ribs, so the lower legs hug the flank instead of sinking into it.
+        const clear = 0.07 * d.g;
+        const len = this.lens.shin * 0.99;
+        for (let k = 0; k < 16; k++) {
+          const n = Math.hypot(sxo, syo, szo) || 1;
+          const fx = kx + (sxo / n) * len;
+          const fy = ky + (syo / n) * len;
+          if (fx >= flankHalfWidth(fl, fy) + clear) break;
+          const c = Math.cos(0.07);
+          const sn = Math.sin(0.07);
+          const nx = sxo * c - syo * sn;
+          syo = sxo * sn + syo * c;
+          sxo = nx;
+        }
+      }
+      const shinDir = _v3.set(side * sxo, syo, szo).normalize();
       L.foot[i].copy(knee).addScaledVector(shinDir, this.lens.shin * 0.99);
       // Pole: from the hip/ankle midpoint toward the knee.
       L.knee[i].copy(knee).sub(_v.add(L.foot[i]).multiplyScalar(0.5)).normalize();

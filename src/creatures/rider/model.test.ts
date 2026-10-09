@@ -107,13 +107,20 @@ describe('rider model', () => {
     const next: RiderLook = { ...base, scarfColor: '#11aa33', capeColor: '#3344ee', outfitPrimary: '#aa2266', hairColor: '#ddcc11' };
     const r = new Rider(base);
     const geo = (r.group.children[0] as unknown as { geometry: unknown }).geometry;
-    const t0 = performance.now();
+    // Best of a few (a single sample on a busy machine can land on a GC pause).
+    let ms = Infinity;
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      r.setLook(i % 2 ? base : next);
+      ms = Math.min(ms, performance.now() - t0);
+    }
     r.setLook(next);
-    const ms = performance.now() - t0;
     // Same geometry object: retinted, not rebuilt.
     expect((r.group.children[0] as unknown as { geometry: unknown }).geometry).toBe(geo);
-    expect(ms).toBeLessThan(20);
+    const t1 = performance.now();
     const fresh = new Rider(next);
+    const rebuild = performance.now() - t1;
+    expect(ms).toBeLessThan(Math.max(4, rebuild / 4));
     const tints = (x: Rider) =>
       x.group.children
         .filter((c) => (c as { isMesh?: boolean }).isMesh && !(c as { isSkinnedMesh?: boolean }).isSkinnedMesh)

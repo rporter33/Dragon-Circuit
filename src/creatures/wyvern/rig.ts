@@ -75,6 +75,11 @@ export interface BodyStation {
 export const SIDE_SIGN = [1, -1] as const;
 
 export const NECK_BONES = 6;
+/**
+ * Saddle seat along the torso (fraction of torso length ahead of the body center): over the
+ * ribcage a little ahead of the center of mass, well behind the shoulder joints (0.3).
+ */
+export const SEAT_Z = 0.08;
 export const TAIL_BONES = 10;
 
 export interface RigDef {
@@ -421,8 +426,10 @@ export function buildRig(breed: BreedId): RigDef {
     tip: keys.length - 1,
   });
 
-  // Seat: over the wing roots, on top of the back (the chest bone carries it).
-  const seatZ = P.shoulder[2] + 0.04 * T;
+  // Seat: behind the shoulder girdle, over the ribcage near the center of mass — where a horse
+  // saddle sits behind the withers. Not over the wing roots: the flight muscles anchor there and
+  // heave with every beat (a bumpy ride). The spine bone carries it.
+  const seatZ = SEAT_Z * T;
   const sSeat = plan.sAtZ(seatZ);
   const st = plan.station(sSeat);
   const seat = new Vector3(0, st.center.y + st.upper + 0.06 * hh, seatZ);

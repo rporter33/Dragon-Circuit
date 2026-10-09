@@ -52,13 +52,16 @@ function pose(deg: Partial<Record<keyof typeof W, number>>): WingPose {
 /** Soaring: slight dihedral, tips flexing up a touch. */
 export const GLIDE = pose({ humEl: 7, humSw: -2, humTw: -2, foreEl: 2, handEl: -1, f0El: -1, f1El: -2, f2El: -3, f0bEl: 3, f1bEl: 2, f2bEl: 1 });
 
-/** Stooping dive: wings folded back along the body, wrists out, tips trailing past the tail. */
+/**
+ * Stooping dive: wings folded back along the body, wrists out, tips trailing past the tail. The
+ * arm runs back level with the flank, under the rider's legs (the seat is over the ribcage).
+ */
 export const TUCK = pose({
-  humEl: 9,
-  humSw: 50,
+  humEl: -6,
+  humSw: 42,
   humTw: 6,
   foreEl: -12,
-  foreSw: 52,
+  foreSw: 58,
   foreTw: 4,
   handEl: -4,
   handSw: -10,

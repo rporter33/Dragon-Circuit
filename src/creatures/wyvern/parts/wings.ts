@@ -17,6 +17,11 @@ import { bodyChain } from './body';
 import { SkinChain } from './chain';
 import { bezier3, spike } from './shape';
 
+/** How far below the flank's equator the membrane root runs half-way back (fraction of lower). */
+const ROOT_DROP = 0.3;
+const _line = new Vector3();
+const _dip = new Vector3();
+
 export interface WingInfo {
   /** Membrane area of one wing (m², bind pose), for checks against BreedStats.wingArea. */
   membraneArea: number;
@@ -249,6 +254,21 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
       const s = t * armTotal;
       return sAt[iSh] + s;
     };
+    // The root runs along the side of the body, not in a straight line from the shoulder to the
+    // hip: behind the shoulder it drops to the lower flank (like a bat's or a pterosaur's), so the
+    // rider's legs hang above it and a beating wing never sweeps through them. A quadratic curve
+    // through a low point half-way back, faded out over the inner part of the panel.
+    const zMid = (shAttach.z + trail.z) / 2;
+    const stM = rig.plan.station(rig.plan.sAtZ(zMid));
+    const rootMid = new Vector3(0.86 * stM.halfWidth * sx, stM.center.y - ROOT_DROP * stM.lower, zMid);
+    const rootCtl = rootMid.clone().multiplyScalar(2).addScaledVector(shAttach, -0.5).addScaledVector(trail, -0.5);
+    const rootDip = (v: number, out: Vector3) =>
+      out
+        .copy(shAttach)
+        .multiplyScalar((1 - v) * (1 - v))
+        .addScaledVector(rootCtl, 2 * v * (1 - v))
+        .addScaledVector(trail, v * v)
+        .sub(_line.lerpVectors(shAttach, trail, v));
     const tip2 = tips[2];
     const midC = trail.clone().lerp(tip2, 0.5);
     const inwardC = wr.clone().sub(midC);
@@ -263,7 +283,9 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
       (t, v, out) => {
         armAt(t, Lp);
         Rp.lerpVectors(trail, tip2, t).addScaledVector(inwardC, depthC * Math.sin(Math.PI * t));
-        return out.lerpVectors(Lp, Rp, v);
+        out.lerpVectors(Lp, Rp, v);
+        const w = Math.pow(1 - t, 3);
+        return w > 1e-4 ? out.addScaledVector(rootDip(v, _dip), w) : out;
       },
       (t, v) => {
         const s = new Skin();

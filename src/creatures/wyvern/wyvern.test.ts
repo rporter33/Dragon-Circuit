@@ -410,13 +410,17 @@ describe('pure helpers', () => {
 });
 
 describe('weight and life (client direction: a big, heavy dragon)', { timeout: 60000 }, () => {
-  /** Saddle and head heights (relative to the body center) over the last wingbeat of a flight. */
+  /**
+   * Saddle, shoulder (neck base) and head heights (relative to the body center) over the last
+   * wingbeat of a flight.
+   */
   function beat(breed: BreedId) {
     const w = new Wyvern(look(breed));
     const pose = gliding();
     pose.flapStrength = 1;
     const rate = BREEDS[breed].flapRate;
-    const samples: { phase: number; saddle: number; head: number }[] = [];
+    const neck0 = w.skinnedMesh!.skeleton.bones.find((b) => b.name === 'neck0')!;
+    const samples: { phase: number; saddle: number; shoulders: number; head: number }[] = [];
     const n = Math.round(60 / rate);
     for (let i = 0; i < 600; i++) {
       pose.flapPhase = ((i / 60) * rate) % 1;
@@ -427,14 +431,23 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
         samples.push({
           phase: pose.flapPhase,
           saddle: w.saddle.getWorldPosition(_p).y - pose.position.y,
+          shoulders: neck0.getWorldPosition(_p).y - pose.position.y,
           head: w.getHead(_q).y - pose.position.y,
         });
       }
     }
     w.dispose();
-    const range = (k: 'saddle' | 'head') => Math.max(...samples.map((s) => s[k])) - Math.min(...samples.map((s) => s[k]));
-    const peak = (k: 'saddle' | 'head') => samples.reduce((a, b) => (b[k] > a[k] ? b : a)).phase;
-    return { saddleRange: range('saddle'), headRange: range('head'), saddlePeak: peak('saddle'), headPeak: peak('head') };
+    type K = 'saddle' | 'shoulders' | 'head';
+    const range = (k: K) => Math.max(...samples.map((s) => s[k])) - Math.min(...samples.map((s) => s[k]));
+    const peak = (k: K) => samples.reduce((a, b) => (b[k] > a[k] ? b : a)).phase;
+    return {
+      saddleRange: range('saddle'),
+      shoulderRange: range('shoulders'),
+      headRange: range('head'),
+      saddlePeak: peak('saddle'),
+      shoulderPeak: peak('shoulders'),
+      headPeak: peak('head'),
+    };
   }
 
   it('heaves the saddle up through the downstroke and lets it sink on the recovery; heavier breeds heave more', () => {
@@ -447,11 +460,12 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
     expect(beat('ironback').saddleRange).toBeGreaterThan(beat('skimmer').saddleRange * 1.4);
   });
 
-  it('holds the head steadier than the body, trailing it (neck lag)', () => {
+  it('holds the head steadier than the body, trailing the shoulders it hangs from (neck lag)', () => {
     const h = beat('harrier');
     expect(h.headRange).toBeLessThan(h.saddleRange * 0.8);
-    // The head's high point comes after the body's (modulo the cycle).
-    const lag = (h.headPeak - h.saddlePeak + 1) % 1;
+    expect(h.headRange).toBeLessThan(h.shoulderRange * 0.8);
+    // The head's high point comes after the shoulders' (modulo the cycle).
+    const lag = (h.headPeak - h.shoulderPeak + 1) % 1;
     expect(lag).toBeGreaterThan(0.01);
     expect(lag).toBeLessThan(0.3);
   });
