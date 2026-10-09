@@ -3,6 +3,7 @@
 
 import type { InputPresses } from '../core/types';
 import type { GameView } from '../game/contracts';
+import { buildLabel } from '../core/build';
 import { LAYOUT } from '../world/layout';
 import { headingOf } from './compass';
 import { LiveText, div, fromHtml, h } from './dom';
@@ -96,6 +97,8 @@ export class Pause extends Panel {
       div('dw-pause-head', whenEl, h('div', { class: 'dw-pause-title', text: 'Paused' }), whereEl, fromHtml(RULE)),
       items,
       stats,
+      // Which release this is, so a player can tell whether they're on the latest.
+      h('div', { class: 'dw-pause-build', text: buildLabel() }),
     );
     this.where = new LiveText(whereEl);
     this.when = new LiveText(whenEl);

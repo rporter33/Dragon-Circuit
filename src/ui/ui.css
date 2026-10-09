@@ -2241,6 +2241,16 @@
 .dw-stat .dw-icon {
   color: var(--gold);
 }
+.dw-pause-build {
+  margin-top: 0.7em;
+  text-align: center;
+  font-size: 0.68em;
+  letter-spacing: 0.08em;
+  color: var(--parch-3);
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
 .dw-pause-foot {
   position: absolute;
   right: 2.2em;

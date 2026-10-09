@@ -205,6 +205,11 @@ try {
     await frames(page, 3, 'pause');
     const paused = await page.evaluate(() => ({ screen: window.__dw.game.screen, tod: window.__dw.game.sky.timeOfDay }));
     check('Esc pauses', paused.screen === 'pause');
+    // The pause menu names the build: this commit (or 'dev' outside a git checkout).
+    const stamp = (await page.evaluate(() => document.querySelector('.dw-pause-build')?.textContent ?? '')).trim();
+    const head = spawnSync('git', ['rev-parse', '--short=7', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout?.trim() || 'dev';
+    const wantSha = (process.env.GITHUB_SHA ?? '').slice(0, 7) || head;
+    check('pause menu shows the build stamp', stamp.startsWith(`Build ${wantSha}`), stamp || '(missing)');
     await frames(page, 20, 'pause');
     const tod2 = await page.evaluate(() => window.__dw.game.sky.timeOfDay);
     check('time of day holds still while paused', Math.abs(tod2 - paused.tod) < 1e-9, `${paused.tod.toFixed(5)} -> ${tod2.toFixed(5)}`);

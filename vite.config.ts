@@ -1,7 +1,23 @@
+import { execSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { defineConfig } from 'vitest/config';
 
+/** The commit being built: GitHub Actions says so; locally, ask git; otherwise 'dev'. */
+function buildSha(): string {
+  const ci = process.env.GITHUB_SHA;
+  if (ci) return ci.slice(0, 7);
+  try {
+    return execSync('git rev-parse --short=7 HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || 'dev';
+  } catch {
+    return 'dev';
+  }
+}
+
 export default defineConfig({
+  // The build stamp shown in the pause menu (src/core/build.ts).
+  define: {
+    __DW_BUILD__: JSON.stringify({ sha: buildSha(), time: new Date().toISOString() }),
+  },
   // Relative base so the build works under a subpath (GitHub Pages) with no config change.
   base: './',
   // Per-checkout cache so several worktrees can share one node_modules.
