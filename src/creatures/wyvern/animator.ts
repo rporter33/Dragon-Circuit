@@ -35,11 +35,11 @@ import type { WyvernUniforms } from './materials';
 import type { Bone } from 'three';
 import { AnimFrame, LEFT, UP } from './anim/frame';
 import { FlightLayer } from './anim/flight';
-import { GroundLayer } from './anim/ground';
+import { GroundLayer, type GroundTerrain } from './anim/ground';
 import type { Gait } from './gait';
 import { LifeLayer, type IdleCue } from './anim/life';
 import { TailLayer } from './anim/tail';
-import { STAND_PELVIS_PITCH, STAND_ROOT_PITCH } from './anim/groundPoses';
+import { STAND_PELVIS_PITCH } from './anim/groundPoses';
 
 export { STAND_PELVIS_PITCH, STAND_ROOT_PITCH } from './anim/groundPoses';
 
@@ -123,7 +123,11 @@ export class WyvernAnimator {
   /** Trunk Euler angles this frame: root, spine, chest, pelvis (x, y, z each). */
   private readonly trunkAng = new Float64Array(12);
 
-  constructor(rig: RigDef, terrain?: Pick<TerrainQuery, 'groundAt'>) {
+  /**
+   * `terrain`: ground under the feet (groundAt) and, for the player's own wyvern, the solids' distance
+   * field (distance) so the folded wings keep off walls; ghosts and showcase stand-ins pass none.
+   */
+  constructor(rig: RigDef, terrain?: GroundTerrain) {
     this.rig = rig;
     this.heft = heftOf(BREEDS[rig.props.breed].mass);
     const B = rig.bones;
@@ -294,15 +298,15 @@ export class WyvernAnimator {
     // boxed on the heap.)
     const shake = buffet > 0;
     this.rootOffset.set(
-      shake ? buffet * 0.03 * sh * noise1(this.stallT * 9, 1) : 0,
-      f.heave + f.gaitBob + f.dipV + f.kneelDrop + breath * breathAmp * 0.025 * sh + (shake ? buffet * 0.04 * sh * noise1(this.stallT * 8, 2) : 0) + stretch * 0.04 * sh,
+      (shake ? buffet * 0.03 * sh * noise1(this.stallT * 9, 1) : 0) + f.gaitShift,
+      f.heave + f.gaitBob + f.dipV + f.kneelDrop + f.groundDrop + breath * breathAmp * 0.025 * sh + (shake ? buffet * 0.04 * sh * noise1(this.stallT * 8, 2) : 0) + stretch * 0.04 * sh,
       0,
     );
     const turnBend = clamp(f.om.y * (f.airborne ? 0.16 : 0.3), -0.22, 0.22);
     const spineYaw = this.spineYaw.step(turnBend + f.gaitSway, f.dt);
     // Settle: the landing dip pitches the nose down a little and the body rocks back up.
     // Stretching and basking, the chest lifts (nose up).
-    const rootPitch = groundW * STAND_ROOT_PITCH + f.gaitPitch - f.dipPitch - stretch * 0.08 - bask * 0.035 + f.kneelPitch;
+    const rootPitch = groundW * this.ground.profile.standPitch + f.gaitPitch - f.dipPitch - stretch * 0.08 - bask * 0.035 + f.kneelPitch + f.groundPitch;
     const rootRoll = (buffet > 0 ? buffet * 0.05 * noise1(this.stallT * 7, 3) : 0) + f.gaitRoll + f.kneelRoll;
     const lean = f.lean;
     const e = this.trunkAng;
@@ -314,12 +318,12 @@ export class WyvernAnimator {
     e[5] = lean;
     e[6] = f.chestAir;
     e[7] = spineYaw * 0.5;
-    e[8] = lean * 0.5 + f.turnLean;
+    e[8] = lean * 0.5 + f.turnLean + f.chestRoll;
     // The stretch lifts the tail root level with the back.
     // Kneeling, the hindquarters go down level while the chest dips nose-first.
     e[9] = f.pelvisAir + stretch * 0.05 + groundW * STAND_PELVIS_PITCH - f.kneelPitch;
     e[10] = -spineYaw * 0.55;
-    e[11] = -lean * 0.6;
+    e[11] = -lean * 0.6 + f.pelvisRoll;
     this.setEulerAt(I.root, e, 0);
     this.setEulerAt(I.spine, e, 3);
     this.setEulerAt(I.chest, e, 6);
@@ -499,6 +503,16 @@ export class WyvernAnimator {
    */
   footContacts(outPos: Vector3[], outW: { [i: number]: number }): number {
     return this.ground.footContacts(outPos, outW);
+  }
+
+  /** Where foot i will land, or stands (world; see Gait.landing). */
+  footLanding(i: number, out: Vector3): Vector3 {
+    return this.ground.gait.landing(i, out);
+  }
+
+  /** The standing root pitch (rad, − = nose up): the breed's GaitProfile.standPitch. */
+  get standPitch(): number {
+    return this.ground.profile.standPitch;
   }
 
   /** The body's heave from the wingbeat this frame (m, + up). */

@@ -11,8 +11,10 @@ import type { QualityProfile } from '../../render/quality';
 import type { WyvernRenderable } from '../../game/contracts';
 import type { TerrainQuery } from '../../core/types';
 import { rigFor, type RigDef } from './rig';
-import { buildWyvernGeometry, type WyvernMeshInfo } from './geometry';
+import { aoJob, applyAO, buildWyvernGeometry, type WyvernMeshInfo } from './geometry';
+import { cachedAO, requestAO } from './ao';
 import { armScale, foldRest, type FoldRest } from './parts/wings';
+import type { TackHold } from './parts/saddle';
 import {
   applyLookUniforms,
   createBodyMaterial,
@@ -21,7 +23,7 @@ import {
   createWyvernUniforms,
   type WyvernUniforms,
 } from './materials';
-import { STAND_ROOT_PITCH, WyvernAnimator } from './animator';
+import { WyvernAnimator } from './animator';
 
 export interface WyvernOptions {
   /** Render as a translucent race ghost. */
@@ -42,11 +44,13 @@ const FOREARM_STEP_R = 0.16;
 
 /**
  * Attachment points on the wyvern (world space, see Wyvern.socket): the seat (the saddle origin),
- * the pommel (where the rider's hand grips, at the top of the pommel horn), and the steps on each
+ * the pommel (where the rider's hand grips, at the top of the pommel horn), the steps on each
  * forearm a mounting rider puts a foot on (on the top face of the forearm, 55% of the way from the
- * elbow to the wrist; outward when the wing is folded).
+ * elbow to the wrist; outward when the wing is folded), and the tack's holds (parts/saddle.ts):
+ * the neck rope where each hand holds it (its rein bight hooked over the pommel horn), the grab
+ * strap across the pommel's front, and the stirrup irons' treads under the straddling rider's feet.
  */
-export type WyvernSocket = 'seat' | 'pommel' | 'stepL' | 'stepR';
+export type WyvernSocket = 'seat' | 'pommel' | 'stepL' | 'stepR' | TackHold;
 
 export class Wyvern implements WyvernRenderable {
   readonly group = new Group();
@@ -70,6 +74,9 @@ export class Wyvern implements WyvernRenderable {
   private foldHold = { start: new Int32Array(3), bone: new Int32Array(0), weight: new Float64Array(0), offset: new Float64Array(0) };
   /** The forearm steps (WyvernSocket stepL/R) in each forearm bone's space. */
   private stepOffset: [Vector3, Vector3] = [new Vector3(), new Vector3()];
+  /** The tack's holds: the bone each rides and the hold in that bone's space. */
+  private holdBone: Partial<Record<TackHold, number>> = {};
+  private holdOffset: Partial<Record<TackHold, Vector3>> = {};
   private mouthOffset = new Vector3();
 
   constructor(look: WyvernLook, opts: WyvernOptions = {}) {
@@ -134,7 +141,7 @@ export class Wyvern implements WyvernRenderable {
   seatOffset(out: Vector3): Vector3 {
     // The seat rides the spine bone; standing at rest the trunk's only rotation is the root's
     // pitch about the body origin.
-    return out.copy(this.info.saddle.seat).applyAxisAngle(X_AXIS, STAND_ROOT_PITCH);
+    return out.copy(this.info.saddle.seat).applyAxisAngle(X_AXIS, this.animator.standPitch);
   }
 
   /**
@@ -174,6 +181,11 @@ export class Wyvern implements WyvernRenderable {
     return this.animator.footContacts(outPos, outW);
   }
 
+  /** Where foot i (LH, RH, LF, RF) will land, or stands (world): its footstep belongs there. */
+  footLanding(i: number, out: Vector3): Vector3 {
+    return this.animator.footLanding(i, out);
+  }
+
   /** The body's heave from the wingbeat this frame (m, + up): cameras can ride part of it. */
   bodyHeave(): number {
     return this.animator.heave;
@@ -188,6 +200,14 @@ export class Wyvern implements WyvernRenderable {
       if (!grip) return null;
       this.saddle.updateWorldMatrix(true, false);
       return out.copy(grip).applyMatrix4(this.saddle.matrixWorld);
+    }
+    if (name !== 'stepL' && name !== 'stepR') {
+      const bone = this.holdBone[name];
+      const off = this.holdOffset[name];
+      if (bone === undefined || !off) return null;
+      const b = this.bones[bone];
+      b.updateWorldMatrix(true, false);
+      return out.copy(off).applyMatrix4(b.matrixWorld);
     }
     // A step on the top (dorsal, outward when folded) face of the forearm, a little over half
     // way down from the elbow: where a mounting rider plants a foot.
@@ -271,6 +291,15 @@ export class Wyvern implements WyvernRenderable {
     this.info = buildWyvernGeometry(rig, look);
     this.foldHold = flattenFoldRest(rig, foldRest(rig));
     this.shapeKey = shapeKeyOf(look);
+    // The baked ambient occlusion replaces the analytic fallback when it lands (cached per shape).
+    const info = this.info;
+    const aoKey = `${this.shapeKey}|${info.lod}`;
+    const baked = cachedAO(aoKey);
+    if (baked) applyAO(info, baked);
+    else
+      requestAO(aoKey, aoJob(info))?.then((ao) => {
+        if (this.info === info) applyAO(info, ao);
+      });
 
     // Bones: identity rest rotations, positions relative to the parent.
     const bones: Bone[] = rig.bones.map((d) => {
@@ -310,7 +339,16 @@ export class Wyvern implements WyvernRenderable {
     this.saddle.quaternion.identity();
     this.saddle.userData.halfWidth = this.info.saddle.halfWidth;
     this.saddle.userData.gripOffset = this.info.saddle.grip.clone();
+    this.saddle.userData.gripSpread = this.info.saddle.gripSpread;
     this.saddle.userData.flank = { ...this.info.saddle.flank };
+
+    // Tack holds: bind positions carried into their bones' spaces (rest rotations are identity).
+    this.holdBone = {};
+    this.holdOffset = {};
+    for (const [name, h] of Object.entries(this.info.saddle.holds) as [TackHold, { pos: Vector3; bone: number }][]) {
+      this.holdBone[name] = h.bone;
+      this.holdOffset[name] = h.pos.clone().sub(rig.bones[h.bone].pos);
+    }
 
     // Forearm steps: on the forearm's top surface (bind: the wing spread flat, dorsal = +Y).
     for (let side = 0; side < 2; side++) {

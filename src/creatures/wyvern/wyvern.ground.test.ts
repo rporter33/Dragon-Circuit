@@ -12,6 +12,11 @@ import { Wyvern } from './Wyvern';
 import { aimRotation, solveTwoBone } from './ik';
 import { Gait, footPhase, type GaitContext } from './gait';
 import { beat, boneWorld, gliding, look, standing } from './wyvern.testkit';
+import { PEN_PAIRS, type Penetration, wyvernPenetration } from './collision';
+import { GroundWalker, standingOrientation } from '../../player/ground';
+import { PLAYER_TUNING as P } from '../../player/tuning';
+import { gaitProfile } from '../../core/gait';
+import { DEG } from '../../core/math';
 
 const _p = new Vector3();
 const _q = new Vector3();
@@ -353,6 +358,277 @@ describe('pure helpers', () => {
   });
 });
 
+/**
+ * A wyvern walking on the gameplay walker's gait clock over `ground` (height and normal at x, z):
+ * the walker (player/ground.ts) runs its footstep clock and the model follows WyvernPose.gaitPhase,
+ * as in the game. `speedAt(frame)` is the target speed, reached at the walker's acceleration.
+ * `each` sees every frame after the model's update; footstep contacts come with where the model said
+ * the foot would come down (footLanding, read before the update, as the game's footsteps are).
+ */
+function walkOn(
+  breed: BreedId,
+  ground: (x: number, z: number, n: Vector3) => number,
+  yaw: number,
+  frames: number,
+  speedAt: (i: number) => number,
+  each: (w: Wyvern, i: number, walker: GroundWalker, steps: { foot: number; at: Vector3 }[]) => void,
+) {
+  const b = BREEDS[breed];
+  const terrain = {
+    groundAt: (x: number, z: number, _y: number, out?: GroundHit) => {
+      const h = out ?? { y: 0, normal: new Vector3(), islandId: 1, surface: 'grass' as const };
+      h.y = ground(x, z, h.normal);
+      return h;
+    },
+  };
+  const w = new Wyvern(look(breed), { terrain });
+  const walker = new GroundWalker();
+  walker.yaw = yaw;
+  walker.position.set(0, ground(0, 0, new Vector3()) + b.standHeight, 0);
+  const n = new Vector3();
+  const pose = standing(breed);
+  for (let i = 0; i < frames; i++) {
+    const v = speedAt(i);
+    walker.speed = v > walker.speed ? Math.min(v, walker.speed + P.wyvernAccel / 60) : Math.max(v, walker.speed - P.wyvernBrake / 60);
+    walker.position.x += (Math.sin(yaw) * walker.speed) / 60;
+    walker.position.z += (Math.cos(yaw) * walker.speed) / 60;
+    walker.groundY = ground(walker.position.x, walker.position.z, n);
+    walker.normal.copy(n);
+    walker.position.y = walker.groundY + b.standHeight;
+    walker.velocity.set(Math.sin(yaw) * walker.speed, 0, Math.cos(yaw) * walker.speed);
+    const c = walker.gaitStep(1 / 60, b, true);
+    const steps: { foot: number; at: Vector3 }[] = [];
+    for (let k = 0; k < 4; k++) if (c & (1 << k)) steps.push({ foot: k, at: w.footLanding(k, new Vector3()) });
+    pose.position.copy(walker.position);
+    standingOrientation(yaw, walker.normal, gaitProfile(breed).slopeTilt, 0, pose.orientation);
+    pose.velocity.copy(walker.velocity);
+    pose.groundY = walker.groundY;
+    pose.gait = walker.speed > 0.3 ? 'walk' : 'idle';
+    pose.groundSpeed = walker.speed;
+    pose.gaitPhase = walker.gaitPhase;
+    pose.lookTarget.set(walker.position.x + Math.sin(yaw) * 40, walker.position.y + 1, walker.position.z + Math.cos(yaw) * 40);
+    w.update(1 / 60, pose);
+    each(w, i, walker, steps);
+  }
+  w.dispose();
+}
+
+const FLAT = (_x: number, _z: number, n: Vector3) => {
+  n.set(0, 1, 0);
+  return 10;
+};
+
+describe('ground gait truth (C4)', { timeout: 300000 }, () => {
+  it('walks in the lateral sequence (LH, LF, RH, RF) on the walker\'s clock, each footstep within 0.1 m of where its foot comes down', () => {
+    const pos = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+    const wt: number[] = [0, 0, 0, 0];
+    for (const breed of BREED_ORDER) {
+      const b = BREEDS[breed];
+      // The keyboard walk, and a brisk walk (short of where the walk starts blending into the run).
+      for (const walk of [P.keyboardWalk, Math.min(P.walkFraction * 0.9, (0.65 * gaitProfile(breed).runSpeed) / b.groundSpeed)]) {
+        const order: number[] = [];
+        const heard: (Vector3 | null)[] = [null, null, null, null];
+        let worst = 0;
+        let landed = 0;
+        walkOn(breed, FLAT, 0.3, 420, (i) => (i < 30 ? 0 : walk * b.groundSpeed), (w, _i, _walker, steps) => {
+          for (const s of steps) {
+            order.push(s.foot);
+            heard[s.foot] = s.at;
+          }
+          w.footContacts(pos, wt);
+          for (let k = 0; k < 4; k++) {
+            if (heard[k] === null || wt[k] < 1) continue;
+            worst = Math.max(worst, heard[k]!.distanceTo(pos[k]));
+            heard[k] = null;
+            landed++;
+          }
+        });
+        const tag = `${breed} at ${walk} of groundSpeed`;
+        expect(landed, tag).toBeGreaterThan(12);
+        expect(worst, tag).toBeLessThan(0.1);
+        // After the first few, the touchdowns go LH, LF, RH, RF round and round (foot order LH 0,
+        // RH 1, LF 2, RF 3).
+        const seq = [0, 2, 1, 3];
+        const tail = order.slice(4);
+        const k0 = seq.indexOf(tail[0]);
+        tail.forEach((f, j) => expect(f, `${tag}: touchdown ${j}`).toBe(seq[(k0 + j) % 4]));
+      }
+    }
+  });
+
+  it('rolls the trunk over the feet that are down: the swinging side\'s hip and shoulder hike', () => {
+    for (const breed of BREED_ORDER) {
+      let hips = 0;
+      let shoulders = 0;
+      walkOn(breed, FLAT, 0, 360, (i) => (i < 30 ? 0 : P.keyboardWalk * BREEDS[breed].groundSpeed), (w, i) => {
+        if (i < 150) return;
+        const feet = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+        const down = [0, 0, 0, 0];
+        w.footContacts(feet, down);
+        // + when the left foot is lifted (less of it down) than the right.
+        const hindLift = down[1] - down[0];
+        const foreLift = down[3] - down[2];
+        hips += hindLift * (boneWorld(w, 'thighL').y - boneWorld(w, 'thighR').y);
+        shoulders += foreLift * (boneWorld(w, 'humerusL').y - boneWorld(w, 'humerusR').y);
+      });
+      expect(hips, breed).toBeGreaterThan(0.05);
+      expect(shoulders, breed).toBeGreaterThan(0.02);
+    }
+  });
+
+  it('keeps every planted foot on the ground: slopes up to the walk limit, up, down and across, and steps', () => {
+    const DEGS = Math.acos(P.maxSlopeY) / DEG;
+    const grounds: [string, (x: number, z: number, n: Vector3) => number][] = [
+      [`${Math.round(DEGS)}° slope`, (_x, z, n) => {
+        const t = Math.tan(DEGS * DEG);
+        n.set(0, 1, -t).normalize();
+        return 10 + z * t;
+      }],
+      ['20° slope', (_x, z, n) => {
+        const t = Math.tan(20 * DEG);
+        n.set(0, 1, -t).normalize();
+        return 10 + z * t;
+      }],
+      ['0.3 m step', (_x, z, n) => {
+        n.set(0, 1, 0);
+        return z > 2 ? 9.7 : 10;
+      }],
+    ];
+    const pos = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+    const wt: number[] = [0, 0, 0, 0];
+    for (const breed of BREED_ORDER) {
+      const b = BREEDS[breed];
+      for (const [name, ground] of grounds) {
+        for (const yaw of [0, Math.PI, Math.PI / 2]) {
+          let worst = 0;
+          // Each foot's own bone (the ball of the foot, the wrist) sits a fixed way off the spot the
+          // gait planted it on (the sole, the claws), as when standing there: never hung in the air.
+          const stand = [Infinity, Infinity, Infinity, Infinity];
+          const was = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+          walkOn(breed, ground, yaw, 300, (i) => (i < 90 ? 0 : P.keyboardWalk * b.groundSpeed), (w, i) => {
+            w.footContacts(pos, wt);
+            for (let k = 0; k < 4; k++) {
+              // (Planted: down, and where it was last frame.)
+              const planted = wt[k] === 1 && pos[k].distanceTo(was[k]) < 1e-9;
+              was[k].copy(pos[k]);
+              if (!planted || i < 60) continue;
+              const rise = boneWorld(w, ['toesL', 'toesR', 'clawL', 'clawR'][k]).distanceTo(pos[k]);
+              if (i < 90) stand[k] = Math.min(stand[k], rise);
+              else worst = Math.max(worst, rise - stand[k]);
+            }
+          });
+          // (At most a frame or two, at the walk limit, before a foot out of reach lifts early.)
+          expect(worst, `${breed} on a ${name}, yaw ${Math.round((yaw * 180) / Math.PI)}°`).toBeLessThan(0.03 * b.standHeight);
+        }
+      }
+    }
+  });
+});
+
+/** A pose over time: the starting pose and a step per frame (frame index, breed). */
+type PoseRun = { base: (breed: BreedId) => WyvernPose; frames: number; step?: (p: WyvernPose, i: number, breed: BreedId) => void };
+
+const SELF_POSES: Record<string, PoseRun> = {
+  stand: { base: standing, frames: 150 },
+  // Looking back over its shoulder (the head and neck past the folded wing).
+  lookback: { base: standing, frames: 150, step: (p) => p.lookTarget.set(8, 12, -6) },
+  kneel: {
+    base: standing,
+    frames: 150,
+    step: (p, i, b) => {
+      p.kneel = Math.min(1, i / 24);
+      p.lookTarget.set(BREEDS[b].standHeight * 0.55 + 1.3, 11.6, 0.6);
+    },
+  },
+  glide: { base: () => gliding(), frames: 90, step: (p) => { p.position.z += 0.4; p.lookTarget.z += 0.4; } },
+  flap: {
+    base: () => gliding(),
+    frames: 200,
+    step: (p, i, b) => {
+      p.flapStrength = 1;
+      p.flapPhase = ((i / 60) * BREEDS[b].flapRate) % 1;
+      p.position.z += 0.4;
+      p.lookTarget.z += 0.4;
+    },
+  },
+  flare: { base: () => gliding(), frames: 90, step: (p) => { p.flare = 1; p.position.z += 0.25; p.lookTarget.z += 0.25; } },
+  bank: {
+    base: () => gliding(),
+    frames: 90,
+    step: (p) => {
+      p.orientation.setFromAxisAngle(new Vector3(0, 0, 1), 0.7);
+      p.angularVelocity.set(0, -0.6, 0.3);
+      p.position.z += 0.4;
+      p.lookTarget.z += 0.4;
+    },
+  },
+};
+
+/** The deepest self-penetration per part pair over a pose run (sampled every 6th frame after a second). */
+function selfPenetration(breed: BreedId, saddle: string, run: PoseRun): Penetration {
+  const w = new Wyvern(look(breed, { saddle }));
+  const p = run.base(breed);
+  const max = {} as Penetration;
+  for (const k of PEN_PAIRS) max[k] = 0;
+  const pen = {} as Penetration;
+  for (let i = 0; i < run.frames; i++) {
+    run.step?.(p, i, breed);
+    w.update(1 / 60, p);
+    if ((i >= 60 && i % 6 === 0) || i === run.frames - 1) {
+      wyvernPenetration(w, pen);
+      for (const k of PEN_PAIRS) max[k] = Math.max(max[k], pen[k]);
+    }
+  }
+  w.dispose();
+  return max;
+}
+
+describe('no clipping: the wyvern never passes through itself (Q17, C16)', { timeout: 600000 }, () => {
+  // Self-collision proxies (collision.ts): every wing vertex against the leg capsules and the
+  // torso's cross-sections, the neck and head against the wing, the tail against the legs. At
+  // most 2 cm anywhere, as the capture harness's penetration report measures it.
+  for (const breed of BREED_ORDER) {
+    it(`${breed}: standing, looking back, kneeling, gliding, a full wingbeat, flaring, banking; every saddle`, () => {
+      for (const saddle of ['rider', 'racing', 'royal', 'nomad']) {
+        for (const [name, run] of Object.entries(SELF_POSES)) {
+          if (saddle !== 'rider' && name !== 'stand' && name !== 'flap') continue;
+          const pen = selfPenetration(breed, saddle, run);
+          for (const k of PEN_PAIRS) expect(pen[k], `${breed} ${saddle} ${name} ${k}`).toBeLessThan(0.02);
+        }
+      }
+    });
+  }
+});
+
+describe('environment awareness (C16): the folded wings keep off walls', () => {
+  it('draws the folded wing in against the body when a rock face is at its elbow, and only that one', () => {
+    for (const breed of BREED_ORDER) {
+      const elbows = (wallX: number | null) => {
+        const terrain = {
+          groundAt: (_x: number, _z: number, _y: number, out?: GroundHit) => {
+            const h = out ?? { y: 0, normal: new Vector3(0, 1, 0), islandId: 0, surface: 'grass' as const };
+            h.y = 10;
+            return h;
+          },
+          // A sheer face beside the wyvern's left flank (x = wallX), open everywhere else.
+          distance: (p: Vector3) => (wallX === null ? 50 : wallX - p.x),
+        };
+        const w = new Wyvern(look(breed), { terrain });
+        const pose = standing(breed);
+        for (let i = 0; i < 150; i++) w.update(1 / 60, pose);
+        const out = [boneWorld(w, 'forearmL'), boneWorld(w, 'forearmR')];
+        w.dispose();
+        return out;
+      };
+      const open = elbows(null);
+      // The wall 5 cm off the open-ground elbow's surface (about 0.25 m out from its bone).
+      const wall = elbows(open[0].x + 0.3);
+      expect(wall[0].x, `${breed} left elbow drawn in`).toBeLessThan(open[0].x - 0.05);
+      expect(Math.abs(wall[1].x - open[1].x), `${breed} right elbow unchanged`).toBeLessThan(0.01);
+    }
+  });
+});
+
 describe('weight and life (client direction: a big, heavy dragon)', { timeout: 60000 }, () => {
   it('holds the head steadier than the body, trailing the shoulders it hangs from (neck lag), on every breed and beat rate', () => {
     // The head-height hold (C12) holds it on the slow galewing and ironback beats as well as the
@@ -408,9 +684,10 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
         expect(s.wrist.z - s.shoulder.z, `${breed} wrist under the shoulder`).toBeLessThan(0.45);
         expect(Math.abs(s.foreFrontDeg), `${breed} forearm from the front`).toBeLessThan(15);
         // From the side it leans forward from the elbow tucked back against the flank, like a
-        // bat's or a pterosaur's on the ground. (The long-armed breeds, skimmer and galewing,
-        // can't stand it straighter with the wrist under the shoulder without swinging the elbow
-        // out sideways or the humerus up into a seated rider's stirrup foot.)
+        // bat's or a pterosaur's on the ground. (How far is geometry: an arm this long for the
+        // shoulder's height must fold, and with the elbow held against the flank the fold can only
+        // go back. With the arm at its own length again (A13: the span is in the wingtip finger's
+        // outer phalanx) it is 9-35 deg.)
         expect(s.foreSideDeg, `${breed} forearm from the side`).toBeGreaterThan(0);
         expect(s.foreSideDeg, `${breed} forearm from the side`).toBeLessThan(38);
         expect(Math.abs(s.elbow.x) - f.maxHalfWidth, `${breed} elbow tucked in`).toBeLessThan(0.3);

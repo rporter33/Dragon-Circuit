@@ -6,7 +6,8 @@ import { Quaternion, Vector3 } from 'three';
 import type { BreedStats, GameEvents, TerrainQuery, WyvernGait } from '../core/types';
 import type { EventBus } from '../core/events';
 import { angleDelta, clamp, clamp01, lerp, smoothstep } from '../core/math';
-import { GroundWalker, standingOrientation, yawOf } from './ground';
+import { GroundWalker, slopeLimitY, standingOrientation, yawOf } from './ground';
+import { gaitProfile } from '../core/gait';
 import { PLAYER_TUNING as P } from './tuning';
 
 export type CompanionState = 'idle' | 'follow' | 'hop' | 'swoop';
@@ -74,6 +75,10 @@ export class Companion {
    * (the player cues WyvernPose.cue 'greet' when this changes).
    */
   greetings = 0;
+  /** How much of the ground's slope the standing body takes (the breed's GaitProfile.slopeTilt). */
+  private slopeTilt = gaitProfile('harrier').slopeTilt;
+  /** Where foot i's footstep is heard (the Player's footstepAt); null: the walker's estimate. */
+  footAt: ((i: number, out: Vector3) => Vector3 | null) | null = null;
 
   get position(): Vector3 {
     return this.walker.position;
@@ -90,7 +95,7 @@ export class Companion {
     this.anim.wingSpread = 0.22;
     this.anim.flapStrength = 0;
     this.anim.flare = 0;
-    standingOrientation(this.walker.yaw, this.walker.normal, 0.35, 0, this.orientation);
+    standingOrientation(this.walker.yaw, this.walker.normal, this.slopeTilt, 0, this.orientation);
   }
 
   /** Begin the catch: dive from wherever the wyvern is to just below the falling rider. */
@@ -133,6 +138,7 @@ export class Companion {
     flapClock: number,
   ): void {
     this.stateTime += dt;
+    this.slopeTilt = gaitProfile(breed.id).slopeTilt;
     this.prevPos.copy(this.walker.position);
     const w = this.walker;
     const sh = breed.standHeight;
@@ -174,11 +180,15 @@ export class Companion {
           this.anim.flapStrength = Math.max(0, this.anim.flapStrength - dt * 2);
           this.anim.flare = 0;
           this.anim.gait = w.speed < 0.3 ? 'idle' : w.speed < breed.groundSpeed * P.walkFraction ? 'walk' : 'run';
-          standingOrientation(w.yaw, w.normal, 0.35, 0, this.orientation);
-          // Footsteps on the visible footfalls (hind feet heavy, wing knuckles lighter).
+          standingOrientation(w.yaw, w.normal, this.slopeTilt, 0, this.orientation);
+          // Footsteps on the visible footfalls, where the model's feet come down (heavy for the
+          // feet carrying more than an even share of the weight, the hind feet).
           const contacts = w.gaitStep(dt, breed);
+          const load = gaitProfile(breed.id).load;
           for (let i = 0; contacts !== 0 && i < 4; i++) {
-            if (contacts & (1 << i)) events?.emit('footstep', { position: w.footPosition(i, sh, new Vector3()), surface: w.surface, heavy: i < 2 });
+            if (!(contacts & (1 << i))) continue;
+            const at = this.footAt?.(i, new Vector3()) ?? w.footPosition(i, sh, new Vector3());
+            events?.emit('footstep', { position: at, surface: w.surface, heavy: load[i] > 0.25 });
           }
         }
         break;
@@ -337,7 +347,7 @@ export class Companion {
       const off = (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 4);
       this.planGreeting(rider, sh, this.walker.position, _a, off);
       const g = terrain.groundAt(_a.x, _a.z, rider.y + 3);
-      if (!g || g.normal.y < P.maxSlopeY || Math.abs(g.y - rider.y) > 3) continue;
+      if (!g || g.normal.y < slopeLimitY(breed.id, 'walk') || Math.abs(g.y - rider.y) > 3) continue;
       _a.y = g.y;
       // Land on the greeting line, facing along it.
       this.beginHop(_a, sh, this.greetYaw);

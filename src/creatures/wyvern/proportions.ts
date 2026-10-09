@@ -2,8 +2,9 @@
 // breed's shape lives here as plain numbers, so it can be unit-tested without WebGL.
 //
 // The two numbers the rest of the game relies on are honored exactly:
-//   - BreedStats.wingspan is the tip-to-tip distance of the fully spread (bind) pose: the arm and
-//     finger lengths are scaled from ratios until the wingtips land there.
+//   - BreedStats.wingspan is the tip-to-tip distance of the fully spread (bind) pose. The wing's
+//     bones are sized to the body (WingShape.armLength) but for the wingtip finger's outer
+//     phalanx, which is solved until the wingtips land at the span (A13).
 //   - BreedStats.standHeight: the legs are sized so that, in the natural standing pose with the
 //     body center that high, the soles of the feet rest on the ground.
 //
@@ -14,11 +15,20 @@ import { BREEDS } from '../../flight/breeds';
 import { DEG } from '../../core/math';
 
 export interface WingShape {
-  /** Bone length ratios of one arm "unit" (solved per breed so the span comes out right). */
+  /**
+   * The arm's length, humerus plus forearm (m). It belongs to the body, not the span (A13): every
+   * wing bone is sized with it (the ratios below are in its unit) except the wingtip finger's outer
+   * phalanx, which is solved so the span comes out right. So a bigger wing folds to the same arm
+   * (the wrist under the shoulder, the elbow at the flank, clear of the thigh) and finger bundle,
+   * with a longer spar back along the body.
+   */
+  armLength: number;
+  /** Bone length ratios: the arm, the metacarpal, and each finger's segments [proximal, distal]
+   * (finger 0 forms the wingtip, 2 is innermost). Finger 0's distal is solved for the span, so its
+   * ratio here is not used. */
   humerus: number;
   forearm: number;
   hand: number;
-  /** Finger segment ratios [proximal, distal]: finger 0 forms the wingtip, 2 is innermost. */
   fingers: [number, number][];
   /** Bind-pose azimuths (radians, measured from +X toward +Z: negative = swept back). */
   azHumerus: number;
@@ -82,7 +92,7 @@ export interface LegAngles {
  */
 export const LEG_ANGLES: Readonly<LegAngles> = { thigh: 30 * DEG, shin: -40 * DEG, meta: 24 * DEG };
 
-const W = (w: Partial<WingShape>): WingShape => ({
+const W = (w: Partial<WingShape> & Pick<WingShape, 'armLength'>): WingShape => ({
   humerus: 0.22,
   forearm: 0.36,
   hand: 0.075,
@@ -117,7 +127,7 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     tailBaseRadius: 0.62,
     shoulder: [0.62, 0.28, 0.3],
     hip: [0.74, -0.3, -0.33],
-    wing: W({}),
+    wing: W({ armLength: 3.27 }),
     legAngles: { ...LEG_ANGLES },
     thigh: 0.36,
     shin: 0.38,
@@ -145,8 +155,9 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     // joints sit a little further forward in the girdle.
     shoulder: [0.62, 0.28, 0.33],
     hip: [0.74, -0.3, -0.33],
-    // A sprinter's broad, rounded bat-like hand-wing: short, even fingers fanned wide.
+    // A sprinter's broad, rounded bat-like hand-wing: short, even inner fingers fanned wide.
     wing: W({
+      armLength: 3.04,
       fingers: [
         [0.2, 0.17],
         [0.21, 0.18],
@@ -182,6 +193,7 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     shoulder: [0.62, 0.3, 0.3],
     hip: [0.74, -0.3, -0.33],
     wing: W({
+      armLength: 3.73,
       humerus: 0.18,
       forearm: 0.3,
       hand: 0.07,
@@ -223,6 +235,7 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     hip: [0.8, -0.28, -0.32],
     // A short, broad, heavy wing: the fingers swept back, a shallow trailing edge.
     wing: W({
+      armLength: 3.41,
       humerus: 0.23,
       forearm: 0.35,
       fingers: [
@@ -291,21 +304,21 @@ export function computeProportions(breed: BreedId): WyvernProportions {
   ];
   const hip: [number, number, number] = [s.hip[0] * s.torsoHalfWidth, s.hip[1] * s.torsoHalfHeight, s.hip[2] * s.torsoLength];
 
-  // Wing: the spread bind pose lies flat at shoulder height; scale the arm unit so the tip of
-  // finger 0 sits at half the wingspan.
+  // Wing: the spread bind pose lies flat at shoulder height. Every bone is sized with the arm
+  // (armLength) but the wingtip finger's outer phalanx, which is solved so its tip sits at half
+  // the wingspan: a pterosaur's span is its wing finger's. Folded, that phalanx lies back along
+  // the flank, so a bigger wing folds to the same arm, hand and finger bundle with a longer spar
+  // behind it; the inner fingers set the hand-wing's chord, so a longer wing is a slimmer one (the
+  // flight model's span grows twice as fast as its area).
   const w = s.wing;
-  const reach =
-    w.humerus * Math.cos(w.azHumerus) +
-    w.forearm * Math.cos(w.azForearm) +
-    w.hand * Math.cos(w.azHand) +
-    (w.fingers[0][0] + w.fingers[0][1]) * Math.cos(w.azFingers[0]);
-  const unit = (stats.wingspan / 2 - shoulder[0]) / reach;
-  const arm: ArmLengths = {
-    humerus: w.humerus * unit,
-    forearm: w.forearm * unit,
-    hand: w.hand * unit,
-    fingers: w.fingers.map(([a, b]) => [a * unit, b * unit] as [number, number]),
-  };
+  const unit = w.armLength / (w.humerus + w.forearm);
+  const fingers = w.fingers.map(([a, b]) => [a * unit, b * unit] as [number, number]);
+  const az = w.azFingers[0];
+  const inner =
+    unit * (w.humerus * Math.cos(w.azHumerus) + w.forearm * Math.cos(w.azForearm) + w.hand * Math.cos(w.azHand)) +
+    fingers[0][0] * Math.cos(az);
+  fingers[0][1] = (stats.wingspan / 2 - shoulder[0] - inner) / Math.cos(az);
+  const arm: ArmLengths = { humerus: w.humerus * unit, forearm: w.forearm * unit, hand: w.hand * unit, fingers };
 
   // Legs: the standing bind pose drops from the hip to the ground at standHeight.
   const sole = 0.045 * stats.standHeight;

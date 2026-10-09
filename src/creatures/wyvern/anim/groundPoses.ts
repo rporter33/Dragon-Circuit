@@ -4,14 +4,16 @@
 // is not driving the arm, and the bask.
 
 import { DEG, smoothstep } from '../../../core/math';
+import { STAND_PITCH } from '../../../core/gait';
 import { wingPose } from '../wingPoses';
 
 /**
  * Root pitch while standing at rest (radians; negative = nose up): a flier's long arms carry the
- * chest high, like a bat or a pterosaur on the ground. Wyvern.seatOffset reports the bind seat
- * under this rotation, so mounting lines up with the standing animal.
+ * chest high, like a bat or a pterosaur on the ground. The default; each breed's is its
+ * GaitProfile.standPitch (core/gait.ts), which Wyvern.seatOffset reports the bind seat under, so
+ * mounting lines up with the standing animal.
  */
-export const STAND_ROOT_PITCH = -10 * DEG;
+export const STAND_ROOT_PITCH = STAND_PITCH;
 /**
  * The pelvis's pitch against the root while standing (radians, + = nose down): the hindquarters
  * and the tail root keep a near-level carriage while the long arms raise the chest.
@@ -29,11 +31,11 @@ export const KNEEL = {
   pitch: 7 * DEG,
   roll: 5 * DEG,
   /** The keel's clearance above the ground at a full kneel (× standHeight), and the depth's bounds. */
-  clear: 0.06,
+  clear: 0.17,
   minDepth: 0.3,
   maxDepth: 0.7,
   /** The forefeet's rest spots: forward (× forearm), and out (m; the near side's extra). */
-  fwd: 0.55,
+  fwd: 0.75,
   out: 0.1,
   nearOut: 0.3,
   /** The metatarsus's angle from vertical at a full kneel (rad): nearly flat, the heels down. */
