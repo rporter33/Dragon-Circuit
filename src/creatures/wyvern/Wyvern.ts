@@ -5,7 +5,7 @@
 // (horns, frill, tail tip, saddle) rebuilds the geometry (and, for a breed, the skeleton) and
 // disposes the old resources.
 
-import { Bone, Group, Matrix4, Object3D, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3, type Material } from 'three';
+import { Bone, Group, Matrix4, Object3D, Skeleton, SkinnedMesh, Sphere, Vector3, type Material } from 'three';
 import type { QualityLevel, WyvernCueKind, WyvernLook, WyvernPose } from '../../core/types';
 import type { QualityProfile } from '../../render/quality';
 import type { WyvernRenderable } from '../../game/contracts';
@@ -32,10 +32,8 @@ export interface WyvernOptions {
 
 const _m = new Matrix4();
 const _v = new Vector3();
-const _p = new Vector3();
-const _qc = new Quaternion();
-const _qb = new Quaternion();
-const _qs = new Quaternion();
+const _mb = new Matrix4();
+const _mt = new Matrix4();
 const _mInv = new Matrix4();
 const X_AXIS = new Vector3(1, 0, 0);
 const _s = new Vector3();
@@ -206,34 +204,32 @@ export class Wyvern implements WyvernRenderable {
 
   /**
    * Until the animator drives the wing-fold helpers (stream C, C3), hold each at its rest blend
-   * (parts/wings.ts foldRest): the fold-weighted average of the bones the inner membrane panel
-   * hangs from. The panel then moves as it did before the helpers existed (skinning is a linear
-   * blend of bone matrices). World matrices must be current; the helpers' are refreshed here.
+   * (parts/wings.ts foldRest): the linear blend of the skinning matrices of the bones the inner
+   * membrane panel hangs from, averaged over the panel by the helper's weight. Linear blend
+   * skinning is linear in the bone matrices, so this is the same kind of blend the panel's own
+   * weights make (not a rigid average, which would bow the sheet when the arm folds). World
+   * matrices must be current; the helpers' are written here (their local matrix stays relative
+   * to the chest, so anything re-deriving world matrices later keeps the hold).
    */
   private holdFoldHelpers(): void {
     const rig = this.rig;
     const B = this.bones;
-    const chest = B[rig.idx.chest];
-    _qc.setFromRotationMatrix(chest.matrixWorld).invert();
-    _mInv.copy(chest.matrixWorld).invert();
+    _mInv.copy(B[rig.idx.chest].matrixWorld).invert();
     for (let side = 0; side < 2; side++) {
       const fold = B[rig.idx.fold[side]];
       const pivot = rig.bones[rig.idx.fold[side]].pos;
-      _p.set(0, 0, 0);
-      _qs.set(0, 0, 0, 0);
-      for (const { bone, weight } of this.foldRest[side]) {
-        const M = B[bone].matrixWorld;
-        // Where this bone carries the helper's pivot (its bind pivot is at the bone's origin).
-        _v.subVectors(pivot, rig.bones[bone].pos).applyMatrix4(M);
-        _p.addScaledVector(_v, weight);
-        _qb.setFromRotationMatrix(M);
-        const sgn = _qs.x * _qb.x + _qs.y * _qb.y + _qs.z * _qb.z + _qs.w * _qb.w < 0 ? -weight : weight;
-        _qs.set(_qs.x + _qb.x * sgn, _qs.y + _qb.y * sgn, _qs.z + _qb.z * sgn, _qs.w + _qb.w * sgn);
+      const out = _m.elements;
+      out.fill(0);
+      const rest = this.foldRest[side];
+      for (let i = 0; i < rest.length; i++) {
+        const { bone, weight } = rest[i];
+        // This bone's skinning matrix, carried to the helper's bind pivot.
+        _v.subVectors(pivot, rig.bones[bone].pos);
+        const e = _mb.copy(B[bone].matrixWorld).multiply(_mt.makeTranslation(_v.x, _v.y, _v.z)).elements;
+        for (let k = 0; k < 16; k++) out[k] += e[k] * weight;
       }
-      _qs.normalize();
-      fold.position.copy(_p.applyMatrix4(_mInv));
-      fold.quaternion.copy(_qc).multiply(_qs);
-      fold.updateMatrixWorld(true);
+      fold.matrixWorld.copy(_m);
+      fold.matrix.multiplyMatrices(_mInv, _m);
     }
   }
 
@@ -278,6 +274,8 @@ export class Wyvern implements WyvernRenderable {
       } else b.position.copy(d.pos);
       inverses.push(new Matrix4().makeTranslation(-d.pos.x, -d.pos.y, -d.pos.z));
     });
+    // The fold helpers' matrices are written whole (a blend, see holdFoldHelpers), not composed.
+    for (const i of rig.idx.fold) bones[i].matrixAutoUpdate = false;
     this.bones = bones;
     this.group.add(bones[0]);
     this.skeleton = new Skeleton(bones, inverses);

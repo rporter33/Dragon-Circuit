@@ -20,8 +20,28 @@ import { RES, sides, steps, type Res } from './res';
 
 /** Peak skin weight of the fold helper in the inner panel (sector C). */
 const FOLD_W = 0.55;
-/** Fold helper weight over sector C (t along the arm, v from the arm to the trailing edge). */
-export const foldWeight = (t: number, v: number) => FOLD_W * Math.sin(Math.PI * v) * Math.pow(1 - t, 0.7);
+/** Where the helper's weight has risen to full strength, out from the flank root (fraction of t). */
+const FOLD_ROOT = 0.18;
+/** Peak of smoothstep(0, FOLD_ROOT, t)·(1 − t)^0.7, so FOLD_W stays the peak weight. */
+const FOLD_PEAK = (() => {
+  let m = 0;
+  for (let i = 0; i <= 400; i++) {
+    const t = i / 400;
+    const x = Math.min(1, t / FOLD_ROOT);
+    m = Math.max(m, x * x * (3 - 2 * x) * Math.pow(1 - t, 0.7));
+  }
+  return m;
+})();
+/**
+ * Fold helper weight over sector C (t from the flank root line to finger 2, v from the arm to the
+ * trailing edge): strongest in the interior near the body, zero on every boundary, so the root
+ * stays glued along the flank (the panel pleats against the body rather than peeling off it), and
+ * the arm, finger and trailing edge keep their own bones.
+ */
+export const foldWeight = (t: number, v: number) => {
+  const x = Math.min(1, t / FOLD_ROOT);
+  return ((FOLD_W * Math.sin(Math.PI * v) * x * x * (3 - 2 * x)) / FOLD_PEAK) * Math.pow(1 - t, 0.7);
+};
 /** aExtra scratch (x AO open, y pleat valley; see builder.ts). */
 const _ext: [number, number, number, number] = [1, 0, 0, 0];
 
