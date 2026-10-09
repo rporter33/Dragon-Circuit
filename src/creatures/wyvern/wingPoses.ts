@@ -268,6 +268,19 @@ export interface FlapStyle {
    */
   readonly pronOut: number;
   readonly pronIn: number;
+  /**
+   * How much the tips live in a glide (× the living glide's tip trim, anim/flight.ts): the
+   * galewing's long, slender tips work the air most.
+   */
+  readonly glideTips: number;
+  /**
+   * The stroke plane's tilt (fraction of the elevation range swept forward over the downstroke;
+   * STROKE_TILT for flight, more for the hover's and the backwing's near-horizontal strokes) and
+   * the arm's twist on the downstroke and on the recovery (degrees, + pronated).
+   */
+  readonly tilt: number;
+  readonly pronate: number;
+  readonly supinate: number;
   /** strokeWarp(i / WARP_N, down) for i = 0..WARP_N (derived; built by flapStyle). */
   readonly warp: Float32Array;
 }
@@ -277,18 +290,21 @@ export interface FlapStyle {
  * shoulder's neutral): tiltBack < 0.5 puts most of the plane's sweep ahead of the shoulder.
  */
 export function strokePlaneMean(style: FlapStyle): number {
-  return STROKE_TILT * (style.tiltBack - 0.5) * (style.humTop - style.humBot) * DEG;
+  return style.tilt * (style.tiltBack - 0.5) * (style.humTop - style.humBot) * DEG;
 }
 
+/** The style fields with defaults: the flight stroke's plane tilt and arm twist. */
+type StyleSpec = Omit<FlapStyle, 'down' | 'warp' | 'tilt' | 'pronate' | 'supinate'> & Partial<Pick<FlapStyle, 'tilt' | 'pronate' | 'supinate'>>;
+
 /** A FlapStyle for a downstroke fraction, with its warp table. */
-export function flapStyle(down: number, s: Omit<FlapStyle, 'down' | 'warp'>): FlapStyle {
+export function flapStyle(down: number, s: StyleSpec): FlapStyle {
   const warp = new Float32Array(WARP_N + 1);
   for (let i = 0; i < WARP_N; i++) warp[i] = strokeWarp(i / WARP_N, down);
   warp[WARP_N] = 1;
-  return { down, ...s, warp };
+  return { down, tilt: STROKE_TILT, pronate: PRONATE, supinate: SUPINATE, ...s, warp };
 }
 
-const breedStyle = (id: BreedId, s: Omit<FlapStyle, 'down' | 'warp'>) => flapStyle(BREEDS[id].downFrac ?? DEFAULT_DOWN_FRAC, s);
+const breedStyle = (id: BreedId, s: StyleSpec) => flapStyle(BREEDS[id].downFrac ?? DEFAULT_DOWN_FRAC, s);
 
 /**
  * The breeds' strokes. The skimmer beats deep and quick with a full fold; the harrier is the
@@ -304,11 +320,67 @@ const breedStyle = (id: BreedId, s: Omit<FlapStyle, 'down' | 'warp'>) => flapSty
  * ≥ 3 cm below the boots on every saddle (mounted.test.ts).
  */
 export const FLAP_STYLES: Readonly<Record<BreedId, FlapStyle>> = {
-  skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05, tiltBack: 0.3, pronOut: 0.13, pronIn: 0.14 }),
-  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
-  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.093, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
-  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
+  skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05, tiltBack: 0.3, pronOut: 0.13, pronIn: 0.14, glideTips: 1 }),
+  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1 }),
+  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.093, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1.3 }),
+  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1 }),
 };
+
+/**
+ * The backwing stroke (B5): flaring the last few metres to the ground, the wings beat against
+ * the sink in front of the body instead of driving it forward: a short, high stroke (34° at the
+ * top, −6° at the bottom) swept far forward on the downstroke, the arm held supinated (leading
+ * edge up, the membrane cupped) the whole beat, the stroke plane laid back toward the horizontal.
+ * The flight model beats it 1.4× quicker than flight. Per breed, on the breed's own timing.
+ */
+export const BACKWING_STYLES: Readonly<Record<BreedId, FlapStyle>> = mapStyles((st) => ({
+  humTop: 34,
+  humBot: -6,
+  sweepDown: -30,
+  sweepUp: 10,
+  fold: 0.6 * st.fold,
+  tipFlex: st.tipFlex,
+  tipLag: st.tipLag,
+  lead: st.lead,
+  tiltBack: 0.5,
+  pronOut: st.pronOut,
+  pronIn: st.pronIn,
+  glideTips: st.glideTips,
+  tilt: 1.2,
+  pronate: -35,
+  supinate: -35,
+}));
+
+/**
+ * The hover stroke (B7): flaring and beating slowly enough to hang in the air, the stroke plane
+ * tilts 45° toward the horizontal: the wing sweeps forward and down pronated (leading edge down,
+ * pushing air down and back) and back and up supinated, a figure of eight at 0.8 of the breed's
+ * stroke.
+ */
+export const HOVER_STYLES: Readonly<Record<BreedId, FlapStyle>> = mapStyles((st) => ({
+  humTop: 0.8 * st.humTop,
+  humBot: 0.8 * st.humBot,
+  sweepDown: -35,
+  sweepUp: 30,
+  fold: st.fold,
+  tipFlex: st.tipFlex,
+  tipLag: st.tipLag,
+  lead: st.lead,
+  tiltBack: 0.5,
+  pronOut: st.pronOut,
+  pronIn: st.pronIn,
+  glideTips: st.glideTips,
+  tilt: 1,
+  pronate: 20,
+  supinate: -35,
+}));
+
+/** A style per breed derived from each breed's flight style (on its downstroke fraction). */
+function mapStyles(make: (st: FlapStyle) => StyleSpec): Record<BreedId, FlapStyle> {
+  const out = {} as Record<BreedId, FlapStyle>;
+  for (const id of Object.keys(FLAP_STYLES) as BreedId[]) out[id] = flapStyle(FLAP_STYLES[id].down, make(FLAP_STYLES[id]));
+  return out;
+}
 
 /**
  * How hard the air pushes on the wing over a beat (0 slack … 1 peak of the power stroke, slightly
@@ -364,6 +436,8 @@ export function flapPoseAt(beat: BeatInput, out: WingPose, style: FlapStyle): Wi
   const lut = style.warp;
   const pronOut = style.pronOut;
   const pronIn = style.pronIn;
+  const PRO = style.pronate;
+  const SUP = style.supinate;
   const base = beatPhase + style.lead;
   // The warped phase at each lag (linear in the table).
   for (let i = 0; i < LAGS.length; i++) {
@@ -377,20 +451,20 @@ export function flapPoseAt(beat: BeatInput, out: WingPose, style: FlapStyle): Wi
   for (let i = 0; i < 2; i++) {
     let p = base - 0.04 * i;
     p -= Math.floor(p);
-    let tw = PRONATE;
+    let tw = PRO;
     const r = p >= D ? (p - D) / (1 - D) : -1;
     if (r >= 0 && r < SUP_FLIP) {
       // The supination flip at the bottom.
       const t = r / SUP_FLIP;
-      tw = PRONATE + (SUPINATE - PRONATE) * t * t * (3 - 2 * t);
+      tw = PRO + (SUP - PRO) * t * t * (3 - 2 * t);
     } else if (r >= 0 && r < 1 - pronOut) {
-      tw = SUPINATE;
+      tw = SUP;
     } else if (r >= 0 || p < pronIn * D) {
       // The pronation flip through the top: time from the top, the recovery counted negative.
       const q = r >= 0 ? p - 1 : p;
       const q0 = -pronOut * (1 - D);
       const t = (q - q0) / (pronIn * D - q0);
-      tw = SUPINATE + (PRONATE - SUPINATE) * t * t * (3 - 2 * t);
+      tw = SUP + (PRO - SUP) * t * t * (3 - 2 * t);
     }
     _tw[i] = tw;
   }
@@ -408,7 +482,7 @@ export function flapPoseAt(beat: BeatInput, out: WingPose, style: FlapStyle): Wi
   // Sweep: the tilted stroke plane (a little back at the top, forward at the bottom), plus a forward reach
   // late in the downstroke and a draw back through the recovery: a loop, not a hinge.
   const loop = w0 < 0.5 ? style.sweepDown * Math.sin(Math.PI * Math.pow(s, 1.94)) : style.sweepUp * Math.sin(Math.PI * s);
-  out[W.humSw] = (STROKE_TILT * (style.tiltBack - s) * (style.humTop - style.humBot) + loop) * DEG;
+  out[W.humSw] = (style.tilt * (style.tiltBack - s) * (style.humTop - style.humBot) + loop) * DEG;
   out[W.humTw] = _tw[0] * DEG;
   const sw = Math.sin(2 * Math.PI * _w[6]);
   out[W.foreEl] = k * (12 - 22 * (wf < 0.5 ? 2 * wf : 2 - 2 * wf)) * DEG;
@@ -442,8 +516,8 @@ export function loadPose(out: WingPose, load: number): void {
   out[W.handEl] += 3 * load * DEG;
   for (let f = 0; f < 3; f++) {
     const k = 1 - 0.18 * f;
-    out[W.f0El + f * 3] += 4.5 * load * k * DEG;
-    out[W.f0bEl + f * 2] += 8 * load * k * DEG;
+    out[W.f0El + f * 3] += 7 * load * k * DEG;
+    out[W.f0bEl + f * 2] += 14 * load * k * DEG;
     // Spread under load: the outer finger sweeps forward, the inner ones back.
     out[W.f0Sw + f * 3] += (f - 1) * 2 * Math.max(0, load) * DEG;
   }
@@ -469,7 +543,8 @@ export function wingAdjust(): WingAdjust {
 
 /**
  * Per-frame adjustments on top of a blended pose:
- *  - g-load bends the outer wing up (dihedral grows, tips flex),
+ *  - g-load bends the wings up (dihedral grows, tips flex), the outer wing of a turn most (it
+ *    carries the most lift): about 18° of tip bow at 3 g with the air load (loadPose),
  *  - roll/turn asymmetry: the rising (outer) wing reaches forward with more angle of attack,
  *    the inner wing sweeps a little and unloads,
  *  - stall buffet: noisy shudder in elevation and twist.
@@ -480,10 +555,12 @@ export function adjustPose(out: WingPose, adj: Readonly<WingAdjust>): void {
   const buffetTw = adj.buffetTw;
   const spreadAmt = adj.spread;
   const g = clamp(adj.gLoad - 1, -1.5, 4) * spreadAmt;
-  out[W.humEl] += g * 1.6 * DEG;
+  out[W.humEl] += g * 3 * DEG;
   out[W.foreEl] += g * 1.2 * DEG;
   out[W.handEl] += g * 1.0 * DEG;
-  for (let f = 0; f < 3; f++) out[W.f0bEl + f * 2] += g * (3.2 - 0.6 * f) * DEG;
+  // The tips bow 6°/g on the outer wing, 0.7 of that on the inner one.
+  const tipBow = g * (1 - 0.3 * clamp(-asym * 2, 0, 1)) * DEG;
+  for (let f = 0; f < 3; f++) out[W.f0bEl + f * 2] += tipBow * (6 - 1.1 * f);
   const a = clamp(asym, -1, 1) * spreadAmt;
   out[W.humTw] += -7 * a * DEG;
   out[W.humSw] += (a > 0 ? -5 * a : -9 * a) * DEG;

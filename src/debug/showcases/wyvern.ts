@@ -156,7 +156,7 @@ function synth(p: WyvernPose, name: string, t: number, breed: BreedId, at: Vecto
     case 'hover':
       speed = 14;
       p.flapStrength = 1;
-      p.flare = 0.6;
+      p.flare = 1;
       p.flapPhase = flapPhase(B.flapRate);
       pitch = 22;
       break;

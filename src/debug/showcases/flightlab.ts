@@ -1,6 +1,8 @@
 import { Vector3 } from 'three';
 import type { Showcase } from '../showcase';
 import type { Game } from '../../game/Game';
+import type { BreedId } from '../../core/types';
+import { BREEDS } from '../../flight/breeds';
 
 /**
  * ?view=flightlab&scene=takeoff|dive|turn|landing|walkoff|fall|spawn&cam=side|chase|front|high
@@ -68,8 +70,9 @@ const flightlab: Showcase = {
   description: 'Flight/player scenarios with a tracking camera (scene=takeoff|dive|turn|landing|walkoff|fall|spawn)',
   setup(game, params) {
     const breed = params.get('breed');
-    if (breed === 'harrier' || breed === 'skimmer' || breed === 'galewing' || breed === 'ironback') {
-      game.setWyvernLook({ ...game.save.data.wyvern, breed });
+    // Own keys only: a bare `in` would also take ?breed=toString.
+    if (breed && Object.hasOwn(BREEDS, breed)) {
+      game.setWyvernLook({ ...game.save.data.wyvern, breed: breed as BreedId });
     }
     camMode = params.get('cam') ?? 'side';
     followRider = false;

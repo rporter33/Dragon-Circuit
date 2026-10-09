@@ -213,11 +213,18 @@ export const COURSE_SPECS: CourseSpec[] = [
     description: 'From the top of the Mistveil Shelves clear across the Drift to the Old Observatory. Too far to glide: ride the thermals.',
     difficulty: 4,
     landmark: 'shelves',
-    start: { p: [1280, 575, -1150] },
+    // The gate hangs at the cruise height of the drift, at the first thermal's edge. (Lower, at
+    // 575 m, the line climbed 115 m in the 110 m to the thermal's core: every wyvern pulled up
+    // 20° through the gate, a galewing's wingtip to 2 m under the lintel.)
+    start: { p: [1280, 650, -1150] },
     rings: [{ p: [-1500, 472, 150], n: [-0.522, -0.401, -0.753] }],
     via: [
       { before: 0, point: [1180, 690, -1100], climbTo: 690 },
       { before: 0, point: [620, 650, -240], climbTo: 650 },
+      // South of the Lantern Dash's start gate (230, 630, -40): straight on from the thermal, the
+      // line bowed north and every breed's wingtip brushed that gate's pillar tops. From here the
+      // gate stands 95 m off the line, and no wingtip comes within 60 m of it.
+      { before: 0, point: [200, 648, -130] },
       { before: 0, point: [-1300, 640, 480], climbTo: 640 },
     ],
   },

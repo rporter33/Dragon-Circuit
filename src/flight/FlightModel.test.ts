@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Vector3 } from 'three';
 import { EventBus } from '../core/events';
-import type { BreedId, GameEvents } from '../core/types';
+import type { BreedId, GameEvents, GroundHit, TerrainQuery } from '../core/types';
 import { mulberry32 } from '../core/rng';
 import { DEG } from '../core/math';
 import { LAYOUT } from '../world/layout';
@@ -310,7 +310,8 @@ describe('flaps and stamina', () => {
     off();
     expect(counts.flapRefused ?? 0).toBe(0);
     expect(m.state.winded).toBe(false);
-    expect(m.beats - beats).toBeGreaterThan(10);
+    // (Ragged and hitching at the top when exhausted, B7: at least 80% of the fresh cadence.)
+    expect(m.beats - beats).toBeGreaterThan(0.8 * 10 * b.flapRate);
     expect(strength).toBeGreaterThan(0.15);
     expect(strength).toBeLessThan(0.4);
     // Weak beats slow the sink but don't hold altitude: gliding (or landing) is how to rest.
@@ -423,6 +424,43 @@ describe('flaps and stamina', () => {
       expect(Math.abs(a - c) / c, id).toBeLessThan(0.03);
     }
   }, 120_000);
+
+  it('a tired beat goes ragged: uneven beats, every other one shallower, the right wing trailing (B7)', () => {
+    const run = (stamina: number) => {
+      const m = launch(BREEDS.harrier, 24);
+      const input = neutralInput();
+      input.flap = 1;
+      const starts: number[] = [];
+      const amps: number[] = [];
+      let lag = 0;
+      for (let i = 0; i < 12 / SIM_DT; i++) {
+        m.state.stamina = stamina;
+        const r = m.step(SIM_DT, input, stillAir());
+        if (r.beatStarted) {
+          starts.push(i * SIM_DT);
+          amps.push(m.beatAmp);
+        }
+        lag = Math.max(lag, m.sideLag);
+      }
+      const lengths = starts.slice(1).map((t, k) => t - starts[k]);
+      return { lengths, amps, lag };
+    };
+    const fresh = run(1);
+    const tired = run(0.25);
+    const spread = (xs: number[]) => (Math.max(...xs) - Math.min(...xs)) / (xs.reduce((a, b) => a + b, 0) / xs.length);
+    // Fresh: every beat the same length and depth, both wings together.
+    expect(spread(fresh.lengths)).toBeLessThan(0.02);
+    expect(Math.min(...fresh.amps)).toBe(1);
+    expect(fresh.lag).toBe(0);
+    // Tired (fatigue 0.69): beats 8%+ uneven, a hitch at the top, every other beat shallower.
+    expect(spread(tired.lengths)).toBeGreaterThan(0.08);
+    expect(Math.min(...tired.amps)).toBeLessThan(0.87);
+    expect(Math.max(...tired.amps)).toBe(1);
+    expect(tired.lag).toBeGreaterThan(0.015);
+    // Still the breed's rhythm on average (within 15%).
+    const mean = tired.lengths.reduce((a, b) => a + b, 0) / tired.lengths.length;
+    expect(Math.abs(mean * BREEDS.harrier.flapRate - 1)).toBeLessThan(0.15);
+  });
 
   it('a lighter trigger makes a weaker, cheaper beat', () => {
     const run = (flap: number) => {
@@ -710,6 +748,57 @@ describe('terrain', () => {
     const high = fall(false);
     expect(low.sink).toBeLessThan(high.sink - 3);
     expect(low.stamina).toBeLessThan(high.stamina);
+  });
+
+  /** Flare held from `y` m up over flat ground (body centre) at `v` m/s: touchdown when the feet reach it. */
+  function flareDown(id: BreedId, y: number, v: number, vy = 0) {
+    const flat: TerrainQuery = {
+      groundAt: () => ({ y: 0, normal: new Vector3(0, 1, 0) }) as GroundHit,
+      collideSphere: (p, r, push, n) => {
+        if (p.y - r >= 0) return false;
+        push.set(0, r - p.y, 0);
+        n.set(0, 1, 0);
+        return true;
+      },
+      distance: (p) => p.y,
+      raycast: () => null,
+    };
+    const b = BREEDS[id];
+    const m = new FlightModel(b);
+    m.reset(new Vector3(0, y, 0), yawQuat(0), new Vector3(0, vy, v));
+    const input = neutralInput();
+    input.flare = 1;
+    let rise = 0;
+    let pitchLow = Infinity;
+    for (let t = 0; t < 8; t += SIM_DT) {
+      m.step(SIM_DT, input, { windAt: (_p, o) => o.set(0, 0, 0), terrain: flat });
+      const s = m.state;
+      rise = Math.max(rise, s.position.y - y);
+      const feet = s.position.y - b.standHeight;
+      const pitch = Math.asin(new Vector3(0, 0, 1).applyQuaternion(s.orientation).y) / DEG;
+      if (feet < 1) pitchLow = Math.min(pitchLow, pitch);
+      if (feet <= 0) return { t, rise, pitchLow, along: Math.hypot(s.velocity.x, s.velocity.z) };
+    }
+    return { t: Infinity, rise, pitchLow, along: NaN };
+  }
+
+  it('lands feet first: the body pitches 20°+ through the last metre, touching down from 9 m at 18 m/s within 3.3 s (B5)', () => {
+    for (const id of BREED_ORDER) {
+      const r = flareDown(id, 9, 18);
+      expect(r.t, id).toBeLessThan(3.3);
+      expect(r.pitchLow, id).toBeGreaterThan(20);
+      expect(r.rise, id).toBeLessThan(0.5);
+      // Slowed to a landing (the legs take up to 18 m/s along the ground).
+      expect(r.along, id).toBeLessThan(13);
+    }
+  });
+
+  it('a fast, low flare doesn’t balloon: under half a metre up, then down feet first (B5)', () => {
+    for (const id of BREED_ORDER) {
+      const r = flareDown(id, BREEDS[id].standHeight + 5, 26);
+      expect(r.rise, id).toBeLessThan(0.5);
+      expect(r.pitchLow, id).toBeGreaterThan(20);
+    }
   });
 
   it('a wingtip clipping a spire yaws the wyvern away from it', () => {
