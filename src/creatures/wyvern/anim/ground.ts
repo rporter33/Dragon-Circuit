@@ -65,7 +65,7 @@ const _qa = new Float64Array(4);
 export const FOLD = {
   /** Wrist rest spot: in from the elbow's line (× standHeight) and ahead of the shoulder (× forearm). */
   wristIn: 0.03,
-  wristFwd: 0.15,
+  wristFwd: 0.06,
   /**
    * Where the elbow tucks: behind the shoulder (× humerus), down the flank (× the body's depth
    * below its centreline), clear of the flank (× the elbow's radius), and no narrower than this
@@ -75,10 +75,8 @@ export const FOLD = {
   elbowLow: 0.5,
   elbowClear: 1.0,
   minTrack: 0.6,
-  /** How hard the elbow's pole leans out toward its tuck point (1 = straight at it). */
-  poleOut: 1,
   /** How far the humerus's dorsal face turns up from out (its flat blade lies lower on the flank). */
-  humRefUp: 0,
+  humRefUp: 1,
   /** Hand direction offsets from straight up the forearm (out, back; negative out = in toward the body). */
   handOut: -0.05,
   handBack: 0.08,
@@ -488,12 +486,11 @@ export class GroundLayer {
     // shoulder (a bird's or bat's arm hanging from the shoulder, never a crocodile's sideways
     // elbow). Level, so it never lines up with the near-vertical shoulder-to-wrist line as the
     // forefoot swings through a stride.
-    const ea = this.elbowAt;
-    const pOut = (ea.x - this.wallPull[side] - S.x * sx) * T.poleOut;
-    const pBack = S.z - ea.z;
-    _v4.x = outG.x * pOut - fwdG.x * pBack;
-    _v4.y = outG.y * pOut - fwdG.y * pBack;
-    _v4.z = outG.z * pOut - fwdG.z * pBack;
+    // The elbow lies on a circle about the shoulder-to-wrist line (the bone lengths fix it); the
+    // pole picks the point on it whose distance out from the body is the tuck point's, behind the
+    // line: however long the arm for its height, the elbow tucks against the flank and the extra
+    // fold goes back along the body, never out sideways.
+    this.elbowPole(side, S, Wt, fwdG, outG, _v4);
     const E = _v5;
     solveTwoBoneAt(S, this.lens, 0, Wt, _v4, E);
     // A wall at the elbow: tuck the wing in against the body (next frame's pole, smoothed).
@@ -671,6 +668,71 @@ export class GroundLayer {
     qa[2] = d.z * sh;
     qa[3] = Math.cos(psi * 0.5);
     q.premultiply(_qr.fromArray(qa));
+  }
+
+  /**
+   * The folded elbow's pole (into `out`): toward the point on the elbow's circle (about the
+   * shoulder-to-wrist line, its radius set by the bone lengths) that stands out from the body by
+   * the tuck point's distance (less any wall pull), on the circle's back half. When no point is
+   * that far in or out, the nearest one.
+   */
+  private elbowPole(side: number, S: Vector3, W: Vector3, fwdG: Vector3, outG: Vector3, out: Vector3): void {
+    const L = this.lens;
+    const h = L[0];
+    const f = L[1];
+    let nx = W.x - S.x;
+    let ny = W.y - S.y;
+    let nz = W.z - S.z;
+    const dist = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+    nx /= dist;
+    ny /= dist;
+    nz /= dist;
+    const d = clamp(dist, Math.abs(h - f) * 1.001 + 1e-4, (h + f) * 0.9995);
+    const ca = (h * h - f * f + d * d) / (2 * d);
+    const rr = Math.sqrt(Math.max(0, h * h - ca * ca));
+    // u: back, perpendicular to the line; v: across it, toward this side's outside.
+    let ux = -fwdG.x;
+    let uy = -fwdG.y;
+    let uz = -fwdG.z;
+    const un = ux * nx + uy * ny + uz * nz;
+    ux -= nx * un;
+    uy -= ny * un;
+    uz -= nz * un;
+    const ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+    ux /= ul;
+    uy /= ul;
+    uz /= ul;
+    let vx = ny * uz - nz * uy;
+    let vy = nz * ux - nx * uz;
+    let vz = nx * uy - ny * ux;
+    if (vx * outG.x + vy * outG.y + vz * outG.z < 0) {
+      vx = -vx;
+      vy = -vy;
+      vz = -vz;
+    }
+    // Out from the body along outG: the circle's centre's, and its spokes'.
+    const cOut = (S.x + nx * ca) * outG.x + (S.y + ny * ca) * outG.y + (S.z + nz * ca) * outG.z;
+    const A = rr * (ux * outG.x + uy * outG.y + uz * outG.z);
+    const B = rr * (vx * outG.x + vy * outG.y + vz * outG.z);
+    const target = this.elbowAt.x - this.wallPull[side] - cOut;
+    const R = Math.sqrt(A * A + B * B);
+    const phi = Math.atan2(B, A);
+    let th = phi;
+    if (R > 1e-6) {
+      const r = target / R;
+      if (r >= 1) th = phi;
+      else if (r <= -1) th = phi + Math.PI;
+      else {
+        // Of the two, the one further back (cos θ larger along u).
+        const ac = Math.acos(r);
+        th = Math.cos(phi + ac) >= Math.cos(phi - ac) ? phi + ac : phi - ac;
+      }
+    }
+    const c = Math.cos(th);
+    const sn = Math.sin(th);
+    out.x = ux * c + vx * sn;
+    out.y = uy * c + vy * sn;
+    out.z = uz * c + vz * sn;
   }
 
   /**
