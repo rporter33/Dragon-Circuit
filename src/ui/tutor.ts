@@ -51,7 +51,16 @@ export const TIPS: readonly TipDef[] = [
     minTime: 5,
     maxTime: 12,
   },
-  { id: 'flare', title: 'Coming in to land', body: 'Come in low and slow, then hold {flare} just above the ground to settle.', anchor: 'card', core: true, after: ['flap'], minTime: 4, maxTime: 14 },
+  {
+    id: 'flare',
+    title: 'Coming in to land',
+    body: 'Come in low and slow, then hold {flare} just above the ground to settle. Any island is a place to rest: your wyvern flies stronger after.',
+    anchor: 'card',
+    core: true,
+    after: ['flap'],
+    minTime: 4,
+    maxTime: 14,
+  },
   { id: 'tired', title: 'Wings tiring', body: 'No hurry: glide to recover, or land on any island to rest.', anchor: 'gauge', core: false, after: ['flap'], minTime: 4, maxTime: 9, urgent: true },
   {
     // Wyverns are reptiles: by day a rest on an island means basking, wings spread to the sun.

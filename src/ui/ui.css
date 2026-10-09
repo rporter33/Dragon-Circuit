@@ -1440,10 +1440,7 @@
 .dw-banner.is-on {
   opacity: 1;
 }
-/* RACE READY shows with the race cluster up: it sits below the cluster even on short windows. */
-.dw-banner.dw-gate {
-  top: max(26vh, calc(var(--u) * 9.4));
-}
+
 .dw-banner::before,
 .dw-banner::after {
   content: '';
@@ -1513,14 +1510,69 @@
   }
 }
 
+/* RACE READY: one slim line under the race cluster while a race is armed (the start gate owns
+   the middle of the screen). */
+.dw-gate {
+  position: absolute;
+  left: 50%;
+  top: 8.4em;
+  transform: translate(-50%, -0.3em);
+  display: flex;
+  align-items: baseline;
+  gap: 0.75em;
+  padding: 0.38em 1.3em 0.42em;
+  white-space: nowrap;
+  border-radius: 2em;
+  background: linear-gradient(180deg, rgba(38, 27, 20, 0.62), rgba(24, 17, 13, 0.68));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(232, 187, 95, 0.4);
+  box-shadow: 0 0.4em 1.4em rgba(10, 6, 3, 0.22);
+  opacity: 0;
+  transition:
+    opacity 0.45s var(--ease),
+    transform 0.45s var(--ease);
+}
+.dw-gate.is-on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.dw-gate-kicker {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 0.72em;
+  letter-spacing: 0.32em;
+  color: var(--gold-hi);
+}
+.dw-gate-name {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.18em;
+  letter-spacing: 0.06em;
+  color: #fff6e2;
+}
+.dw-gate-sub {
+  font-style: italic;
+  font-size: 0.92em;
+  color: var(--parch);
+}
+.dw-gate-name::before,
+.dw-gate-sub::before {
+  content: '·';
+  margin-right: 0.75em;
+  color: var(--gold);
+  font-style: normal;
+}
 .dw-countdown {
   position: absolute;
   left: 50%;
-  top: 34vh;
+  /* High, in the RACE READY line's place under the race cluster (that line steps aside for the
+     count), above the gate opening the wyvern aims for. */
+  top: max(22vh, calc(var(--u) * 11));
   transform: translate(-50%, -50%);
   font-family: var(--display);
   font-weight: 700;
-  font-size: 7em;
+  font-size: 5.6em;
   line-height: 1;
   color: #fff6e2;
   text-shadow:

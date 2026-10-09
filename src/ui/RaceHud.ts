@@ -12,7 +12,7 @@ import type { GameEvents } from '../core/types';
 import type { GameView, RaceDef } from '../game/contracts';
 import { LiveClass, LiveStyle, LiveText, div, fromHtml, h } from './dom';
 import { formatDelta, formatTime, titleCase } from './format';
-import { ICONS, RULE } from './icons';
+import { ICONS } from './icons';
 import type { NoticeSpec } from './notices';
 
 export interface RaceHudCtx {
@@ -99,13 +99,14 @@ export class RaceHud {
     this.best = new LiveText(bestV);
     this.clusterOn = new LiveClass(this.cluster, 'is-on');
 
-    this.gateName = h('div', { class: 'dw-banner-name' });
+    // A slim line under the race cluster, not a card in the middle: the gate itself (what you aim
+    // for) fills the centre of the screen on the approach.
+    this.gateName = h('span', { class: 'dw-gate-name' });
     this.gate = div(
-      'dw-banner dw-gate',
-      h('div', { class: 'dw-banner-kicker', text: 'RACE READY' }),
+      'dw-gate',
+      h('span', { class: 'dw-gate-kicker', text: 'RACE READY' }),
       this.gateName,
-      fromHtml(RULE),
-      h('div', { class: 'dw-banner-sub', text: 'Fly through the gate to start' }),
+      h('span', { class: 'dw-gate-sub', text: 'Fly through the gate to start' }),
     );
     this.gateOn = new LiveClass(this.gate, 'is-on');
 
