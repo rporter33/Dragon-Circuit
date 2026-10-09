@@ -29,7 +29,7 @@ interface Rig {
   count(type: keyof GameEvents): number;
 }
 
-function rig(breed: BreedId = 'harrier', opts: { holdToFlap?: boolean; wind?: Vector3; daylight?: number } = {}): Rig {
+function rig(breed: BreedId = 'harrier', opts: { holdToFlap?: boolean; wind?: Vector3; daylight?: number; interactableNear?: (p: Vector3) => boolean } = {}): Rig {
   const events = new EventBus<GameEvents>();
   const settings = { ...DEFAULT_SETTINGS, holdToFlap: opts.holdToFlap ?? true };
   const wind = opts.wind ?? new Vector3();
@@ -41,6 +41,7 @@ function rig(breed: BreedId = 'harrier', opts: { holdToFlap?: boolean; wind?: Ve
     breed,
     settings: () => settings,
     daylight: daylight === undefined ? undefined : () => daylight,
+    interactableNear: opts.interactableNear,
   });
   const r: Rig = {
     player,
@@ -628,6 +629,32 @@ describe('poses', () => {
     r2.run(2);
     const head = r2.player.riderPosition.clone().add(new Vector3(0, 1.6, 0));
     expect(r2.player.wyvernPose.lookTarget.distanceTo(head)).toBeLessThan(1);
+  });
+});
+
+describe('interactables', () => {
+  it('interact belongs to an inscription in reach: no mounting, no waving', () => {
+    let near = false;
+    const r = rig('harrier', { interactableNear: () => near });
+    r.player.placeAtSpawn();
+    r.run(1);
+    // Walk up to the wyvern: in mount range, a press would mount...
+    r.player.teleport(r.player.position.clone().add(new Vector3(3, 0, 0)), 0, 'onFoot');
+    r.run(0.5);
+    expect(r.player.canMount).toBe(true);
+    // ...but with an inscription in reach the press is the inscription's.
+    near = true;
+    r.run(1, pressAt(r.t + 0.1, 'interact'));
+    expect(r.player.mode).toBe('onFoot');
+    expect(r.count('mount')).toBe(0);
+    // Far from the wyvern, the press doesn't call it either.
+    r.player.foot.place(new Vector3(r.player.position.x + 45, 260, r.player.position.z - 20), 0, terrain);
+    r.run(1, pressAt(r.t + 0.1, 'interact'));
+    expect(r.player.companion.called).toBe(false);
+    // Out of reach again: interact mounts / calls as before.
+    near = false;
+    r.run(1, pressAt(r.t + 0.1, 'interact'));
+    expect(r.player.companion.called).toBe(true);
   });
 });
 

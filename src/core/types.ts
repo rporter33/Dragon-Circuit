@@ -482,6 +482,26 @@ export type WeatherKind = 'clear' | 'breezy' | 'overcast' | 'mist' | 'rain';
 /** The three branches research is earned in. */
 export type ResearchBranch = 'nature' | 'antiquity' | 'winds';
 
+/**
+ * Where a Ventari site stands (src/world/dressing/ventari/plan.ts). Shared by the antiquity
+ * dressing, ambient life, the guided opening and research.
+ */
+export interface VentariSiteAnchor {
+  /** Registry id (VENTARI_SITES). */
+  id: string;
+  islandId: number;
+  /** Centre of the site on the ground. */
+  x: number;
+  y: number;
+  z: number;
+  /** Facing (radians about +Y; 0 looks down +Z). Sites face the Roost unless they have a reason not to. */
+  yaw: number;
+  /** Footprint radius: the walk-in survey zone and the keep-out for props. */
+  radius: number;
+  /** Where the inscription stands, on the ground: walk up to it to read. */
+  inscription: { x: number; y: number; z: number };
+}
+
 export type DialogueSpeaker = 'quintus' | 'vellum' | 'narrator';
 
 export interface DialogueLine {

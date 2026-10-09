@@ -12,6 +12,7 @@ import { setCoarse } from './kit';
 import { roostPlan } from './roostPlan';
 import { siteBuilders, type SiteBuilders } from './kit';
 import { lightPoolMesh } from './lightPools';
+import { planVentariSites, type VentariSiteAnchor } from '../ventari/plan';
 import { beaconSprite, buildObservatory, buildPavilion, observatoryKeepOut } from './Landmarks';
 import { buildRuins, planRuins, type RuinSite } from './Ruins';
 
@@ -52,6 +53,8 @@ export class Structures {
   readonly group = new Group();
   readonly stats: StructureStats = { sites: 0, meshes: 0, triangles: 0, farTriangles: 0 };
   readonly ruins: RuinSite[];
+  /** One anchor per Ventari site (registry order); see ventari/plan.ts. */
+  readonly ventari: VentariSiteAnchor[];
   private sites: Site[] = [];
   private farDist: number;
 
@@ -94,6 +97,9 @@ export class Structures {
     }
     // Ruins last, so they keep clear of everything above.
     this.ruins = planRuins(terrain, out);
+    // The Ventari sites: two of them stand already (the Observatory, Highmoor's stones); the rest
+    // claim flat, clear ground before trees and props are scattered.
+    this.ventari = planVentariSites(terrain, out.exclusions, this.ruins);
     defer(() => {
       const rs = siteBuilders();
       buildRuins(rs, this.ruins, out);

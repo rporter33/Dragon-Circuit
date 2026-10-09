@@ -22,6 +22,11 @@ export interface RoostPlan {
   towers: TowerPlan[];
   /** Launch deck: root on land, extends outward over the rim along `dir`. */
   deck: { x: number; z: number; y: number; dirX: number; dirZ: number; yaw: number; length: number; halfWidth: number; rimDist: number };
+  /**
+   * The shipwright's dock: a broad timber slipway off the rim where the Codex (Quintus's airship) is
+   * built. Same frame as the deck: root on land, extends outward along `dir`.
+   */
+  dock: { x: number; z: number; y: number; dirX: number; dirZ: number; yaw: number; length: number; halfWidth: number; rimDist: number };
   banners: { x: number; z: number; yaw: number; color: 'blue' | 'red' }[];
   lanterns: { x: number; z: number; yaw: number }[];
   /** Paddock fence polygon (closed loop with a gate gap between the last and first post). */
@@ -37,6 +42,11 @@ export interface RoostPlan {
 
 /** Direction from the Roost toward Gull's Rest — the launch deck points at the first glide. */
 const DECK_ANGLE = (37 * Math.PI) / 180;
+/** The dock stands a quarter-turn and a bit round the rim from the deck, in front of the stable door. */
+const DOCK_OFFSET = (100 * Math.PI) / 180;
+const DOCK_INLAND = 16;
+const DOCK_OUT = 26;
+const DOCK_HALF_WIDTH = 9;
 
 export function roostPlan(layout: WorldLayout, terrain: Terrain): RoostPlan | null {
   const roost = terrain.islands.find((s) => s.def.kind === 'roost');
@@ -83,6 +93,26 @@ export function roostPlan(layout: WorldLayout, terrain: Terrain): RoostPlan | nu
     length: 12 + 18,
     halfWidth: 3.5,
     rimDist: 12,
+  };
+
+  // The dock: same construction as the deck, broader and longer, a little inland from the rim.
+  const dockAngle = deckAngle + DOCK_OFFSET;
+  const dockDirX = Math.cos(dockAngle);
+  const dockDirZ = Math.sin(dockAngle);
+  const dockRim = roost.outlineRadius(dockAngle);
+  const dockRootX = d.x + dockDirX * (dockRim - DOCK_INLAND);
+  const dockRootZ = d.z + dockDirZ * (dockRim - DOCK_INLAND);
+  const dockY = Math.max(roost.topHeight(dockRootX, dockRootZ), roost.topHeight(d.x + dockDirX * (dockRim - 4), d.z + dockDirZ * (dockRim - 4))) + 0.8;
+  const dock = {
+    x: dockRootX,
+    z: dockRootZ,
+    y: dockY,
+    dirX: dockDirX,
+    dirZ: dockDirZ,
+    yaw: Math.atan2(dockDirX, dockDirZ),
+    length: DOCK_INLAND + DOCK_OUT,
+    halfWidth: DOCK_HALF_WIDTH,
+    rimDist: DOCK_INLAND,
   };
 
   // Banners flank the stable front and line the walk to the deck.
@@ -160,6 +190,7 @@ export function roostPlan(layout: WorldLayout, terrain: Terrain): RoostPlan | nu
     stable: { x: st.x, z: st.z, yaw: st.yaw, width: 24, depth: 20 },
     towers,
     deck,
+    dock,
     banners,
     lanterns,
     paddock,

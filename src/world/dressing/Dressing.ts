@@ -20,6 +20,7 @@ import { planWaterfalls } from './water/waterfallPlan';
 import { HangingRoots } from './roots/HangingRoots';
 import { planRoots, type RootPlan } from './roots/rootPlan';
 import { colliderView } from './colliderView';
+import type { VentariSiteAnchor } from '../../core/types';
 import { deckCollider } from '../colliders';
 
 export interface DressingDeps {
@@ -120,6 +121,10 @@ export class Dressing implements DressingSystem {
     for (const shape of this.terrain.islands) all.push(...scatterIsland(shape, this.exclusions, { density: this.quality.propDensity }));
     this.forest = new Forest(all, this.quality, this.terrain.islands);
     this.group.add(this.forest.group);
+  }
+
+  get ventariSites(): readonly VentariSiteAnchor[] {
+    return this.structures.ventari;
   }
 
   deckAt(x: number, z: number, fromY: number): { y: number; surface: 'wood' | 'stone' } | null {

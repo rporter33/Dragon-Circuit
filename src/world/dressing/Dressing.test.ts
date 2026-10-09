@@ -79,6 +79,31 @@ describe('Dressing system', () => {
     expect(dressing.deckAt(0, 2400, 1e6)).toBeNull();
   });
 
+  it("builds the shipwright's dock: walkable past the rim, clear overhead for the Codex, away from the deck and stable", () => {
+    const plan = roostPlan(LAYOUT, terrain)!;
+    const d = plan.dock;
+    const tip = new Vector3(d.x + d.dirX * (d.length - 2), 0, d.z + d.dirZ * (d.length - 2));
+    expect(terrain.groundAt(tip.x, tip.z, 1e6)).toBeNull();
+    const hit = dressing.deckAt(tip.x, tip.z, d.y + 1)!;
+    expect(hit?.surface).toBe('wood');
+    expect(hit.y).toBeCloseTo(d.y);
+    // A hull 30-odd metres long sits on the centreline: nothing solid in a 14 m wide, 20 m tall box.
+    const p = new Vector3();
+    for (let s = 1; s <= d.length - 2; s += 2) {
+      for (const across of [-7, -3.5, 0, 3.5, 7]) {
+        for (const h of [0.5, 4, 10, 18]) {
+          p.set(d.x + d.dirX * s + d.dirZ * across, d.y + h, d.z + d.dirZ * s - d.dirX * across);
+          const solid = dressing.colliders.find((c) => !c.soft && signedDistance(c, p, null) < 0);
+          expect(solid, `dock blocked at ${s} m along, ${across} m across, ${h} m up`).toBeUndefined();
+        }
+      }
+    }
+    // Well away from the launch deck's line and the stable.
+    const deckTip = new Vector3(plan.deck.x + plan.deck.dirX * plan.deck.length, 0, plan.deck.z + plan.deck.dirZ * plan.deck.length);
+    expect(Math.hypot(d.x - deckTip.x, d.z - deckTip.z)).toBeGreaterThan(80);
+    expect(Math.hypot(d.x - plan.stable.x, d.z - plan.stable.z)).toBeGreaterThan(60);
+  });
+
   it('streams grass around the camera and drops it when the camera leaves', () => {
     const cam = new PerspectiveCamera(60, 16 / 9, 0.5, 7000);
     cam.position.set(60, 242, 60);

@@ -23,6 +23,7 @@ import type {
   Settings,
   WeatherKind,
   WyvernLook,
+  VentariSiteAnchor,
   WyvernPose,
 } from '../core/types';
 import type { Renderer } from '../render/renderer';
@@ -127,6 +128,8 @@ export interface DressingSystem {
    * the void): the deck top under (x, z) at or below fromY + 2, or null.
    */
   deckAt(x: number, z: number, fromY: number): { y: number; surface: 'wood' | 'stone' } | null;
+  /** One anchor per Ventari site, in registry order (sites the island layout can't fit are absent). */
+  readonly ventariSites?: readonly VentariSiteAnchor[];
   update(dt: number, camera: PerspectiveCamera, focus: Vector3): void;
   setQuality(q: QualityProfile): void;
 }
@@ -428,6 +431,32 @@ export interface GameView {
    * "Applying…" meanwhile.
    */
   renderer?: { readonly recompilingQuality: boolean };
+}
+
+/**
+ * Something on foot the rider can use: a Ventari inscription to read, Quintus to talk to, the Codex
+ * to inspect. Registered with Game.interactables; the nearest one in reach replaces the on-foot
+ * prompt (mounting and the Stable door keep priority) and interact calls it.
+ */
+export interface Interactable {
+  /** Unique id ('read:gullrest-shrine', 'talk:quintus', 'inspect:codex'). Re-adding replaces. */
+  id: string;
+  /** Where it stands (read every frame, so a moving one can update it in place). */
+  readonly position: Vector3;
+  /** Reach in metres (horizontal; height within ±3 m). */
+  radius: number;
+  /** The prompt shown while in reach. Keep one constant object per entry (no per-frame allocation). */
+  prompt: { action: 'interact'; text: string };
+  /** Optional gate (e.g. Quintus is busy flying). */
+  enabled?: () => boolean;
+  onInteract(): void;
+}
+
+export interface InteractableRegistry {
+  add(item: Interactable): void;
+  remove(id: string): void;
+  /** The closest enabled entry whose reach contains `p`, or null. */
+  nearest(p: Vector3): Interactable | null;
 }
 
 /**

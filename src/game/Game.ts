@@ -27,9 +27,10 @@ import { LocalSaveStore, SAVE_KEY } from '../progression/save';
 import { Fx } from '../fx/Fx';
 import { AudioSystem } from '../audio/Audio';
 import { Ui } from '../ui/Ui';
-import type { GameActions, GameScreen, GameView, RaceSystem } from './contracts';
+import type { GameActions, GameScreen, GameView, Interactable, RaceSystem } from './contracts';
 import { guessQuality } from './settings';
 import { computePrompt } from '../player/prompts';
+import { Interactables } from './interactables';
 import { readDebugParams, type DebugParams } from '../debug/params';
 import { findShowcase, type Showcase } from '../debug/showcase';
 
@@ -64,6 +65,9 @@ export class Game implements GameActions {
   /** Fade requested by screen transitions (0..1); combined with the player's own fade. */
   uiFade = 0;
   prompt: GameView['prompt'] = null;
+  /** On-foot things to use (inscriptions, Quintus, the Codex); the nearest in reach owns interact. */
+  readonly interactables = new Interactables();
+  private activeInteractable: Interactable | null = null;
   private accumulator = 0;
   private running = false;
   private view: GameView;
@@ -117,6 +121,7 @@ export class Game implements GameActions {
       // The saddle as the model builds it (falls back to an estimate until Wyvern.seatOffset exists).
       seat: (out) => (this.wyvern as { seatOffset?: (o: Vector3) => Vector3 } | undefined)?.seatOffset?.(out) ?? null,
       daylight: () => 1 - this.sky.night,
+      interactableNear: (p) => this.interactables.nearest(p) !== null,
     });
     this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings, this.events);
     this.wyvern = new Wyvern(this.save.data.wyvern, { terrain: this.world.terrain });
@@ -252,6 +257,10 @@ export class Game implements GameActions {
     this.renderer.grade.uFade.value = Math.max(this.player.fade, this.uiFade, this.cameraRig.fade);
 
     this.prompt = this.screen === 'play' ? computePrompt(this.player, this.world.layout) : null;
+    // On foot, an interactable in reach wins over mounting (you walked up to it) but not the Stable.
+    this.activeInteractable =
+      this.screen === 'play' && this.player.mode === 'onFoot' && this.prompt?.action !== 'stable' ? this.interactables.nearest(this.player.riderPosition) : null;
+    if (this.activeInteractable) this.prompt = this.activeInteractable.prompt;
     this.view.screen = this.screen;
     this.view.prompt = this.prompt;
     this.ui.update(dt, this.view);
@@ -385,6 +394,7 @@ export class Game implements GameActions {
     if (p.restart && this.races.activeId) this.restartRace();
     // The prompt decides what interact does here (mounting wins over the stable door).
     if (p.interact && this.prompt?.action === 'stable') this.openStable();
+    else if (p.interact && this.activeInteractable) this.activeInteractable.onInteract();
   }
 
   /** Feed adaptive resolution, skipping frames that say nothing about steady-state cost. */

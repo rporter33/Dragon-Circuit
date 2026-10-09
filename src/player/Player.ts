@@ -59,6 +59,11 @@ export interface PlayerDeps {
    * sun is Sun-warmed a little sooner. Absent = treated as night (the plain Rested timing).
    */
   daylight?: () => number;
+  /**
+   * True when an interactable (an inscription, Quintus, the Codex) is in reach of this on-foot
+   * position: interact then belongs to it (Game calls it), so the rider neither mounts nor waves.
+   */
+  interactableNear?: (p: Vector3) => boolean;
 }
 
 // Scratch.
@@ -755,7 +760,7 @@ export class Player implements PlayerSystem {
         return;
       }
     }
-    if (interact) {
+    if (interact && !this.deps.interactableNear?.(this.foot.position)) {
       if (this.canMount) {
         this.startMount();
         return;

@@ -430,6 +430,73 @@ function buildDeck(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, out: Site
   out.exclusions.capsule(root.x, root.z, tip.x, tip.z, hw + 2, false);
 }
 
+/**
+ * The shipwright's dock: a broad plank slipway off the rim, railed along both sides and open at the
+ * far end, with mooring posts. The Codex and its cradle are built on it by the research module.
+ */
+function buildDock(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, out: SiteOutputs): void {
+  const dk = plan.dock;
+  const F = xf(dk.x, dk.y, dk.z, 0, dk.yaw, 0);
+  const b = s.solid;
+  const hw = dk.halfWidth;
+  const L = dk.length;
+  const roost = terrain.islands.find((sh) => sh.def.id === plan.islandId)!;
+  const toWorld = (lx: number, ly: number, lz: number) => new Vector3(lx, ly, lz).applyMatrix4(F);
+  // Planks, a little weathered toward the open end.
+  for (let z = -1.5; z < L; z += 0.52) {
+    box(b, F, (rand() - 0.5) * 0.1, -0.08, z + 0.24, hw * 2 + 0.25, 0.14, 0.46, jitter(z > dk.rimDist ? PALETTE.timber : PALETTE.timberLight, 0.1));
+  }
+  // Joists and deep edge beams.
+  for (let x = -hw + 0.3; x <= hw - 0.3 + 1e-3; x += (hw * 2 - 0.6) / 4) beam(b, F, v(x, -0.45, -1.5), v(x, -0.45, L), 0.45, PALETTE.timber);
+  for (const sx of [-1, 1]) beam(b, F, v(sx * (hw + 0.1), -0.3, -1.5), v(sx * (hw + 0.1), -0.3, L), 0.36, PALETTE.timber);
+  beam(b, F, v(-hw - 0.2, -0.35, L - 0.1), v(hw + 0.2, -0.35, L - 0.1), 0.4, PALETTE.timber);
+  // Legs to the ground over land; raking struts to the cliff face beyond the rim.
+  for (let z = 0; z < dk.rimDist - 1; z += 4) {
+    for (const lx of [-(hw - 0.3), 0, hw - 0.3]) {
+      const w = toWorld(lx, 0, z);
+      const gy = roost.topHeight(w.x, w.z) - dk.y;
+      post(b, F, v(lx, gy - 0.6, z), v(lx, -0.3, z), 0.28, PALETTE.timber, 8);
+    }
+  }
+  const rim = dk.rimDist;
+  for (const zEnd of [rim + 6, rim + 13, rim + 20, rim + 25]) {
+    for (const lx of [-(hw - 0.6), 0, hw - 0.6]) {
+      const anchor = v(lx, -9 - (zEnd - rim) * 0.3, rim - 3);
+      post(b, F, anchor, v(lx, -0.55, zEnd), 0.26, PALETTE.timber, 8);
+      box(b, F, anchor.x, anchor.y, anchor.z, 0.9, 0.9, 0.9, PALETTE.iron);
+    }
+    beam(b, F, v(-hw + 0.3, -0.7, zEnd), v(hw - 0.3, -0.7, zEnd), 0.34, PALETTE.timber);
+  }
+  // Railings along both sides, open at both ends.
+  for (const sx of [-1, 1]) {
+    const posts: Vector3[] = [];
+    for (let z = 1; z <= L - 1.5; z += 2.6) {
+      posts.push(v(sx * hw, 0, z));
+      post(b, F, v(sx * hw, -0.3, z), v(sx * hw, 1.15, z), 0.1, PALETTE.timber, 6);
+    }
+    for (let i = 0; i < posts.length - 1; i++) {
+      beam(b, F, posts[i].clone().setY(1.12), posts[i + 1].clone().setY(1.12), 0.12, PALETTE.timberLight);
+      beam(b, F, posts[i].clone().setY(0.55), posts[i + 1].clone().setY(0.55), 0.04, PALETTE.rope);
+    }
+    colSpan(out.colliders, F, sx * hw, posts[0].z, sx * hw, posts[posts.length - 1].z, -0.3, 1.2, 0.25, { surface: 'wood' });
+    // Mooring posts at the far corners, iron-capped and rope-wound.
+    const mz = L - 0.8;
+    post(b, F, v(sx * (hw - 0.9), -0.3, mz), v(sx * (hw - 0.9), 1.0, mz), 0.32, PALETTE.timber, 12);
+    box(b, F, sx * (hw - 0.9), 1.05, mz, 0.7, 0.14, 0.7, PALETTE.iron);
+    for (let k = 0; k < 3; k++) box(b, F, sx * (hw - 0.9), 0.45 + k * 0.16, mz, 0.72, 0.1, 0.72, PALETTE.rope);
+    colCyl(out.colliders, F, sx * (hw - 0.9), -0.3, mz, 0.4, 1.45, { surface: 'wood' });
+  }
+
+  // Walkable surface + keep-outs (the whole land end stays clear of trees and props).
+  out.decks.push({ x: dk.x, z: dk.z, yaw: dk.yaw, halfWidth: hw, back: 1.5, length: L, y: dk.y, surface: 'wood' });
+  const root = toWorld(0, 0, -6);
+  const tip = toWorld(0, 0, dk.rimDist);
+  out.exclusions.capsule(root.x, root.z, tip.x, tip.z, hw + 3, false);
+  // An avenue from the plaza to the dock, clear of trees and rocks (grass may grow on it).
+  const island = roost.def;
+  out.exclusions.capsule(island.x + dk.dirX * 50, island.z + dk.dirZ * 50, root.x, root.z, 5, true);
+}
+
 /** A banner pole (base at the frame origin, facing frame +Z): pole, crossbar, and the cloth (soft). */
 function bannerColliders(out: Collider[], F: Matrix4, height: number): void {
   colCyl(out, F, 0, -0.5, 0, 0.22, height + 0.85, { surface: 'wood' });
@@ -473,6 +540,7 @@ export function buildRoost(s: SiteBuilders, plan: RoostPlan, terrain: Terrain, o
   buildStable(s, plan, out);
   plan.towers.forEach((t, i) => buildTower(s, t, i, out));
   buildDeck(s, plan, terrain, out);
+  buildDock(s, plan, terrain, out);
 
   for (const bn of plan.banners) {
     bannerPole(s, I, bn.x, gy(bn.x, bn.z), bn.z, bn.yaw, 9, bn.color === 'blue' ? PALETTE.bannerBlue : PALETTE.bannerRed, PALETTE.gold);
