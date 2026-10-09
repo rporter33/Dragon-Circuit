@@ -70,8 +70,32 @@ describe('island meshes', () => {
         const p = m.data.positions;
         for (let i = 0; i < m.footRing.count; i++) {
           const v = m.footRing.start + i;
-          expect(p[v * 3 + 1]).toBeCloseTo(-shape.def.lip, 4);
+          expect(p[v * 3 + 1]).toBeCloseTo(shape.rimBottomAt((i / m.footRing.count) * Math.PI * 2) - shape.def.y, 4);
         }
+      }
+    }
+  });
+
+  it('splits its index buffer into the top and cliff band, then the underside', () => {
+    for (const shape of sample) {
+      for (let lod = 0; lod < ISLAND_LODS.length; lod++) {
+        const m = mesh(shape, lod);
+        const idx = m.data.indices;
+        const p = m.data.positions;
+        expect(m.splitIndex % 3).toBe(0);
+        expect(m.splitIndex).toBeGreaterThan(0);
+        expect(m.splitIndex).toBeLessThan(idx.length);
+        // Nothing drawn in the top part hangs below the cliff foot; nothing in the underside part
+        // rises above it.
+        let footMin = Infinity;
+        let footMax = -Infinity;
+        for (let i = 0; i < m.footRing.count; i++) {
+          const y = p[(m.footRing.start + i) * 3 + 1];
+          footMin = Math.min(footMin, y);
+          footMax = Math.max(footMax, y);
+        }
+        for (let k = 0; k < m.splitIndex; k++) expect(p[idx[k] * 3 + 1]).toBeGreaterThanOrEqual(footMin - 1e-3);
+        for (let k = m.splitIndex; k < idx.length; k++) expect(p[idx[k] * 3 + 1]).toBeLessThanOrEqual(footMax + 1e-3);
       }
     }
   });

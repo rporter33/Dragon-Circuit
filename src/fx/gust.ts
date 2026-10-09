@@ -30,6 +30,7 @@ uniform float uHalfWidth;
 varying vec2 vUv;
 varying float vAlpha;
 varying vec3 vColor;
+varying float vSeed;
 
 vec3 pathAt(float s, vec4 seed, vec3 side) {
   // Out along the deck, then lifting ever more steeply past the end (the updraft at the rim).
@@ -54,19 +55,23 @@ void main() {
   vec3 w = cross(tan, viewV);
   float wl = length(w);
   w = wl > 1e-4 ? w / wl : vec3(0.0, 1.0, 0.0);
-  // At least ~2.5 px wide; lines thinner than that widen and fade instead of aliasing away.
-  float width = 0.2 + 0.12 * aSeed.y;
+  // Fine ribbons of moving air, tapered to points at both ends. At least ~1.5 px wide; lines
+  // thinner than that widen and fade instead of aliasing away.
+  float width = (0.08 + 0.07 * aSeed.y) * sin(u * 3.14159);
   float dist = length(p - cameraPosition);
-  float minW = 2.5 * dist / uPxScale;
-  float thin = min(1.0, width / minW);
-  p += w * position.x * max(width, minW);
+  float minW = 1.5 * dist / uPxScale;
+  float thin = min(1.0, width / max(minW, 1e-4));
+  p += w * position.x * max(width, minW * sin(u * 3.14159));
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
   float life = sin(ph * 3.14159);
-  vAlpha = uAmount * pow(life, 1.4) * thin * fxFogTransmittance(p);
+  // Never a plank across the lens: fade out close to the camera.
+  float nearFade = smoothstep(3.0, 12.0, dist);
+  vAlpha = 0.8 * uAmount * pow(life, 1.4) * thin * nearFade * fxFogTransmittance(p);
   // A touch of sky blue so the lines still read against white cloud.
   vec3 tint = mix(vec3(1.0), normalize(uSkyZenith + 0.05) * 1.2, 0.35);
-  vColor = dwApplyFog(fxLitDust(tint, p) * 1.5, p, cameraPosition);
+  vColor = dwApplyFog(fxLitDust(tint, p) * 1.3, p, cameraPosition);
   vUv = vec2(position.x * 2.0, u);
+  vSeed = aSeed.x * 53.0;
 }
 `;
 
@@ -74,13 +79,15 @@ const FRAG = /* glsl */ `
 varying vec2 vUv;
 varying float vAlpha;
 varying vec3 vColor;
+varying float vSeed;
 void main() {
   float across = 1.0 - abs(vUv.x);
-  float along = smoothstep(0.0, 0.5, vUv.y) * (1.0 - smoothstep(0.85, 1.0, vUv.y));
-  // A brush stroke: bright core, cooler and darker edges, so it reads on white cloud and on
-  // blue sky alike.
-  vec3 col = mix(vColor * vec3(0.66, 0.75, 0.92), vColor, smoothstep(0.25, 0.75, across));
-  float a = smoothstep(0.0, 0.55, across) * along * vAlpha;
+  float along = smoothstep(0.0, 0.5, vUv.y) * (1.0 - smoothstep(0.75, 1.0, vUv.y));
+  // A dry brush stroke: bright core, cooler and darker edges (reads on white cloud and on blue
+  // sky alike), and the paint breaking up along its length.
+  float brush = 0.5 + 0.5 * sin(vUv.y * 23.0 + vSeed) * sin(vUv.y * 9.0 + vSeed * 0.7);
+  vec3 col = mix(vColor * vec3(0.7, 0.78, 0.92), vColor, smoothstep(0.25, 0.75, across));
+  float a = smoothstep(0.0, 0.9, across) * along * (0.45 + 0.55 * smoothstep(0.15, 0.8, brush)) * vAlpha;
   if (a < 0.004) discard;
   gl_FragColor = vec4(col, a);
 }

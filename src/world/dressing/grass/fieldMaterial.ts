@@ -82,15 +82,17 @@ vec3 objectNormal;
   float edge = 1.0 - smoothstep(uDwRadius * 0.78, uDwRadius, dist);
   float H = aShape.x * aBlade.y * vis * edge;
   float widen = mix(1.0, 2.8, smoothstep(10.0, uDwRadius * 0.9, dist));
-  float W = aBlade.w * aShape.y * widen * (1.0 - pow(t, 1.5) * 0.92);
+  float heatherW = step(1.0, aShape.w);
+  // Heather sprigs keep their width up to rounded tips; grass blades taper to a point.
+  float W = aBlade.w * aShape.y * widen * (1.0 - pow(t, 1.5) * mix(0.92, 0.4, heatherW));
   float ba = aBlade.z + yaw;
   vec2 across = vec2(cos(ba), sin(ba));
   vec2 facing = vec2(-across.y, across.x);
   vec2 outward = dot(rootOff, rootOff) > 1e-8 ? normalize(rootOff) : facing;
   float heather = step(1.0, aShape.w);
   float seed = fract(aShape.w);
-  // Heather stands stiff and bushy; grass arcs outward.
-  vec2 disp = outward * mix(0.16 + 0.42 * seed, 0.12, heather) * t * t;
+  // Heather splays into a low, rounded clump; grass arcs outward.
+  vec2 disp = outward * mix((0.16 + 0.42 * seed) * t * t, (0.34 + 0.2 * seed) * t, heather);
   disp += dwWindBend(root, seed) * t * t * (1.0 - 0.6 * heather);
   disp += dwPush(root, uPlayerPos + vec3(0.0, 0.6, 0.0), 1.5) * 1.15 * t;
   disp += dwPush(root, uDwBend.xyz, uDwBend.w) * 1.3 * t;
@@ -159,9 +161,9 @@ vColor = vec4(1.0);
   float t = position.y;
   vec3 b = dwSrgb(aBase.rgb);
   vec3 tp = dwSrgb(aTip.rgb);
-  // Heather: olive-brown stems with the bloom only on the top third.
+  // Heather: brownish sprigs blooming over their upper half, soft and light at the tips.
   float hz = step(1.0, aShape.w);
-  vColor.rgb = mix(b, tp, mix(smoothstep(0.0, 0.95, t), smoothstep(0.5, 0.85, t), hz)) * (0.72 + 0.28 * t);
+  vColor.rgb = mix(b, tp, mix(smoothstep(0.0, 0.95, t), smoothstep(0.25, 0.75, t), hz)) * mix(0.72 + 0.28 * t, 0.82 + 0.25 * t, hz);
 }
 `;
 
