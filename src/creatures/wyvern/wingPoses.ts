@@ -351,6 +351,30 @@ export const BACKWING_STYLES: Readonly<Record<BreedId, FlapStyle>> = mapStyles((
   supinate: -35,
 }));
 
+/**
+ * The hover stroke (B7): flaring and beating slowly enough to hang in the air, the stroke plane
+ * tilts 45° toward the horizontal: the wing sweeps forward and down pronated (leading edge down,
+ * pushing air down and back) and back and up supinated, a figure of eight at 0.8 of the breed's
+ * stroke.
+ */
+export const HOVER_STYLES: Readonly<Record<BreedId, FlapStyle>> = mapStyles((st) => ({
+  humTop: 0.8 * st.humTop,
+  humBot: 0.8 * st.humBot,
+  sweepDown: -35,
+  sweepUp: 30,
+  fold: st.fold,
+  tipFlex: st.tipFlex,
+  tipLag: st.tipLag,
+  lead: st.lead,
+  tiltBack: 0.5,
+  pronOut: st.pronOut,
+  pronIn: st.pronIn,
+  glideTips: st.glideTips,
+  tilt: 1,
+  pronate: 20,
+  supinate: -35,
+}));
+
 /** A style per breed derived from each breed's flight style (on its downstroke fraction). */
 function mapStyles(make: (st: FlapStyle) => StyleSpec): Record<BreedId, FlapStyle> {
   const out = {} as Record<BreedId, FlapStyle>;

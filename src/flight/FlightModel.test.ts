@@ -310,7 +310,8 @@ describe('flaps and stamina', () => {
     off();
     expect(counts.flapRefused ?? 0).toBe(0);
     expect(m.state.winded).toBe(false);
-    expect(m.beats - beats).toBeGreaterThan(10);
+    // (Ragged and hitching at the top when exhausted, B7: at least 80% of the fresh cadence.)
+    expect(m.beats - beats).toBeGreaterThan(0.8 * 10 * b.flapRate);
     expect(strength).toBeGreaterThan(0.15);
     expect(strength).toBeLessThan(0.4);
     // Weak beats slow the sink but don't hold altitude: gliding (or landing) is how to rest.
@@ -423,6 +424,43 @@ describe('flaps and stamina', () => {
       expect(Math.abs(a - c) / c, id).toBeLessThan(0.03);
     }
   }, 120_000);
+
+  it('a tired beat goes ragged: uneven beats, every other one shallower, the right wing trailing (B7)', () => {
+    const run = (stamina: number) => {
+      const m = launch(BREEDS.harrier, 24);
+      const input = neutralInput();
+      input.flap = 1;
+      const starts: number[] = [];
+      const amps: number[] = [];
+      let lag = 0;
+      for (let i = 0; i < 12 / SIM_DT; i++) {
+        m.state.stamina = stamina;
+        const r = m.step(SIM_DT, input, stillAir());
+        if (r.beatStarted) {
+          starts.push(i * SIM_DT);
+          amps.push(m.beatAmp);
+        }
+        lag = Math.max(lag, m.sideLag);
+      }
+      const lengths = starts.slice(1).map((t, k) => t - starts[k]);
+      return { lengths, amps, lag };
+    };
+    const fresh = run(1);
+    const tired = run(0.25);
+    const spread = (xs: number[]) => (Math.max(...xs) - Math.min(...xs)) / (xs.reduce((a, b) => a + b, 0) / xs.length);
+    // Fresh: every beat the same length and depth, both wings together.
+    expect(spread(fresh.lengths)).toBeLessThan(0.02);
+    expect(Math.min(...fresh.amps)).toBe(1);
+    expect(fresh.lag).toBe(0);
+    // Tired (fatigue 0.69): beats 8%+ uneven, a hitch at the top, every other beat shallower.
+    expect(spread(tired.lengths)).toBeGreaterThan(0.08);
+    expect(Math.min(...tired.amps)).toBeLessThan(0.87);
+    expect(Math.max(...tired.amps)).toBe(1);
+    expect(tired.lag).toBeGreaterThan(0.015);
+    // Still the breed's rhythm on average (within 15%).
+    const mean = tired.lengths.reduce((a, b) => a + b, 0) / tired.lengths.length;
+    expect(Math.abs(mean * BREEDS.harrier.flapRate - 1)).toBeLessThan(0.15);
+  });
 
   it('a lighter trigger makes a weaker, cheaper beat', () => {
     const run = (flap: number) => {

@@ -24,6 +24,7 @@ import { Bouncy, Spring, noise1 } from '../ik';
 import {
   BACKWING_STYLES,
   FLAP_STYLES,
+  HOVER_STYLES,
   FLARE,
   GLIDE,
   TUCK,
@@ -82,6 +83,14 @@ const GUST_LOAD = 0.12;
  */
 const LAUNCH_UNFOLD = 0.12;
 const LAUNCH_BEATS = 2;
+/**
+ * The pull-out (B7): the hands and fingers stay swept back after a dive while the arms open,
+ * (HAND_TUCK × how fast and how hard it is pulling), and follow the arms HAND_LAG s behind.
+ */
+const HAND_TUCK = 0.6;
+const HAND_LAG = 0.12;
+/** First channel of the hand group (hand, fingers, claw); before it, the humerus and forearm. */
+const HAND_CH = W.handEl;
 
 /** The tail's rudder at full yaw (rad per segment), and its spring (overshoots about 0.25 s). */
 const RUDDER = 0.12;
@@ -112,6 +121,13 @@ export class FlightLayer {
   /** The landing flare this frame (0..1, the last metres of an approach) and its backwing weight. */
   private landFlare = 0;
   private backW = 0;
+  /** The breed's hover stroke (B7), its scratch pose, and this frame's hover weight. */
+  private readonly hoverStyle: FlapStyle;
+  private readonly flapHover = new Float32Array(WING_CHANNELS);
+  private hoverW = 0;
+  /** The hands' own tuck (the pull-out keeps them swept back, a moment behind the arms). */
+  private handTuck = 0;
+  private readonly tuckPose = new Float32Array(WING_CHANNELS);
   /** adjustPose's inputs for the wing being posed (a record: no doubles through call arguments). */
   private readonly adj = wingAdjust();
   private readonly legSwing = new Bouncy(5, 0.35);
@@ -147,6 +163,9 @@ export class FlightLayer {
   private beatLoad = 0;
   /** The beat as the wing is posed (flapPoseAt's input): the phase, and the labor (fatigue or launch). */
   private readonly beat = { phase: 0, fatigue: 0 };
+  /** This beat's amplitude and the right wing's phase lag (pose.beatAmp / sideLag: a tired beat). */
+  private beatAmp = 1;
+  private sideLag = 0;
   /** Launch beats still to labor through, and last frame's launch clock and beat phase. */
   private launchBeats = 0;
   private prevLaunchT = 99;
@@ -157,6 +176,7 @@ export class FlightLayer {
     this.f = a.frame;
     this.style = FLAP_STYLES[a.rig.props.breed];
     this.backStyle = BACKWING_STYLES[a.rig.props.breed];
+    this.hoverStyle = HOVER_STYLES[a.rig.props.breed];
     this.planeMean = strokePlaneMean(this.style);
     const D = this.style.down;
     this.clockS = Math.sin(Math.PI * D);
@@ -275,6 +295,9 @@ export class FlightLayer {
     this.prevPhase = f.phase;
     this.beat.phase = f.phase;
     this.beat.fatigue = this.launchBeats > 0 ? 1 : f.fatigue;
+    const pose = f.pose;
+    this.beatAmp = pose.beatAmp ?? 1;
+    this.sideLag = pose.sideLag ?? 0;
   }
 
   /** Heave, chest lift and lean, the flare's trunk pitch, and this frame's wing prelude. */
@@ -323,8 +346,15 @@ export class FlightLayer {
     this.glide();
     // The launch strokes (B6).
     this.launch();
-    // Hover (B7): none yet.
-    f.hover = 0;
+    // Hover (B7): flared and beating slowly enough to hang in the air (not the last metres to
+    // the ground, which beat the backwing). Published for the tail's air brake.
+    this.hoverW = flare * flap * (1 - smoothstep(6, 14, f.speed)) * (1 - this.backW) * airW;
+    f.hover = this.hoverW;
+    // The pull-out: the hands follow the arms' tuck a moment behind, and stay swept back pulling
+    // out of a fast dive while the arms open.
+    const pull = HAND_TUCK * smoothstep(30, 45, f.speed) * clamp01((f.gLoad - 1) / 2) * airW;
+    const handTarget = Math.max(tuck, pull);
+    this.handTuck = f.teleport ? handTarget : this.handTuck + (handTarget - this.handTuck) * (1 - Math.exp(-f.dt / HAND_LAG));
   }
 
   /** One wing's flight pose (`side` 0 left, 1 right) into `out`. */
@@ -333,12 +363,25 @@ export class FlightLayer {
     const { tuck, flare, flap, buffet, airW } = f;
     const sgn = SIDE_SIGN[side];
     const asym = this.asymBase * sgn;
+    // Tucked: the arm with the tuck, the hand and fingers with their own (the pull-out). The
+    // hand's own tuck is measured against the body, not the forearm: where it is more tucked than
+    // the arm, it keeps the sweep back the arm has given up, so the hand-wings stay swept back
+    // along the body while the wrists open (an M from above).
     blendPose(GLIDE, TUCK, tuck, out);
+    const handTuck = this.handTuck;
+    if (handTuck > tuck + 1e-4) {
+      blendPose(GLIDE, TUCK, handTuck, this.tuckPose);
+      for (let c = HAND_CH; c < WING_CHANNELS; c++) out[c] = this.tuckPose[c];
+      out[W.handSw] += (TUCK[W.humSw] + TUCK[W.foreSw]) * (handTuck - tuck);
+    }
     blendPose(out, FLARE, flare * (1 - tuck), out);
     if (flap > 0.001) {
-      const fp = flapPoseAt(this.beat, this.flapSide, this.style);
-      // The outer wing of a turn takes the bigger stroke.
-      const amp = clamp(1 + 0.3 * asym, 0.72, 1.32);
+      // A tired wyvern's right wing trails the left a little (pose.sideLag, B7).
+      const beat = this.beat;
+      beat.phase = side === 1 ? f.phase - this.sideLag : f.phase;
+      const fp = flapPoseAt(beat, this.flapSide, this.style);
+      // The outer wing of a turn takes the bigger stroke; a tired beat a smaller one (beatAmp).
+      const amp = clamp(1 + 0.3 * asym, 0.72, 1.32) * this.beatAmp;
       fp[W.humEl] *= amp;
       fp[W.foreEl] *= amp;
       fp[W.handEl] *= amp;
@@ -351,7 +394,10 @@ export class FlightLayer {
       }
       // ...and over the last metres to the ground they are backwing strokes, beating against the
       // sink in front of the body.
-      if (backW > 0.001) blendPose(fp, flapPoseAt(this.beat, this.flapBack, this.backStyle), backW, fp);
+      if (backW > 0.001) blendPose(fp, flapPoseAt(beat, this.flapBack, this.backStyle), backW, fp);
+      // Hovering, the stroke plane lies back 45°: a figure of eight in front of the body.
+      const hoverW = this.hoverW;
+      if (hoverW > 0.001) blendPose(fp, flapPoseAt(beat, this.flapHover, this.hoverStyle), hoverW, fp);
       blendPose(out, fp, flap, out);
     }
     // The living glide: each wing trims on its own, the tips most; the resettle lifts both.

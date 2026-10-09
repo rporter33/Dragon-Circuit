@@ -727,3 +727,89 @@ describe('the launch stroke (B6: after the vault, out of the fold into labored b
     expect(low[1]).toBeLessThan(low[2] - 2);
   });
 });
+
+describe('fatigue, hover and the pull-out (B7)', { timeout: 60000 }, () => {
+  /** One beat (after settling) of the left wingtip relative to its shoulder, body frame. */
+  function stroke(breed: BreedId, set: (p: ReturnType<typeof gliding>) => void, rate = BREEDS[breed].flapRate) {
+    const w = new Wyvern(look(breed));
+    const p = gliding();
+    set(p);
+    const hum = w.skinnedMesh!.skeleton.bones.find((b) => b.name === 'humerusL')!;
+    const ys: number[] = [];
+    const zs: number[] = [];
+    let hover = 0;
+    const n = Math.round(60 / rate);
+    for (let i = 0; i < 4 * n; i++) {
+      p.flapPhase = ((i / 60) * rate) % 1;
+      w.update(1 / 60, p);
+      hover = Math.max(hover, (w as unknown as { animator: { frame: { hover: number } } }).animator.frame.hover);
+      if (i < 3 * n) continue;
+      w.getWingtips(_p, _q);
+      const sl = hum.getWorldPosition(new Vector3());
+      ys.push(_p.y - sl.y);
+      zs.push(_p.z - sl.z);
+    }
+    w.dispose();
+    const range = (xs: number[]) => Math.max(...xs) - Math.min(...xs);
+    return { vertical: range(ys), foreAft: range(zs), hover };
+  }
+
+  it('hovers with the stroke plane laid back 45°, and says so for the tail (frame.hover)', () => {
+    for (const b of BREED_ORDER) {
+      const hov = stroke(b, (p) => {
+        p.airspeed = 7;
+        p.velocity.set(0, 0, 7);
+        p.flare = 1;
+        p.flapStrength = 1;
+      });
+      const fast = stroke(b, (p) => {
+        p.flare = 1;
+        p.flapStrength = 1;
+      });
+      expect(hov.hover, b).toBeGreaterThan(0.8);
+      expect(fast.hover, b).toBeLessThan(0.05);
+      expect(hov.foreAft / hov.vertical, b).toBeGreaterThan(1.3 * (fast.foreAft / fast.vertical));
+    }
+  });
+
+  it('beats raggedly when told (pose.beatAmp, sideLag): a shallower stroke, the right wing behind', () => {
+    const w = new Wyvern(look('harrier'));
+    const p = gliding();
+    p.flapStrength = 1;
+    p.beatAmp = 0.8;
+    p.sideLag = 0.05;
+    let maxDiff = 0;
+    for (let i = 0; i < 120; i++) {
+      p.flapPhase = ((i / 60) * BREEDS.harrier.flapRate) % 1;
+      w.update(1 / 60, p);
+      w.getWingtips(_p, _q);
+      maxDiff = Math.max(maxDiff, Math.abs(_p.y - _q.y));
+    }
+    w.dispose();
+    // The two wingtips are no longer mirror images through the beat.
+    expect(maxDiff).toBeGreaterThan(0.3);
+  });
+
+  it('pulls out of a fast dive with the hands still swept back while the arms open', () => {
+    const tipBehindWrist = (speed: number, g: number) => {
+      const w = new Wyvern(look('harrier'));
+      const p = gliding();
+      p.airspeed = speed;
+      p.velocity.set(0, 0, speed);
+      p.wingSpread = 0.25;
+      for (let i = 0; i < 90; i++) w.update(1 / 60, p);
+      // Open the wings and pull: the arm follows the spread, the hand its own (lagging) tuck.
+      p.wingSpread = 1;
+      p.angularVelocity.set(-((g - 1) * 9.81) / speed, 0, 0);
+      for (let i = 0; i < 30; i++) w.update(1 / 60, p);
+      const bones = w.skinnedMesh!.skeleton.bones;
+      const wrist = bones.find((b) => b.name === 'handL')!.getWorldPosition(new Vector3());
+      w.getWingtips(_p, _q);
+      w.dispose();
+      return wrist.z - _p.z;
+    };
+    // Half a second after opening at 45 m/s pulling 3 g the tips trail the wrists further than
+    // opening gently at cruise.
+    expect(tipBehindWrist(45, 3)).toBeGreaterThan(tipBehindWrist(24, 1) + 0.3);
+  });
+});

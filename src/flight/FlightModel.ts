@@ -277,6 +277,18 @@ export const FLIGHT_TUNING = {
   zoomCap: 0.3,
   zoomSpill: 20,
   /**
+   * A tired wyvern's beat goes ragged (fatigue = the animation's: (0.8 − stamina) / 0.8, from
+   * `tiredFrom` of it): each beat's rate ×(1 ± tiredRate·fatigue), a hitch of `tiredHitch` s (to
+   * 1.6×) at the top before it drives down, every other beat shallower (×(1 − tiredAmp·fatigue),
+   * for the animation) and the right wing lagging `tiredLag`·fatigue of a beat. Deterministic: a
+   * hash of the beat count, never Math.random.
+   */
+  tiredFrom: 0.4,
+  tiredRate: 0.15,
+  tiredHitch: 0.05,
+  tiredAmp: 0.25,
+  tiredLag: 0.03,
+  /**
    * Terrain queries, kept cheap. The clearance (a conservative distance to the nearest solid)
    * minus the distance flown since it was measured is still a safe bound, so it is re-measured
    * only once that bound drops under `clearanceRemeasure` m (or it is `clearanceMaxAge` s old,
@@ -500,6 +512,11 @@ export class FlightModel {
   /** Smoothed vertical air at the body (m/s): thermals and ridge lift make for a restful glide. */
   private updraft = 0;
   private contactInfo: ContactInfo = { soft: false };
+  /** The ragged beat (B7): this beat's rate × and amplitude, the hitch left at its top (s), the lag. */
+  private beatRateK = 1;
+  private beatAmpK = 1;
+  private hitch = 0;
+  private lagK = 0;
   /** The lowest point of a low landing flare so far (m; Infinity when not in one). */
   private landLow = Infinity;
   /** How far into the landing flare's feet-first pitch (0..1) this step. */
@@ -589,6 +606,9 @@ export class FlightModel {
     s.flapPhase = 0;
     this.sinceBeat = 0;
     this.beats++;
+    this.raggedBeat();
+    // (A launch leap drives down at once: no hitch.)
+    this.hitch = 0;
     return true;
   }
 
@@ -606,6 +626,35 @@ export class FlightModel {
     s.flapStrength = damp(s.flapStrength, 0, 4, dt);
     if (this.sinceBeat < T.regenDelay) return;
     s.stamina = clamp01(s.stamina + (rate ?? this.breed.staminaRegen) * multiplier * dt);
+  }
+
+  /** How tired the beat is (0 fresh … 1 empty): the animation's fatigue, from the meter. */
+  get fatigue(): number {
+    return clamp01((0.8 - this.state.stamina) / 0.8);
+  }
+
+  /** This beat's amplitude (× the stroke; a tired wyvern beats every other stroke shallower). */
+  get beatAmp(): number {
+    return this.beatAmpK;
+  }
+
+  /** How far (beats) the right wing trails the left: a tired, ragged beat. */
+  get sideLag(): number {
+    return this.lagK;
+  }
+
+  /** A new wingbeat's raggedness, from how tired the wyvern is and a hash of the beat's count. */
+  private raggedBeat(): void {
+    const fat = this.fatigue;
+    const w = smoothstep(T.tiredFrom, T.tiredFrom + 0.1, fat);
+    const h1 = Math.sin(this.beats * 12.9898 + 78.233) * 43758.5453;
+    const h2 = Math.sin(this.beats * 39.3468 + 11.135) * 43758.5453;
+    const r1 = h1 - Math.floor(h1);
+    const r2 = h2 - Math.floor(h2);
+    this.beatRateK = 1 + T.tiredRate * fat * w * (2 * r1 - 1);
+    this.beatAmpK = this.beats % 2 === 1 ? 1 - T.tiredAmp * fat * w : 1;
+    this.hitch = w > 0 ? T.tiredHitch * (1 + 0.6 * r2) * w : 0;
+    this.lagK = T.tiredLag * fat * w;
   }
 
   /** True while a committed wingbeat is in progress. */
@@ -832,12 +881,17 @@ export class FlightModel {
       if (wantsBeat) {
         this.beats++;
         r.beatStarted = true;
-      }
+        this.raggedBeat();
+        // (A fresh press drives down at once: the hitch is a tired wyvern's between beats.)
+        this.hitch = 0;
+      } else this.raggedBeat();
     }
     if (this.beatActive) {
       const prev = s.flapPhase;
-      // Backwing strokes are short and quick; real ones follow the breed's rhythm.
-      s.flapPhase += b.flapRate * (this.backwingBeat ? 1.4 : 1) * dt;
+      // Backwing strokes are short and quick; real ones follow the breed's rhythm (ragged when
+      // tired: a hitch at the top, then the beat at this beat's rate).
+      if (this.hitch > 0) this.hitch -= dt;
+      else s.flapPhase += b.flapRate * (this.backwingBeat ? 1.4 : this.beatRateK) * dt;
       // Pressing harder mid-downstroke deepens the beat; easing off doesn't cancel it.
       if (s.flapPhase < down && !this.backwingBeat) this.beatStrength = Math.max(this.beatStrength, flapIn * this.effort);
       if (prev < down && s.flapPhase >= down) {
@@ -850,6 +904,7 @@ export class FlightModel {
           this.beatStrength = flapIn * this.effort;
           this.beats++;
           r.beatStarted = true;
+          this.raggedBeat();
         } else if (wantsBackwing) {
           this.backwingBeat = true;
           this.beatStrength = this.backwinging;

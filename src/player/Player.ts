@@ -92,6 +92,9 @@ export class Player implements PlayerSystem {
   readonly wyvernPose: WyvernPose = Object.assign(createWyvernPose(), {
     control: { pitch: 0, roll: 0, yaw: 0 },
     gust: { l: 0, r: 0 },
+    // A tired wyvern's ragged beat (B7): this beat's amplitude, the right wing's lag.
+    beatAmp: 1,
+    sideLag: 0,
     // A called arrival greets the rider: the id follows Companion.greetings.
     cue: { kind: 'greet' as const, id: 0 },
   });
@@ -1286,6 +1289,8 @@ export class Player implements PlayerSystem {
     const tips = this.model.tipUpdraft;
     wp.gust!.l = inAir ? tips.l : 0;
     wp.gust!.r = inAir ? tips.r : 0;
+    wp.beatAmp = inAir ? this.model.beatAmp : 1;
+    wp.sideLag = inAir ? this.model.sideLag : 0;
     wp.cue!.id = this.companion.greetings;
     if (this.lookFresh) {
       this.lookSmooth.copy(this.lookTarget);
