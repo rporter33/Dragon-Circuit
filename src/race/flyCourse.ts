@@ -130,9 +130,14 @@ export function handsOffDrop(breed: BreedStats, distance: number): number {
  */
 export const START_AIM_ABOVE = 4;
 export const START_SINK_MARGIN = 1.25;
-/** Open air wanted around the start point and along the run-up (m). */
-export const START_CLEARANCE = 25;
-const RUNUP_CLEARANCE = 12;
+/**
+ * Open air wanted around the start point and along the run-up (m). Terrain.distance is a lower
+ * bound that never reports more than 24 m once structure colliders are registered (it only
+ * searches that far for them), so asking for more could never be satisfied in the game: 20 m is
+ * three half-wingspans of the biggest breed.
+ */
+export const START_CLEARANCE = 20;
+export const RUNUP_CLEARANCE = 12;
 /** Run-up lengths tried, preferred first. */
 const START_LEADS: readonly number[] = [RACE_START.leadDistance, 160, 120, 180, 100, 200, 80];
 

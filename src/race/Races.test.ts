@@ -9,13 +9,14 @@ import { createRiderPose, createWyvernPose } from '../player/poses';
 import { QUALITY } from '../render/quality';
 import { DEFAULT_SETTINGS } from '../game/settings';
 import { LocalSaveStore, MemoryGhostStore, defaultSave } from '../progression/save';
-import { ColliderIndex } from '../world/colliders';
+import { ColliderIndex, deckCollider } from '../world/colliders';
+import { Dressing } from '../world/dressing/Dressing';
 import { LAYOUT } from '../world/layout';
 import { Terrain } from '../world/terrain';
 import { roostPlan } from '../world/dressing/structures/roostPlan';
 import { COURSES } from './courses';
 import { GATE_HALF_HEIGHT, GATE_HALF_WIDTH, gateRing, RACE_START } from './courseMath';
-import { handsOffDrop, START_AIM_ABOVE, START_SINK_MARGIN } from './flyCourse';
+import { handsOffDrop, RUNUP_CLEARANCE, START_AIM_ABOVE, START_CLEARANCE, START_SINK_MARGIN } from './flyCourse';
 import { GhostRecorder } from './ghost';
 import { ARMING, Races } from './Races';
 
@@ -390,10 +391,25 @@ describe('Races: the rolling start from the menu', () => {
     expect(heavy.player.teleports[0].position.y - light.player.teleports[0].position.y).toBeGreaterThan(8);
   });
 
-  it('keeps every start clear of rock (and the run-up to the gate)', () => {
+  it('keeps every start clear of rock, trees and buildings (and the run-up to the gate)', () => {
+    // The world as the game sees it: rock plus every collider source Game registers.
     const terrain = new Terrain(LAYOUT);
+    const dressing = new Dressing({ scene: new Scene(), terrain, quality: QUALITY.low, asyncStreaming: false });
     const { player, races } = setup();
+    terrain.colliders.addSource('structures', () => dressing.colliders);
+    terrain.colliders.addSource('forest', () => dressing.forest.colliders);
+    terrain.colliders.addSource('decks', () => dressing.decks.map(deckCollider));
+    terrain.colliders.addSource('race-gates', () => races.colliders);
+    terrain.colliders.sync();
     (races as unknown as { deps: { terrain: Terrain } }).deps.terrain = terrain;
+    // Distance is a lower bound capped near structures: the clearance asked for must be reportable.
+    expect(terrain.distance(new Vector3(0, 1500, 0))).toBeGreaterThanOrEqual(START_CLEARANCE);
+    const runup = (start: Vector3, g: ReturnType<typeof gateRing>) => {
+      let min = Infinity;
+      const L = Math.hypot(g.cx - start.x, g.cy - start.y, g.cz - start.z);
+      for (let d = 0; d < L - 25; d += 10) min = Math.min(min, terrain.distance(start.clone().lerp(new Vector3(g.cx, g.cy, g.cz), d / L)));
+      return min;
+    };
     for (const def of COURSES) {
       for (const id of ['harrier', 'ironback'] as const) {
         player.breed = BREEDS[id];
@@ -402,11 +418,28 @@ describe('Races: the rolling start from the menu', () => {
         races.begin(def.id);
         expect(performance.now() - t0).toBeLessThan(50);
         const t = player.teleports[0];
-        expect(terrain.distance(t.position), `${def.id} ${id} at ${t.position.toArray().map(Math.round)}`).toBeGreaterThan(25);
+        const at = `${def.id} ${id} at ${t.position.toArray().map(Math.round)}`;
+        expect(terrain.distance(t.position), at).toBeGreaterThanOrEqual(START_CLEARANCE);
+        expect(runup(t.position, gateRing(def)), at).toBeGreaterThanOrEqual(RUNUP_CLEARANCE);
         races.abort('quit');
       }
     }
-  }, 60_000);
+    // A building where the preferred start would be: the start moves somewhere clear.
+    const def = COURSES[0];
+    const g = gateRing(def);
+    const preferred = new Vector3(g.cx - g.nx * RACE_START.leadDistance, 0, g.cz - g.nz * RACE_START.leadDistance);
+    player.breed = BREEDS.harrier;
+    player.teleports.length = 0;
+    races.begin(def.id);
+    preferred.y = player.teleports[0].position.y;
+    races.abort('quit');
+    terrain.colliders.add({ kind: 'box', x: preferred.x, y: preferred.y, z: preferred.z, hx: 8, hy: 8, hz: 8, yaw: 0 });
+    player.teleports.length = 0;
+    races.begin(def.id);
+    const moved = player.teleports[0].position;
+    expect(moved.distanceTo(preferred)).toBeGreaterThan(10);
+    expect(terrain.distance(moved)).toBeGreaterThanOrEqual(START_CLEARANCE);
+  }, 120_000);
 
   it('missing the opening stands the race down with a reason, and restart tries again', () => {
     const { log, player, races, flyTo } = setup();
