@@ -184,3 +184,34 @@ describe('the Stable (PLAY-06)', () => {
     }
   }, SLOW);
 });
+
+describe('soft shapes (hay, canopies, banner cloth)', () => {
+  it('the rider and the walking wyvern brush through soft shapes but stop at solid ones', () => {
+    const walk = (soft: boolean, mode: 'onFoot' | 'landed') => {
+      const terrain = new Terrain(LAYOUT);
+      // A bale-sized shape on the open plaza east of the stable, straight across the path.
+      const st = LAYOUT.stable;
+      const g = terrain.groundAt(st.x + 30, st.z + 20, 1e6)!;
+      terrain.colliders.add({ kind: 'box', x: st.x + 30, y: g.y + 1, z: st.z + 20, hx: 1.2, hy: 1, hz: 3, yaw: 0, soft });
+      const events = new EventBus<GameEvents>();
+      const player = new Player({ terrain, env: { windAt: (_p, o) => o.set(0, 0, 0), terrain }, events, breed: 'harrier', settings: () => DEFAULT_SETTINGS });
+      // Start 12 m west of it, walking due east (camera yaw +90°).
+      player.teleport(new Vector3(st.x + 18, g.y + 3, st.z + 20), Math.PI / 2, mode);
+      for (let i = 0; i < 4 / DT; i++) {
+        const inp = emptyFrame();
+        inp.device = 'gamepad';
+        inp.foot.moveY = mode === 'onFoot' ? 1 : 0.5;
+        player.latchPresses(inp);
+        player.fixedUpdate(DT, inp, Math.PI / 2);
+        player.update(DT, 1);
+      }
+      return (mode === 'onFoot' ? player.riderPosition.x : player.position.x) - (st.x + 30);
+    };
+    for (const mode of ['onFoot', 'landed'] as const) {
+      // Soft: walked straight through and out the far side.
+      expect(walk(true, mode), mode).toBeGreaterThan(1.5);
+      // Solid: stopped on its near face.
+      expect(walk(false, mode), mode).toBeLessThan(-1.2);
+    }
+  }, SLOW);
+});
