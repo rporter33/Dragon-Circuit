@@ -501,6 +501,28 @@ describe('handling', () => {
     expect(counts.tuckEnd).toBe(1);
   });
 
+  it('full forward stick noses over into a dive without bunting (INP-01)', () => {
+    for (const id of BREED_ORDER) {
+      const m = launch(BREEDS[id], new FlightModel(BREEDS[id]).derived.vCruise);
+      const input = neutralInput();
+      input.pitch = -1;
+      let gMin = Infinity;
+      for (let i = 0; i < 2 / SIM_DT; i++) {
+        m.step(SIM_DT, input, stillAir());
+        gMin = Math.min(gMin, m.state.gLoad);
+      }
+      expect(pathAngle(m) / DEG, id).toBeGreaterThan(-60);
+      expect(pathAngle(m) / DEG, id).toBeLessThan(-20);
+      expect(gMin, id).toBeGreaterThan(-1);
+    }
+    // A light push held for 6 s settles into a dive rather than bending on toward the vertical.
+    const m = launch(BREEDS.harrier, new FlightModel(BREEDS.harrier).derived.vCruise);
+    const input = neutralInput();
+    input.pitch = -0.35;
+    for (let i = 0; i < 6 / SIM_DT; i++) m.step(SIM_DT, input, stillAir());
+    expect(pathAngle(m) / DEG).toBeGreaterThan(-45);
+  });
+
   it('pulling out of a dive loads up the g', () => {
     const m = launch(BREEDS.harrier, 60, 3000, 40 * (Math.PI / 180));
     const input = neutralInput();

@@ -137,7 +137,11 @@ export const FLIGHT_TUNING = {
   nMaxLight: 5.5,
   nMaxHeavy: 4.2,
   nMaxFlare: 1.35,
-  nMin: -1.6,
+  /**
+   * Full forward stick asks for at most this much negative g: a heavy wyvern noses over into a
+   * dive, it doesn't bunt (at −1.6 g a held push went past the vertical in 2 s).
+   */
+  nMin: -0.5,
   /** Reference airspeed for control authority (m/s). */
   authoritySpeed: 23,
   authorityMin: 0.14,
@@ -247,7 +251,17 @@ export const FLIGHT_TUNING = {
   backwingGain: 3,
   backwingMaxG: 1.2,
   backwingCost: 0.6,
-  /** Beyond this clearance from any solid the ground below is only re-queried every 8th step. */
+  /**
+   * Terrain queries, kept cheap. The clearance (a conservative distance to the nearest solid)
+   * minus the distance flown since it was measured is still a safe bound, so it is re-measured
+   * only once that bound drops under `clearanceRemeasure` m (or it is `clearanceMaxAge` s old,
+   * for anything that moves). The ground below is re-queried every step within
+   * `groundQueryNear` m of a solid, every 4th step within `groundQueryRange` m and every 8th
+   * step beyond, and the wingtips' air every 4th step (the fields are smooth at that scale).
+   */
+  clearanceRemeasure: 45,
+  clearanceMaxAge: 0.5,
+  groundQueryNear: 15,
   groundQueryRange: 40,
   /** Ground effect: induced drag reduction near the ground. */
   groundEffectLift: 0.12,
@@ -435,6 +449,10 @@ export class FlightModel {
   private flapLiftMean = 0;
   /** Distance from the body to the nearest solid at the start of this step (conservative). */
   private clearance = Infinity;
+  /** The last measured clearance, where and how long ago (the bound decays with distance flown). */
+  private clearanceMeasured = -Infinity;
+  private clearanceAt = new Vector3();
+  private clearanceAge = 0;
   private groundTick = 0;
   private gustTick = 0;
   /** Roll rate the difference in vertical air across the span asks for (rad/s). */
@@ -480,6 +498,7 @@ export class FlightModel {
     this.sinceStall = 99;
     this.gustRate = 0;
     this.clearance = Infinity;
+    this.clearanceMeasured = -Infinity;
     this.groundTick = 0;
     // Listeners saw a stall/tuck start: tell them it's over.
     if (this.stalled) this.bus?.emit('stallEnd', {});
@@ -603,15 +622,15 @@ export class FlightModel {
     const vu = airVel.dot(up);
     const vl = airVel.dot(left);
     const alpha = Math.atan2(-vu, vf);
-    const beta = Math.atan2(vl, Math.hypot(vf, vu));
+    const beta = Math.atan2(vl, Math.sqrt(vf * vf + vu * vu));
     s.angleOfAttack = alpha;
     const q = 0.5 * AIR_DENSITY * V * V;
     this.graceAge += dt;
     if (this.graceUntilFlying && this.grace > 0.35 && this.graceAge > 0.8 && V > 1.25 * d.vStall) this.grace = 0.35;
 
-    // Gusts across the span: compare the air rising at each wingtip (every other step; the
-    // fields are smooth at that scale). A wing lifted by a gust or a thermal's edge rolls away.
-    if ((this.gustTick++ & 1) === 0) {
+    // Gusts across the span: compare the air rising at each wingtip (every 4th step; the fields
+    // are smooth at that scale). A wing lifted by a gust or a thermal's edge rolls away.
+    if ((this.gustTick++ & 3) === 0) {
       const reachTip = d.halfSpan * T.gustSpan * (0.35 + 0.65 * s.wingSpread);
       tmp.copy(s.position).addScaledVector(left, reachTip);
       const upL = env.windAt(tmp, tipWind).dot(up);
@@ -636,10 +655,19 @@ export class FlightModel {
     const area = b.wingArea * sf;
 
     // --- Ground effect --------------------------------------------------------------------------
-    // One conservative distance query per step serves the ground lookup and the collision test.
-    // Far from everything the ground below barely matters, so it is only refreshed now and then.
-    this.clearance = env.terrain.distance(s.position);
-    if (this.clearance < T.groundQueryRange || (this.groundTick++ & 7) === 0) {
+    // One conservative distance serves the ground lookup and the collision test. Far from
+    // everything it needn't be re-measured every step, and the ground below barely matters.
+    this.clearanceAge += dt;
+    let clear = this.clearanceMeasured - s.position.distanceTo(this.clearanceAt);
+    if (clear < T.clearanceRemeasure || this.clearanceAge > T.clearanceMaxAge) {
+      clear = env.terrain.distance(s.position);
+      this.clearanceMeasured = clear;
+      this.clearanceAt.copy(s.position);
+      this.clearanceAge = 0;
+    }
+    this.clearance = clear;
+    const groundEvery = clear < T.groundQueryNear ? 0 : clear < T.groundQueryRange ? 3 : 7;
+    if ((this.groundTick++ & groundEvery) === 0) {
       this.ground = env.terrain.groundAt(s.position.x, s.position.z, s.position.y);
     }
     let geInduced = 1;
