@@ -4,16 +4,17 @@
 //
 // Readability over the white cloud sea and bright skies is the whole point (a pale additive
 // shell vanishes on white), so the ghost carries its own materials rather than the creature's
-// generic ghost shell: a saturated, darker body that darkens what's behind it (straight alpha),
-// a light rim just inside the silhouette and a dark ink line right at it by day (a bright one at
-// night), so it reads against cloud, sky and rock alike. A depth-only prepass keeps it one clean
-// layer (no muddy overlap where a wing crosses the body).
+// generic ghost shell: a deep, saturated glass body that darkens what's behind it (straight
+// alpha) with bands of light running back along it, and an ink outline (an inverted hull, so it
+// holds from every side; a bright one at night), so it reads against cloud, sky and rock alike.
+// A depth-only prepass keeps it one clean layer (no muddy overlap where a wing crosses the body).
 //
 // The model is rebuilt only when the recording's breed or shape cosmetics differ from the last
 // one shown (Wyvern.setLook updates uniforms otherwise), and the materials are put back on the
 // mesh whenever it is rebuilt.
 
 import {
+  BackSide,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -94,28 +95,32 @@ void main() {
   vec3 N = normalize(vN);
   vec3 V = normalize(cameraPosition - vDwWorldPos);
   float grazing = 1.0 - abs(dot(N, V));
-  float day = 1.0 - uNight;
   // Narrow bands of light running back along the body: what makes it read as a spirit.
-  float band = 0.5 + 0.5 * sin(vBodyZ * 2.2 - uTime * 4.5);
-  band = band * band * band * band;
-  vec3 deep = uTint * 0.45;
-  vec3 light = mix(uTint, vec3(1.0), 0.5);
-  vec3 ink = mix(uTint * 0.12, vec3(0.02, 0.03, 0.07), 0.5);
-  // By day the outline is dark ink (reads on white cloud); at night it glows.
-  vec3 outline = mix(ink, uTint * 1.6 + 0.15, uNight);
+  float band = pow(0.5 + 0.5 * sin(vBodyZ * 2.2 - uTime * 4.5), 6.0);
+  // Deep, saturated glass by day (darker than the cloud behind it: the bloom and haze lift a
+  // figure a long way toward white), lit by the running bands (they read on dark rock). The ink
+  // line round the body is its own pass (OUTLINE_*); at night the outlines glow instead.
+  vec3 deep = uTint * uTint * 0.55;
+  vec3 light = mix(uTint, vec3(1.0), 0.5) * 1.2;
+  vec3 outline = mix(uTint * uTint * 0.1, uTint * 1.6 + 0.15, uNight);
 #ifdef MEMBRANE
-  // Flat skin: an even tint, its edges inked.
-  float edge = smoothstep(0.8, 0.95, vEdge);
-  float a = 0.6;
+  // Flat skin: its edges carry the rim and the ink (the outline pass draws the body's).
+  float rim = smoothstep(0.7, 0.86, vEdge);
+  float edge = smoothstep(0.82, 0.95, vEdge);
+  float a = 0.8;
 #else
-  float edge = smoothstep(0.45, 0.78, grazing);
-  float a = 0.74;
+  // A sliver of light at the very silhouette only: seen from behind, most of a wyvern's long
+  // body is at grazing angles, and a broad rim would bleach the whole figure.
+  float rim = smoothstep(0.84, 0.97, grazing);
+  float edge = 0.0;
+  float a = 0.9;
 #endif
-  vec3 col = mix(deep, light, band * 0.55);
+  vec3 col = mix(deep, light, band * 0.6);
+  col = mix(col, light, rim * (1.0 - edge) * 0.45);
   // At night the body glows softly instead of darkening the sky.
   col = mix(col, uTint * (0.5 + 0.6 * band), uNight * 0.6);
   col = mix(col, outline, edge);
-  a = mix(a + 0.15 * band, 0.95, edge);
+  a = mix(a + 0.08 * band, 0.97, edge);
   // Haze softens it with distance but never swallows it.
   col = mix(dwApplyFog(col, vDwWorldPos, cameraPosition), col, 0.6);
   gl_FragColor = vec4(col, a * uOpacity);
@@ -126,11 +131,49 @@ const DEPTH_FRAG = /* glsl */ `
 void main() { gl_FragColor = vec4(0.0); }
 `;
 
+/**
+ * The body's ink line: its back faces pushed out along the normals (an inverted hull), never
+ * thinner than ~1.6 px, drawn between the depth prepass and the color pass so only the rim
+ * outside the silhouette shows. View-independent, unlike a grazing-angle edge, so the ghost keeps
+ * a crisp contour against white cloud from any side. Membranes ink their own edges instead.
+ */
+const OUTLINE_VERT = /* glsl */ `
+#include <common>
+#include <skinning_pars_vertex>
+varying vec3 vDwWorldPos;
+void main() {
+  #include <beginnormal_vertex>
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  #include <begin_vertex>
+  #include <skinning_vertex>
+  vec4 wp = modelMatrix * vec4(transformed, 1.0);
+  vec3 wn = normalize(mat3(modelMatrix) * objectNormal);
+  float px = length(cameraPosition - wp.xyz) / (540.0 * projectionMatrix[1][1]);
+  wp.xyz += wn * max(0.05, 1.6 * px);
+  vDwWorldPos = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}
+`;
+
+const OUTLINE_FRAG = /* glsl */ `
+${FOG_PARS_GLSL}
+uniform vec3 uTint;
+uniform float uOpacity;
+varying vec3 vDwWorldPos;
+void main() {
+  vec3 col = mix(uTint * uTint * 0.1, uTint * 1.6 + 0.15, uNight);
+  col = mix(dwApplyFog(col, vDwWorldPos, cameraPosition), col, 0.6);
+  gl_FragColor = vec4(col, 0.95 * uOpacity);
+}
+`;
+
 export interface GhostMaterials {
   body: ShaderMaterial;
   membrane: ShaderMaterial;
   depth: ShaderMaterial;
   depthMembrane: ShaderMaterial;
+  outline: ShaderMaterial;
   tint: Color;
   opacity: { value: number };
 }
@@ -165,7 +208,17 @@ export function createGhostMaterials(): GhostMaterials {
       polygonOffsetUnits: 4,
       side: membrane ? DoubleSide : FrontSide,
     });
-  return { body: color(false), membrane: color(true), depth: depth(false), depthMembrane: depth(true), tint, opacity };
+  const outline = new ShaderMaterial({
+    name: 'race-ghost-outline',
+    uniforms: { ...shared(), uTint: { value: tint }, uOpacity: opacity },
+    vertexShader: OUTLINE_VERT,
+    fragmentShader: OUTLINE_FRAG,
+    transparent: true,
+    depthWrite: false,
+    blending: NormalBlending,
+    side: BackSide,
+  });
+  return { body: color(false), membrane: color(true), depth: depth(false), depthMembrane: depth(true), outline, tint, opacity };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -354,6 +407,7 @@ export class RaceGhost {
   private builtFor: GhostRecording | null = null;
   private mesh: SkinnedMesh | null = null;
   private depthMesh: SkinnedMesh | null = null;
+  private outlineMesh: SkinnedMesh | null = null;
   private pose = createWyvernPose();
   private mats = createGhostMaterials();
   private streamers: Streamers;
@@ -412,33 +466,39 @@ export class RaceGhost {
     this.streamers.clear();
   }
 
-  /** (Re)apply the ghost's own materials and depth prepass to the current model. */
+  /** (Re)apply the ghost's own materials, depth prepass and outline to the current model. */
   private dress(): void {
     const w = this.wyvern!;
     const mesh = w.skinnedMesh;
     if (!mesh || mesh === this.mesh) return;
-    if (this.depthMesh) this.depthMesh.removeFromParent();
+    this.depthMesh?.removeFromParent();
+    this.outlineMesh?.removeFromParent();
     this.mesh = mesh;
     const m = this.mats;
     mesh.material = [m.body, m.membrane] as Material[];
     mesh.renderOrder = RENDER_ORDER;
     mesh.castShadow = false;
     mesh.receiveShadow = false;
-    // Same geometry and skeleton, depth only, drawn first: the color pass then keeps only the
-    // nearest surface.
-    const depth = new SkinnedMesh(mesh.geometry, [m.depth, m.depthMembrane]);
-    depth.bind(mesh.skeleton, mesh.bindMatrix);
-    depth.boundingSphere = mesh.boundingSphere;
-    depth.renderOrder = RENDER_ORDER - 0.5;
-    depth.frustumCulled = mesh.frustumCulled;
-    mesh.parent!.add(depth);
-    this.depthMesh = depth;
+    // Same geometry and skeleton: depth only, drawn first (the color pass then keeps only the
+    // nearest surface), then the body's outline (the membrane group has no material: skipped).
+    const twin = (materials: Material[], order: number): SkinnedMesh => {
+      const t = new SkinnedMesh(mesh.geometry, materials);
+      t.bind(mesh.skeleton, mesh.bindMatrix);
+      t.boundingSphere = mesh.boundingSphere;
+      t.renderOrder = order;
+      t.frustumCulled = mesh.frustumCulled;
+      mesh.parent!.add(t);
+      return t;
+    };
+    this.depthMesh = twin([m.depth, m.depthMembrane], RENDER_ORDER - 0.5);
+    this.outlineMesh = twin([m.outline], RENDER_ORDER - 0.25);
   }
 
   dispose(): void {
     this.wyvern?.dispose();
     this.streamers.dispose();
-    for (const m of [this.mats.body, this.mats.membrane, this.mats.depth, this.mats.depthMembrane]) m.dispose();
+    const m = this.mats;
+    for (const mat of [m.body, m.membrane, m.depth, m.depthMembrane, m.outline]) mat.dispose();
     this.group.removeFromParent();
   }
 }

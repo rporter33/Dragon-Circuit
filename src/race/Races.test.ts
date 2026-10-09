@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PerspectiveCamera, Quaternion, Scene, Vector3 } from 'three';
+import { PerspectiveCamera, Quaternion, Scene, Vector3, type SkinnedMesh } from 'three';
 import { EventBus } from '../core/events';
 import type { BreedStats, GameEvents, PlayerMode } from '../core/types';
 import type { GhostRecording, PlayerSystem } from '../game/contracts';
@@ -509,8 +509,14 @@ describe('Races: records keep the breed they were flown on', () => {
     races.debugStage('roost-loop', 0, 500, 'running');
     races.update(1 / 60, camera, player);
     expect(races.ghostWyvern?.rigDef.props.breed).toBe('ironback');
-    const mats = races.ghostWyvern!.skinnedMesh!.material as { name: string }[];
+    const mesh = races.ghostWyvern!.skinnedMesh!;
+    const mats = mesh.material as { name: string }[];
     expect(mats.map((m) => m.name)).toEqual(['race-ghost-body', 'race-ghost-membrane']);
+    // Its twins (depth prepass, the body's ink outline) follow the rebuilt mesh: one of each.
+    const twins = mesh.parent!.children.filter((c) => c !== mesh && (c as { isSkinnedMesh?: boolean }).isSkinnedMesh) as SkinnedMesh[];
+    const names = twins.map((t) => (t.material as { name: string }[])[0].name).sort();
+    expect(names).toEqual(['race-ghost-depth', 'race-ghost-outline']);
+    expect(twins.every((t) => t.geometry === mesh.geometry && t.skeleton === mesh.skeleton)).toBe(true);
   });
 });
 

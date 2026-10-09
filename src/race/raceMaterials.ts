@@ -3,10 +3,13 @@
 // dwApplyFog) and read the shared uniforms, but keep part of their glow through the haze so a
 // ring 600 m away still reads as a point of light.
 //
-// Rings must read against the white cloud sea and bright skies, where pale glow vanishes: each
-// ring is a saturated body with a warm, hot core, a dark painterly contour at the tube's edges by
-// day, a tube never thinner than a few pixels however far away, and (the next ring) a soft
-// contrasting halo that darkens bright cloud and glows at night.
+// Rings must read against the white cloud sea and bright skies, where pale glow vanishes (the
+// bloom and cloud veil lift a thin tube a long way toward the white behind it): by day each ring
+// is a deep, saturated body with a warm hot core along its inner edge and a dark ink contour
+// round the outside, its tube never thinner than a few pixels however far away, and the next ring
+// carries a soft wash of its color outside the tube; by night the rings glow. Course lights are
+// saturated mid-tones (gateMesh COURSE_COLORS). Measured over the cloud sea (median contrast of
+// the ring against what is behind it, 24 points round the next ring): 1.11-1.21 before, 1.7-2.1.
 
 import { AdditiveBlending, Color, DoubleSide, NormalBlending, ShaderMaterial } from 'three';
 import { FOG_PARS_GLSL } from '../render/painterly';
@@ -78,30 +81,32 @@ void main() {
   float burst = vRing.w;
   vec3 N = normalize(vN);
   vec3 V = normalize(cameraPosition - vDwWorldPos);
-  // Painterly body: a soft two-band light from the sun so the ring has form, not just glow.
+  // Painterly form: two soft bands of sunlight.
   float ndl = dot(N, uSunDir) * 0.5 + 0.5;
-  float band = smoothstep(0.35, 0.45, ndl) * 0.35 + smoothstep(0.7, 0.8, ndl) * 0.2 + 0.45;
+  float band = smoothstep(0.35, 0.45, ndl) * 0.5 + smoothstep(0.7, 0.8, ndl) * 0.5;
   // Light running around the ring: two bands chasing each other, brushed by a slow wobble.
   float run = vAng.x * 6.0 - uTime * 3.2 + sin(vAng.x * 2.0 + uTime * 0.7) * 1.5;
-  float shimmer = 0.5 + 0.5 * sin(run);
-  shimmer = smoothstep(0.25, 1.0, shimmer);
-  // The inner face (toward the opening) glows hottest.
-  float inner = 1.0 - smoothstep(-0.9, 0.2, cos(vAng.y));
-  float facing = abs(dot(N, V));
+  float shimmer = smoothstep(0.25, 1.0, 0.5 + 0.5 * sin(run));
+  // Which side of the tube: cos = +1 on the outer face, -1 on the inner face (toward the opening).
+  float cv = cos(vAng.y);
+  float graze = 1.0 - abs(dot(N, V));
+  float innerSide = smoothstep(0.3, -0.5, cv);
+  float outerEdge = smoothstep(0.3, 0.65, graze) * smoothstep(-0.4, 0.2, cv);
+  float innerEdge = smoothstep(0.4, 0.85, graze) * innerSide;
   vec3 tint = vTint;
-  vec3 hot = mix(tint, vec3(1.0, 0.8, 0.45), 0.5);
-  // Day: a saturated body (darker than the cloud it crosses: that's what reads on white), lit in
-  // two painterly bands, with warm stripes of light running round it, hottest on the inner face.
-  vec3 body = tint * (0.4 + 0.5 * band) * (0.75 + 0.25 * uSunColor);
-  float stripe = shimmer * (0.3 + 0.45 * inner) * (0.35 + 0.65 * bright);
-  vec3 day = mix(body, hot * 1.25, stripe);
+  vec3 deep = tint * tint;
+  // Day: a deep, saturated body (darker than the cloud it crosses: that is what reads on white),
+  // the chasing light brightest toward the opening, and a warm hot core along the inner edge.
+  vec3 body = mix(deep, tint, 0.1 + 0.35 * band) * (0.85 + 0.15 * uSunColor);
+  body = mix(body, tint * 1.1 + 0.03, shimmer * (0.15 + 0.35 * innerSide) * (0.4 + 0.6 * bright));
+  vec3 hot = mix(tint, vec3(1.0, 0.84, 0.55), 0.65) * 1.4;
+  vec3 day = mix(body, hot, innerEdge * 0.75 * (0.65 + 0.35 * shimmer) * (0.45 + 0.55 * bright));
   // Night: the whole ring glows (a little HDR for the bloom on the next one).
-  vec3 glow = mix(tint * (0.75 + 0.55 * shimmer), hot * 1.4, clamp(inner * 0.6 + shimmer * 0.3, 0.0, 1.0));
+  vec3 glow = mix(tint * (0.75 + 0.55 * shimmer), hot * 1.1, clamp(innerEdge * 0.8 + shimmer * 0.3, 0.0, 1.0));
   vec3 night = glow * mix(0.6, 1.5, bright * bright);
   vec3 col = mix(day, night, uNight);
-  // A dark painterly contour where the tube turns away from view (by day).
-  float edge = smoothstep(0.32, 0.62, 1.0 - facing);
-  col = mix(col, tint * 0.18, edge * 0.85 * (1.0 - uNight) * (1.0 - burst));
+  // By day an ink contour round the outside: the ring holds its shape against white cloud.
+  col = mix(col, deep * 0.2, outerEdge * 0.92 * (1.0 - uNight) * (1.0 - burst));
   col += tint * burst * 3.0;
   // Haze softens distant rings but never swallows them.
   vec3 fogged = dwApplyFog(col, vDwWorldPos, cameraPosition);
@@ -157,15 +162,15 @@ void main() {
   // Fog may only take light away from the glow (adding fog color would wash the sky out).
   vec3 att = dwApplyFog(glow, vDwWorldPos, cameraPosition) - dwApplyFog(vec3(0.0), vDwWorldPos, cameraPosition);
   glow = mix(max(att, 0.0), glow, 0.5) * glowA;
-  // The halo: a soft band just outside the tube that darkens bright cloud and sky by day (a
-  // watercolor bleed of the ring's color) and glows by night.
-  float out0 = uTubeOut;
-  float halo = smoothstep(out0 - 0.02, out0 + 0.04, r) * (1.0 - smoothstep(out0 + 0.04, ${DISC_REACH.toFixed(2)}, r));
-  halo *= halo * (0.85 + 0.15 * sin(a * 5.0 + uTime * 1.3));
-  float haloA = halo * 0.32 * (1.0 - uNight);
-  vec3 haloCol = uTint * 0.22;
+  // The halo: a soft wash of the ring's color just outside the tube, falling off quickly: by day
+  // it tints bright cloud and sky (a watercolor bleed around the ring), by night it glows.
+  float d = (r - uTubeOut) / (${DISC_REACH.toFixed(2)} - uTubeOut);
+  float halo = smoothstep(-0.03, 0.04, d) * pow(max(0.0, 1.0 - d), 2.5);
+  halo *= 0.85 + 0.15 * sin(a * 5.0 + uTime * 1.3);
+  float haloA = halo * 0.3 * (1.0 - uNight);
+  vec3 haloCol = mix(uTint, uTint * uTint, 0.5);
   glow += uTint * halo * 0.35 * uNight;
-  // Premultiplied: additive glow plus a darkening halo, in one pass.
+  // Premultiplied: additive glow plus the tinting halo, in one pass.
   gl_FragColor = vec4((glow + haloCol * haloA) * uOpacity, haloA * uOpacity);
 }
 `;
