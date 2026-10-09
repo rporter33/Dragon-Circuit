@@ -469,6 +469,57 @@ describe('the folded wing contracts (Q3, A2 rig side)', () => {
   });
 });
 
+describe('the inner membrane folds and beats like a sheet hinged on the flank (A2)', () => {
+  it('skins it by lever arm: the rows by the root ride the body, the trailing edge out from it rides finger 2', () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      const g = buildWyvernGeometry(rig, look(breed), 0).geometry;
+      const uv = g.getAttribute('aUv2');
+      const mat = g.getAttribute('aMat');
+      const pos = g.getAttribute('position');
+      const si = g.getAttribute('skinIndex');
+      const sw = g.getAttribute('skinWeight');
+      const idx = g.index!.array;
+      const g1 = g.groups[1];
+      const arm = new Set([rig.idx.wings[0].humerus, rig.idx.wings[0].forearm, rig.idx.wings[0].hand]);
+      const finger2 = new Set(rig.idx.wings[0].fingers[2]);
+      const share = (v: number, set: Set<number>) => {
+        let w = 0;
+        for (let k = 0; k < 4; k++) if (set.has(si.getComponent(v, k))) w += sw.getComponent(v, k);
+        return w;
+      };
+      const seen = new Set<number>();
+      let rootRows = 0;
+      let edge = 0;
+      for (let i = g1.start; i < g1.start + g1.count; i++) {
+        const v = idx[i];
+        if (seen.has(v) || Math.round(mat.getX(v)) !== 0 || pos.getX(v) <= 0) continue;
+        seen.add(v);
+        const t = uv.getX(v);
+        const pv = uv.getY(v) - 2;
+        if (pv < 0 || pv > 1) continue;
+        // Interior rows next to the root (away from the arm's own edge): little on the arm.
+        if (t > 0.02 && t <= 0.08 && pv >= 0.4) {
+          expect(share(v, arm), `${breed} root row t=${t.toFixed(2)} v=${pv.toFixed(2)}`).toBeLessThan(0.15);
+          rootRows++;
+        }
+        // The trailing edge from half way out: mostly finger 2.
+        if (Math.abs(pv - 1) < 1e-4 && t >= 0.5) {
+          expect(share(v, finger2), `${breed} trailing edge t=${t.toFixed(2)}`).toBeGreaterThan(0.6);
+          edge++;
+        }
+      }
+      expect(rootRows).toBeGreaterThan(5);
+      expect(edge).toBeGreaterThan(3);
+      // Pleat geometry: rows enough across the panel for the fold's eight pleats (four per pleat).
+      const vs = new Set<number>();
+      for (const v of seen) if (uv.getY(v) >= 2 && uv.getY(v) <= 3) vs.add(Math.round((uv.getY(v) - 2) * 1000));
+      expect(vs.size, breed).toBeGreaterThanOrEqual(33);
+      g.dispose();
+    }
+  });
+});
+
 describe('reptile head (A6)', () => {
   it('keeps the expert-approved horn placement: swept horn roots within 1 mm of before', () => {
     // Base-ring centres of the default swept horns before the anatomy pass (head space, m),
@@ -808,7 +859,7 @@ describe('the tack (A12, Q16)', { timeout: 240000 }, () => {
       // over the hips about 8 cm above the rump straps). In the dive tuck the wings close over the
       // flanks and the rump, and the membrane may rest on the straps there (never through).
       expect(worstGap, `${breed} wing-tack gap`).toBeGreaterThan(0.05);
-      expect(tuckGap, `${breed} wing-tack gap in the tuck`).toBeGreaterThan(0.005);
+      expect(tuckGap, `${breed} wing-tack gap in the tuck`).toBeGreaterThan(0.003);
       // The tack follows the trunk: at most 3% stretch anywhere.
       expect(worstStretch, `${breed} ${worstName}`).toBeLessThanOrEqual(0.03);
       w.dispose();

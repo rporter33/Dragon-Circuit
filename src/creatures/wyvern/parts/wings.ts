@@ -43,6 +43,16 @@ export const foldWeight = (t: number, v: number) => {
   const x = Math.min(1, t / FOLD_ROOT);
   return ((FOLD_W * Math.sin(Math.PI * v) * x * x * (3 - 2 * x)) / FOLD_PEAK) * Math.pow(1 - t, 0.7);
 };
+/** A skin's `n` heaviest influences, renormalised. */
+function prune(s: Skin, n: number): Skin {
+  const order = s.bones.map((_, i) => i).sort((a, b) => s.weights[b] - s.weights[a]).slice(0, n);
+  let sum = 0;
+  for (const i of order) sum += s.weights[i];
+  const out = new Skin();
+  for (const i of order) out.add(s.bones[i], s.weights[i] / sum);
+  return out;
+}
+
 /** aExtra scratch (x AO open, y pleat valley; see builder.ts). */
 const _ext: [number, number, number, number] = [1, 0, 0, 0];
 
@@ -50,6 +60,18 @@ const _ext: [number, number, number, number] = [1, 0, 0, 0];
 const ROOT_DROP = 0.3;
 const _line = new Vector3();
 const _dip = new Vector3();
+const _seg = new Vector3();
+const _rel = new Vector3();
+const _pc = new Vector3();
+/**
+ * Inner panel lever arm (× the torso half-width): how far out from the root along the flank the
+ * wing's bones take over a membrane point fully (A2).
+ */
+const LEVER = 1.5;
+/** Rows across the inner panel at LOD0: four to each of the eight fold pleats. */
+const PLEAT_ROWS = 32;
+/** How fast the flank's share falls off along the inner panel's trailing edge: (1 − t)^TRAIL_DECAY. */
+const TRAIL_DECAY = 1.5;
 
 export { armScale, humerusRootRadius } from '../rig';
 
@@ -331,17 +353,6 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
         .addScaledVector(rootCtl, 2 * v * (1 - v))
         .addScaledVector(trail, v * v)
         .sub(_line.lerpVectors(shAttach, trail, v));
-    /** The inner panel's skin without the fold helper. */
-    const innerSkin = (t: number, v: number) => {
-      const s = new Skin();
-      // Leading boundary follows the arm (the root follows the chest).
-      if (t < 0.02) s.add(rig.idx.chest, 1 - v);
-      else s.mix(chain.skin(armChainS(t)), 1 - v);
-      // Trailing boundary: flank at the root, finger 2 at the tip.
-      s.mix(bodyTrailSkin, v * (1 - t));
-      fingerSkin(2, 1, s, v * t);
-      return s;
-    };
     const tip2 = tips[2];
     const midC = trail.clone().lerp(tip2, 0.5);
     const inwardC = wr.clone().sub(midC);
@@ -350,22 +361,75 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
     const depthC = S.wing.scallop * 1.2 * trail.distanceTo(tip2);
     const Lp = new Vector3();
     const Rp = new Vector3();
+    /** Panel C's bind surface: from the arm (v = 0) to the trailing edge, the root along the flank at t = 0. */
+    const posC = (t: number, v: number, out: Vector3) => {
+      armAt(t, Lp);
+      Rp.lerpVectors(trail, tip2, t).addScaledVector(inwardC, depthC * Math.sin(Math.PI * t));
+      out.lerpVectors(Lp, Rp, v);
+      const w = Math.pow(1 - t, 3);
+      return w > 1e-4 ? out.addScaledVector(rootDip(v, _dip), w) : out;
+    };
+    // The root line along the flank, for the lever arm below.
+    const rootLine: Vector3[] = [];
+    for (let i = 0; i <= 32; i++) rootLine.push(posC(0, i / 32, new Vector3()));
+    /** Distance (m) from a bind point to the root line, and the root parameter (v) nearest it. */
+    const toRoot = (q: Vector3): [number, number] => {
+      let best = Infinity;
+      let bv = 0;
+      for (let i = 0; i < rootLine.length - 1; i++) {
+        const a = rootLine[i];
+        _seg.subVectors(rootLine[i + 1], a);
+        const f = Math.min(1, Math.max(0, _rel.subVectors(q, a).dot(_seg) / Math.max(1e-9, _seg.lengthSq())));
+        const d = _rel.copy(a).addScaledVector(_seg, f).distanceTo(q);
+        if (d < best) {
+          best = d;
+          bv = (i + f) / (rootLine.length - 1);
+        }
+      }
+      return [best, bv];
+    };
+    const lever = LEVER * S.torsoHalfWidth;
+    /**
+     * The inner panel's skin without the fold helper. The leading side follows the arm, the
+     * trailing side blends from the flank at the root to finger 2 at the tip. The arm's share is
+     * weighted by lever arm: it carries a point in proportion to the point's distance from the root
+     * along the flank (fully beyond `lever`), the body at the nearest root point carrying the rest,
+     * as a membrane hinged on the flank moves. Before, the rows near the root were half on the
+     * humerus 0.6 m behind the shoulder and swung with every beat; the arm's own edge (v near 0)
+     * keeps the arm.
+     */
+    const innerSkin = (t: number, v: number) => {
+      const s = new Skin();
+      if (t < 0.02) s.add(rig.idx.chest, 1 - v);
+      else {
+        const [r, vr] = toRoot(posC(t, v, _pc));
+        const k = 1 - (1 - smoothstep(0, lever, r)) * smoothstep(0, 0.25, v);
+        s.mix(chain.skin(armChainS(t)), (1 - v) * k);
+        s.add(rig.idx.chest, (1 - v) * (1 - k) * (1 - vr));
+        s.mix(bodyTrailSkin, (1 - v) * (1 - k) * vr);
+      }
+      // Trailing boundary: the flank at the root, finger 2 toward the tip. The flank's share falls
+      // off faster than linearly, so out along the edge finger 2 carries it in when the wing folds
+      // (half on the flank, the galewing's long edge held its spread position 0.45 m out).
+      const bt = Math.pow(1 - t, TRAIL_DECAY);
+      s.mix(bodyTrailSkin, v * bt);
+      fingerSkin(2, 1, s, v * (1 - bt));
+      return s;
+    };
+    // Across the panel (v) the near LOD carries four rows to each of the fold's eight pleats
+    // (the uFold vertex pleats in materials.ts, sin(aUv2.y·8π + aUv2.x·3)), so they fold as
+    // geometry rather than alias; fewer rows along it pay for them.
     patch(
-      grid(16, 2),
-      grid(10, 2),
-      (t, v, out) => {
-        armAt(t, Lp);
-        Rp.lerpVectors(trail, tip2, t).addScaledVector(inwardC, depthC * Math.sin(Math.PI * t));
-        out.lerpVectors(Lp, Rp, v);
-        const w = Math.pow(1 - t, 3);
-        return w > 1e-4 ? out.addScaledVector(rootDip(v, _dip), w) : out;
-      },
+      grid(13, 2),
+      res.lod === 0 ? PLEAT_ROWS : grid(10, 2),
+      posC,
       (t, v) => {
         const s = innerSkin(t, v);
         // The fold helper takes the interior (most near the root, none on the boundaries), so
-        // the animator can contract and pleat the folded panel against the flank.
+        // the animator can contract and pleat the folded panel against the flank. (The panel's own
+        // skin is pruned to three bones first, so the four influences keep the helper's share exact.)
         const wf = foldWeight(t, v);
-        return wf > 1e-4 ? new Skin().mix(s, 1 - wf).add(foldBone, wf) : s;
+        return wf > 1e-4 ? new Skin().mix(prune(s, 3), 1 - wf).add(foldBone, wf) : s;
       },
       (t, v) => v * (0.35 + 0.65 * Math.sin(Math.PI * Math.min(1, t * 1.3))),
       (_t, v) => v,

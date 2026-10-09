@@ -420,7 +420,7 @@ function brass(b: GeoBuilder, pts: Vector3[], r: number, skin: Skin, res: Res): 
   tube(b, {
     points: loop,
     radii: loop.map(() => r),
-    segments: res.tack === 2 ? 5 : 3,
+    segments: res.tack === 2 ? 4 : 3,
     hint: new Vector3().subVectors(pts[1], pts[0]).cross(new Vector3().subVectors(pts[2], pts[0])).normalize(),
     skin: () => skin,
     mat: () => ({ region: REGION.metal, extra: [1, 0, 0, 0.5] }),
@@ -1056,7 +1056,7 @@ function buildTack(b: GeoBuilder, rig: RigDef, hide: Hide, f: FrameInfo, res: Re
     return out;
   };
   if (res.tack === 0) return { holds: tackHolds(rig, hide, f), straps };
-  const step = res.tack === 2 ? 0.07 : 0.24;
+  const step = res.tack === 2 ? 0.09 : 0.24;
   const yk = hide.collar();
   const p = new Vector3();
   const n = new Vector3();
@@ -1205,7 +1205,7 @@ function buildTack(b: GeoBuilder, rig: RigDef, hide: Hide, f: FrameInfo, res: Re
     // Smooth it (Catmull-Rom), each sample taking its nearest key's weights.
     const fine: Vector3[] = [];
     const fineSkin: Skin[] = [];
-    const sub = res.tack === 2 ? 3 : 2;
+    const sub = 2;
     for (let i = 0; i < pts.length - 1; i++) {
       const a0 = pts[Math.max(0, i - 1)];
       const a1 = pts[i];
