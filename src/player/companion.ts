@@ -61,6 +61,19 @@ export class Companion {
   private duration = 1;
   private landYaw = 0;
   private prevPos = new Vector3();
+  /** The planned greeting: body center, yaw, and where the rider stood when it was planned. */
+  private readonly greetAt = new Vector3();
+  private greetYaw = 0;
+  private readonly greetFrom = new Vector3();
+  private greetPlanned = false;
+  /** Called and stopped beside the rider (squaring up to them), and when that happened. */
+  private arrived = false;
+  private arriveTime = 0;
+  /**
+   * Counts called arrivals: each time the wyvern comes to a stop beside its rider it greets them
+   * (the player cues WyvernPose.cue 'greet' when this changes).
+   */
+  greetings = 0;
 
   get position(): Vector3 {
     return this.walker.position;
@@ -130,13 +143,14 @@ export class Companion {
     switch (this.state) {
       case 'idle':
       case 'follow': {
-        // Called, it comes right up to its rider (within mounting reach); otherwise it keeps a
-        // polite distance.
-        const stopAt = this.called ? P.calledStop : P.followStop;
-        const wantsToCome = riderGrounded && (dist > this.leash || (this.called && dist > stopAt));
+        // Called, it walks up beside its rider (the greeting point, see planGreeting); otherwise it
+        // keeps a polite distance, its chest stopping `followStop` short.
+        const wantsToCome = riderGrounded && (dist > this.leash || this.called);
         if (this.state === 'idle' && wantsToCome) {
           this.state = 'follow';
           this.stateTime = 0;
+          this.greetPlanned = false;
+          this.arrived = false;
         }
         if (this.state === 'follow') {
           const riderGround = terrain.groundAt(rider.x, rider.z, rider.y + 1);
@@ -144,24 +158,12 @@ export class Companion {
           if (!riderGrounded) {
             // Wait for the rider to land somewhere.
             w.step(dt, null, 0, breed, terrain, false);
-          } else if (dist <= stopAt) {
-            // Pull up and turn to face the rider before settling.
-            _dir.set(dx, 0, dz);
-            w.step(dt, _dir, 0, breed, terrain, false);
-            const facing = Math.abs(angleDelta(w.yaw, Math.atan2(dx, dz))) < 0.35;
-            if (w.speed === 0 && (facing || !this.called || this.stateTime > 6)) {
-              this.called = false;
-              this.leash = P.followDistance;
-              this.state = 'idle';
-              this.stateTime = 0;
-            }
-          } else if (!sameLevel || dist > 90) {
+          } else if (!this.arrived && (!sameLevel || dist > 90)) {
             this.hopToward(rider, breed, terrain);
+          } else if (this.called) {
+            this.approachGreeting(dt, rider, breed, terrain);
           } else {
-            _dir.set(dx, 0, dz);
-            const speed = dist > P.followDistance * 1.5 ? breed.groundSpeed : breed.groundSpeed * 0.6;
-            const res = w.step(dt, _dir, speed, breed, terrain, false);
-            if (res === 'blocked' && this.stateTime > 0.5) this.hopToward(rider, breed, terrain);
+            this.approachFollow(dt, rider, breed, terrain);
           }
         } else {
           w.step(dt, null, 0, breed, terrain, false);
@@ -207,6 +209,8 @@ export class Companion {
           if (w.settle(terrain, sh)) {
             events?.emit('footstep', { position: w.position.clone().setY(w.groundY), surface: w.surface, heavy: true });
           }
+          // It came down beside its rider: a called hop ends in the greeting.
+          if (this.called) this.greetings++;
           this.standStill();
           this.called = false;
           this.leash = P.followDistance;
@@ -217,23 +221,126 @@ export class Companion {
     this.velocity.copy(w.position).sub(this.prevPos).multiplyScalar(1 / Math.max(dt, 1e-6));
   }
 
-  /** Find a landing spot near the rider and hop there. */
-  private hopToward(rider: Vector3, breed: BreedStats, terrain: TerrainQuery): void {
+  /**
+   * Walk up to the greeting point and stop there (easing in, the last few metres slow), then turn
+   * square to the greeting yaw. The moment it stops it greets its rider (`greetings` counts up).
+   */
+  private approachGreeting(dt: number, rider: Vector3, breed: BreedStats, terrain: TerrainQuery): void {
     const w = this.walker;
-    _dir.set(w.position.x - rider.x, 0, w.position.z - rider.z);
-    if (_dir.lengthSq() < 1e-4) _dir.set(1, 0, 0);
-    _dir.normalize();
-    const base = Math.atan2(_dir.x, _dir.z);
-    // Land within mounting reach of the rider (a little further out for a big wyvern's wings).
-    const ring = P.calledStop + 0.5 + breed.standHeight * 0.3;
+    const sh = breed.standHeight;
+    // (Re)plan on the call, and again if the rider walks off before it gets there.
+    if (!this.arrived && (!this.greetPlanned || this.greetFrom.distanceToSquared(rider) > 1.5 * 1.5)) {
+      this.planGreeting(rider, sh, w.position, this.greetAt);
+      this.greetPlanned = true;
+    }
+    const fx = Math.sin(this.greetYaw);
+    const fz = Math.cos(this.greetYaw);
+    const gx = this.greetAt.x - w.position.x;
+    const gz = this.greetAt.z - w.position.z;
+    const s = Math.sqrt(gx * gx + gz * gz);
+    if (!this.arrived) {
+      // There (or just past it, along its own heading): stop.
+      const ahead = gx * Math.sin(w.yaw) + gz * Math.cos(w.yaw);
+      const there = s < 0.15 || (s < 1 && ahead < 0);
+      if (there) {
+        _dir.set(fx, 0, fz);
+        w.step(dt, _dir, 0, breed, terrain, false, rider);
+        if (w.speed === 0) {
+          this.arrived = true;
+          this.arriveTime = this.stateTime;
+          this.greetings++;
+        }
+      } else {
+        // Steer for a point behind the goal on the greeting line, so it walks in straight.
+        const back = Math.min(0.6 * s, 5);
+        _dir.set(gx - fx * back, 0, gz - fz * back);
+        const res = w.step(dt, _dir, this.approachSpeed(s, breed), breed, terrain, false, rider);
+        if (res === 'blocked' && this.stateTime > 0.5) this.hopToward(rider, breed, terrain);
+      }
+      return;
+    }
+    // Arrived: square up to the greeting yaw on the spot, then settle.
+    _dir.set(fx, 0, fz);
+    w.step(dt, _dir, 0, breed, terrain, false, rider);
+    if (Math.abs(angleDelta(w.yaw, this.greetYaw)) < 0.1 || this.stateTime - this.arriveTime > 4) this.settle();
+  }
+
+  /** Follow a rider who wandered off: walk (or run, from far) until the chest is `followStop` from them. */
+  private approachFollow(dt: number, rider: Vector3, breed: BreedStats, terrain: TerrainQuery): void {
+    const w = this.walker;
+    w.chest(breed.standHeight, _a);
+    _dir.set(rider.x - w.position.x, 0, rider.z - w.position.z);
+    const s = Math.hypot(rider.x - _a.x, rider.z - _a.z) - P.followStop;
+    if (s <= 0.15) {
+      // Pull up and turn to face the rider before settling.
+      w.step(dt, _dir, 0, breed, terrain, false, rider);
+      const facing = Math.abs(angleDelta(w.yaw, Math.atan2(_dir.x, _dir.z))) < 0.35;
+      if (w.speed === 0 && (facing || this.stateTime > 6)) this.settle();
+      return;
+    }
+    const res = w.step(dt, _dir, this.approachSpeed(s, breed), breed, terrain, false, rider);
+    if (res === 'blocked' && this.stateTime > 0.5) this.hopToward(rider, breed, terrain);
+  }
+
+  /**
+   * Approach speed `s` m short of the stop: a walk (approachWalk × groundSpeed) inside
+   * approachRunFrom, a run from further that eases down into the walk, slowing at approachDecel
+   * to approachSlowSpeed for the last approachSlowFrom m and on to a stop.
+   */
+  private approachSpeed(s: number, breed: BreedStats): number {
+    const walk = P.approachWalk * breed.groundSpeed;
+    const slow = Math.min(P.approachSlowSpeed, walk);
+    const a = P.approachDecel;
+    let v = s > P.approachRunFrom ? Math.sqrt(walk * walk + 2 * a * (s - P.approachRunFrom)) : walk;
+    v = Math.min(v, breed.groundSpeed);
+    if (s > P.approachSlowFrom) return Math.min(v, Math.sqrt(slow * slow + 2 * a * (s - P.approachSlowFrom)));
+    return Math.min(slow, Math.sqrt(2 * a * Math.max(0, s)));
+  }
+
+  /** Done coming over: stand and idle where it is. */
+  private settle(): void {
+    this.called = false;
+    this.leash = P.followDistance;
+    this.state = 'idle';
+    this.stateTime = 0;
+    this.greetPlanned = false;
+  }
+
+  /**
+   * The greeting pose for a wyvern coming from `from`: the body center `out` and `greetYaw`, with
+   * the rider beside its near (left) shoulder (greetAlong ahead of the center, greetWrist +
+   * greetSide out from the midline, and the chest at least calledStop away). It walks in along
+   * that line, so the yaw is the bearing to the rider turned just enough to pass them on its left.
+   * `yawOffset` turns the approach about the rider (alternatives for a hop).
+   */
+  private planGreeting(rider: Vector3, sh: number, from: Vector3, out: Vector3, yawOffset = 0): Vector3 {
+    const along = P.greetAlong * sh;
+    const chestGap = (P.chestAhead - P.greetAlong) * sh;
+    const lat = Math.max(P.greetWrist * sh + P.greetSide, Math.sqrt(Math.max(0, P.calledStop * P.calledStop - chestGap * chestGap)));
+    const dx = rider.x - from.x;
+    const dz = rider.z - from.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    const bearing = d > 1e-3 ? Math.atan2(dx, dz) : this.walker.yaw;
+    const yaw = bearing - Math.asin(clamp(lat / Math.max(d, 1e-3), -1, 1)) + yawOffset;
+    this.greetYaw = yaw;
+    this.greetFrom.copy(rider);
+    // Center = rider − forward·along − left·lat (left = (cos yaw, 0, −sin yaw)).
+    const s = Math.sin(yaw);
+    const c = Math.cos(yaw);
+    return out.set(rider.x - s * along - c * lat, rider.y, rider.z - c * along + s * lat);
+  }
+
+  /** Find a landing spot beside the rider (a greeting point) and hop there. */
+  private hopToward(rider: Vector3, breed: BreedStats, terrain: TerrainQuery): void {
+    const sh = breed.standHeight;
     for (let k = 0; k < 8; k++) {
-      const ang = base + (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 4);
-      _a.set(rider.x + Math.sin(ang) * ring, rider.y, rider.z + Math.cos(ang) * ring);
+      const off = (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 4);
+      this.planGreeting(rider, sh, this.walker.position, _a, off);
       const g = terrain.groundAt(_a.x, _a.z, rider.y + 3);
       if (!g || g.normal.y < P.maxSlopeY || Math.abs(g.y - rider.y) > 3) continue;
       _a.y = g.y;
-      // Land facing the rider.
-      this.beginHop(_a, breed.standHeight, Math.atan2(rider.x - _a.x, rider.z - _a.z));
+      // Land on the greeting line, facing along it.
+      this.beginHop(_a, sh, this.greetYaw);
       return;
     }
     // Nowhere to land near the rider: stay put.

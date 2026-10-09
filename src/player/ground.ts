@@ -122,9 +122,18 @@ export class GroundWalker {
   /**
    * Turn toward `dir` (horizontal, any length; null = stop) and run toward `targetSpeed`.
    * Stops at slopes steeper than ~40°; at a cliff edge either stops (`allowEdge` false) or
-   * reports 'edge' without moving so the caller can launch into the air.
+   * reports 'edge' without moving so the caller can launch into the air. With `keepOut` (the
+   * riderless wyvern's rider, on foot), its chest never comes within `riderKeepOut` of that point.
    */
-  step(dt: number, dir: Vector3 | null, targetSpeed: number, breed: BreedStats, terrain: TerrainQuery, allowEdge: boolean): WalkResult {
+  step(
+    dt: number,
+    dir: Vector3 | null,
+    targetSpeed: number,
+    breed: BreedStats,
+    terrain: TerrainQuery,
+    allowEdge: boolean,
+    keepOut: Vector3 | null = null,
+  ): WalkResult {
     // Heavier, slower-rolling breeds also turn more slowly on the ground.
     const maxTurn = 1.2 + breed.maxRollRate * 0.8;
     let speedTarget = 0;
@@ -186,8 +195,38 @@ export class GroundWalker {
         this.islandId = gw.islandId;
       }
     }
+    if (keepOut) this.stayClear(keepOut, breed.standHeight);
     this.stride += this.speed * dt;
     return 'ok';
+  }
+
+  /** Chest point (world, at the body center's height): `chestAhead` × standHeight ahead of it. */
+  chest(standHeight: number, out: Vector3): Vector3 {
+    const k = P.chestAhead * standHeight;
+    return out.set(this.position.x + Math.sin(this.yaw) * k, this.position.y, this.position.z + Math.cos(this.yaw) * k);
+  }
+
+  /**
+   * Keep the chest `riderKeepOut` m clear of `p` (horizontally): the body is pushed straight back
+   * out, and a wyvern that walked into it stops. True if it pushed.
+   */
+  private stayClear(p: Vector3, standHeight: number): boolean {
+    const s = Math.sin(this.yaw);
+    const c = Math.cos(this.yaw);
+    const k = P.chestAhead * standHeight;
+    const dx = this.position.x + s * k - p.x;
+    const dz = this.position.z + c * k - p.z;
+    const r = P.riderKeepOut;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= r * r) return false;
+    const d = Math.sqrt(d2);
+    // Straight back along its heading when the point is dead on the chest.
+    const nx = d > 1e-4 ? dx / d : -s;
+    const nz = d > 1e-4 ? dz / d : -c;
+    this.position.x += nx * (r - d);
+    this.position.z += nz * (r - d);
+    if (nx * s + nz * c < 0) this.speed = 0;
+    return true;
   }
 
   /**

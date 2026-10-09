@@ -11,6 +11,7 @@ import { BREED_ORDER, BREEDS } from '../flight/breeds';
 import { yawQuat } from '../flight/telemetry';
 import { DEG } from '../core/math';
 import { Player } from './Player';
+import { GroundWalker } from './ground';
 import { RiderFoot } from './foot';
 import { computePrompt } from './prompts';
 import { PLAYER_TUNING as P } from './tuning';
@@ -124,15 +125,45 @@ describe('new game', () => {
     expect(r.player.riderPosition.distanceTo(rider0)).toBeLessThan(0.01);
     expect(r.player.position.distanceTo(w0)).toBeLessThan(0.01);
     expect(r.player.wyvernPose.gait).toBe('idle');
-    // Call it (interact away from the wyvern and the stable): the rider waves, it comes over,
-    // right up to its rider and facing them, so the next press mounts (PLAY-09).
-    r.run(14, pressAt(r.t + 0.1, 'interact'));
+    // Call it (interact away from the wyvern and the stable): the rider waves and it walks over
+    // (a call from under 25 m is a walk, never a gallop), stopping with its rider beside its near
+    // (left) shoulder — never between its wrists or under its chest — and greets them, so the next
+    // press mounts (PLAY-09, GANIM-02).
+    const w = r.player.companion.walker;
+    const sh = BREEDS.harrier.standHeight;
+    const chest = new Vector3();
+    let minChest = Infinity;
+    let ran = false;
+    let greetAt = -1;
+    const press = pressAt(r.t + 0.1, 'interact');
+    r.run(14, (inp, t) => {
+      press(inp, t);
+      w.chest(sh, chest);
+      const rp = r.player.riderPosition;
+      minChest = Math.min(minChest, Math.hypot(chest.x - rp.x, chest.z - rp.z));
+      ran ||= r.player.wyvernPose.gait === 'run';
+      if (greetAt < 0 && r.player.wyvernPose.cue?.id === 1) greetAt = t;
+    });
+    expect(ran).toBe(false);
+    expect(minChest).toBeGreaterThan(2);
     expect(r.player.wyvernDistance).toBeLessThan(P.mountRange);
     expect(r.count('footstep')).toBeGreaterThan(3);
     expect(computePrompt(r.player, LAYOUT)?.action).toBe('mount');
-    const w = r.player.companion.walker;
-    const toRider = Math.atan2(r.player.riderPosition.x - w.position.x, r.player.riderPosition.z - w.position.z);
-    expect(Math.abs(Math.atan2(Math.sin(toRider - w.yaw), Math.cos(toRider - w.yaw)))).toBeLessThan(0.4);
+    // Where the rider stands, in the wyvern's body frame (x left, z forward).
+    const rp = r.player.riderPosition;
+    const dx = rp.x - w.position.x;
+    const dz = rp.z - w.position.z;
+    const lat = dx * Math.cos(w.yaw) - dz * Math.sin(w.yaw);
+    const along = dx * Math.sin(w.yaw) + dz * Math.cos(w.yaw);
+    // Out to its left, clear of the wrist line, level with the shoulder (not ahead of the chest).
+    expect(lat).toBeGreaterThan(P.greetWrist * sh + 0.9);
+    expect(lat).toBeLessThan(P.greetWrist * sh + 1.6);
+    expect(Math.abs(along - P.greetAlong * sh)).toBeLessThan(0.5);
+    // It greeted them when it stopped (WyvernPose.cue), watching their head.
+    expect(greetAt).toBeGreaterThan(0);
+    expect(r.player.wyvernPose.cue?.kind).toBe('greet');
+    const head = rp.clone().add(new Vector3(0, 1.6, 0));
+    expect(r.player.wyvernPose.lookTarget.distanceTo(head)).toBeLessThan(0.5);
     r.run(1, pressAt(r.t + 0.1, 'interact'));
     expect(['mounting', 'landed']).toContain(r.player.mode);
   });
@@ -484,6 +515,34 @@ describe('on foot', () => {
     r.run(4);
     expect(r.player.mode).toBe('flying');
     expect(r.player.flight.airspeed).toBeGreaterThan(14);
+  });
+});
+
+describe('the wyvern on its feet (GroundWalker)', () => {
+  /** A walker standing on the Roost at the wyvern's spawn, facing +z. */
+  const walker = (breed: BreedId) => {
+    const w = new GroundWalker();
+    const ws = LAYOUT.wyvernSpawn.position;
+    w.position.set(ws[0], 1e5, ws[2]);
+    w.yaw = 0;
+    w.settle(terrain, BREEDS[breed].standHeight, 1e5);
+    return w;
+  };
+
+  it('never walks its chest into its rider (keep-out)', () => {
+    const b = BREEDS.harrier;
+    const w = walker('harrier');
+    // The rider stands dead ahead, a little off the line; the wyvern is told to walk straight on.
+    const rider = w.position.clone().add(new Vector3(0.4, -b.standHeight, 6));
+    const chest = new Vector3();
+    let min = Infinity;
+    for (let i = 0; i < 6 * 120; i++) {
+      w.step(DT, new Vector3(0, 0, 1), 3, b, terrain, false, rider);
+      w.chest(b.standHeight, chest);
+      min = Math.min(min, Math.hypot(chest.x - rider.x, chest.z - rider.z));
+    }
+    expect(min).toBeGreaterThan(P.riderKeepOut - 1e-6);
+    expect(w.speed).toBeLessThan(0.5);
   });
 });
 

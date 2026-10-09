@@ -105,26 +105,30 @@ export const PLAYER_TUNING = {
   mountReach: 6.5,
   mountTime: 0.7,
   dismountTime: 0.6,
-  /** The wyvern follows a rider who wanders further than this, stopping this close. */
+  /** The wyvern follows a rider who wanders further than this, stopping with its chest this close. */
   followDistance: 30,
   followStop: 8,
   /**
    * A called wyvern walks up alongside its rider and stops with them beside its shoulder, on its
-   * near (left) side, ready to mount — never standing over them. The rider ends this far out from
-   * the line of its wrists (m; the wrists stand `greetWrist` × standHeight either side of its
-   * midline), level with a point `greetAlong` × standHeight ahead of its body center.
+   * near (left) side, ready to mount — never standing over them, never with them between its
+   * wrists. The rider ends `greetSide` m out from the line of its wrists (which stand
+   * `greetWrist` × standHeight either side of its midline), level with a point `greetAlong` ×
+   * standHeight ahead of its body center (the shoulder).
    */
   greetSide: 1.2,
   greetWrist: 0.42,
   greetAlong: 0.4,
-  /** ...and its chest (0.6 × standHeight ahead of the body center) stays at least this far from them (m). */
+  /** The chest point, this × standHeight ahead of the body center: stops are measured from it. */
+  chestAhead: 0.6,
+  /** A called wyvern's chest stops at least this far from its rider (m). */
   calledStop: 2.2,
   /** Walking, the wyvern's chest never comes nearer its rider than this (m). */
   riderKeepOut: 1.5,
   /**
    * The approach, called or following: a big animal walks (this fraction of its groundSpeed) to a
-   * rider nearer than `approachRunFrom` m and only runs from further; it slows ahead of its stop
-   * at `approachDecel` m/s² and covers the last `approachSlowFrom` m at `approachSlowSpeed` m/s.
+   * rider nearer than `approachRunFrom` m and only runs from further, easing down to the walk as it
+   * comes in; it slows ahead of its stop at `approachDecel` m/s² and covers the last
+   * `approachSlowFrom` m at `approachSlowSpeed` m/s.
    */
   approachWalk: 0.35,
   approachRunFrom: 25,

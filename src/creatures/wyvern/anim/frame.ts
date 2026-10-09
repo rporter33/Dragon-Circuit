@@ -143,4 +143,6 @@ export class AnimFrame {
   lookPitch = 0;
   /** 0..1 how folded the wings are on the ground (membranes bunch; A2's fold helpers follow it). */
   fold = 0;
+  /** 0..1 the greeting (cue 'greet'): the head comes down to the rider. */
+  greet = 0;
 }

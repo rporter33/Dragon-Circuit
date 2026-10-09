@@ -363,6 +363,44 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
     expect(tailX(30)).toBeLessThan(tailX(-30) - 0.5);
   });
 
+  it('greets its rider on a called arrival: the head comes down and round to them, a nictitating sweep, a tongue burst (C2)', () => {
+    for (const breed of BREED_ORDER) {
+      const sh = BREEDS[breed].standHeight;
+      const w = new Wyvern(look(breed));
+      const pose = standing(breed);
+      // The rider beside its near (left) shoulder, where a called wyvern stops (player/companion.ts).
+      const riderHead = new Vector3(0.42 * sh + 1.2, 10 + 1.6, 0.4 * sh);
+      pose.lookTarget.copy(riderHead);
+      w.cueIdle(null, 1e4);
+      for (let i = 0; i < 180; i++) w.update(1 / 60, pose);
+      const y0 = w.getHead(_p).y;
+      const d0 = _p.distanceTo(riderHead);
+      pose.cue = { kind: 'greet', id: 1 };
+      let nict = 0;
+      let tongue = 0;
+      for (let i = 0; i < 90; i++) {
+        w.update(1 / 60, pose);
+        nict = Math.max(nict, w.uniforms.uNictitate.value);
+        tongue = Math.max(tongue, (w as unknown as { animator: { tongueExt: number } }).animator.tongueExt);
+      }
+      // Within 1.5 s the head is well down and in toward the rider, the mouth still clear of them.
+      const mouth = w.getHead(_p);
+      expect(y0 - mouth.y).toBeGreaterThan(0.25 * sh);
+      expect(d0 - mouth.distanceTo(riderHead)).toBeGreaterThan(0.25 * sh);
+      expect(mouth.distanceTo(riderHead)).toBeGreaterThan(0.8);
+      // ...facing them (the head's forward within 60° of the way to their face).
+      const head = w.skinnedMesh!.skeleton.bones.find((b) => b.name === 'head')!;
+      const fwd = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+      expect(fwd.dot(riderHead.clone().sub(mouth).normalize())).toBeGreaterThan(Math.cos((60 * Math.PI) / 180));
+      expect(nict).toBeGreaterThan(0.9);
+      expect(tongue).toBeGreaterThan(0);
+      // A cue plays once: the same id again does nothing; and the head comes back up afterwards.
+      for (let i = 0; i < 180; i++) w.update(1 / 60, pose);
+      expect(w.getHead(_p).y).toBeGreaterThan(y0 - 0.15);
+      w.dispose();
+    }
+  });
+
   it('builds up exertion on a long climb and pants it off at rest', () => {
     const w = new Wyvern(look('harrier'));
     const pose = gliding();
