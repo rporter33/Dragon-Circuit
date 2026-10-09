@@ -1,6 +1,14 @@
 // The visible archipelago: island, spire and arch meshes with distance LODs, plus floating debris.
 // Vegetation, water and structures belong to the Dressing system (world/dressing/).
 //
+// Shadows: the level being drawn never casts. Each feature casts from a shadow-only stand-in
+// (render/shadowOnly.ts) that follows the drawn level in the same frame (BoundsLOD.onSelect):
+//   - drawn at level 1 or 2: that level's geometry, exactly as before;
+//   - drawn at level 0: islands cast from a shadow mesh with level 0's exact top (hills and
+//     terraces shadow themselves as drawn; at a low sun any other surface would band) and coarse
+//     cliffs and underside; spires and arches cast from level 1.
+// The Roost's shadow pass draws 41k triangles instead of 68k, Rootfall's 58k instead of 109k.
+//
 // Build strategy: the coarsest LOD of everything is built up front (~0.1 s for the whole world),
 // finer LODs are built lazily as the camera approaches, nearest first, inside a per-frame time
 // budget (builders are generators that yield between rings). Fine LODs that fall far behind the
@@ -8,15 +16,16 @@
 // needs synchronously, and with ?manual=1 (headless captures) the budget is unlimited so every
 // capture shows final detail.
 
-import { Group, Mesh, type PerspectiveCamera, type Scene, type Vector3 } from 'three';
+import { Group, Mesh, MeshBasicMaterial, MeshDepthMaterial, type BufferGeometry, type PerspectiveCamera, type Scene, type Vector3 } from 'three';
 import type { WorldSystem } from '../game/contracts';
 import type { QualityProfile } from '../render/quality';
 import { readDebugParams } from '../debug/params';
+import { makeShadowOnly } from '../render/shadowOnly';
 import { LAYOUT, type WorldLayout } from './layout';
 import { Terrain } from './terrain';
 import type { ArchShape, IslandShape, SpireShape } from './islandShape';
 import { BoundsLOD, boundsDistance, type Bounds } from './mesh/BoundsLOD';
-import { ISLAND_LODS, buildIslandMesh, islandLodDistances } from './mesh/islandMesh';
+import { ISLAND_LODS, ISLAND_SHADOW_LOD, buildIslandMesh, islandLodDistances } from './mesh/islandMesh';
 import { SPIRE_LODS, buildSpireMesh } from './mesh/spireMesh';
 import { ARCH_LODS, buildArchMesh } from './mesh/archMesh';
 import { toGeometry, type MeshData } from './mesh/MeshBuilder';
@@ -29,6 +38,14 @@ const BUILD_BUDGET_MS = 3;
 const PREFETCH = 160;
 /** Drop a finer level once the camera is this many times its switch distance away. */
 const EVICT_FACTOR = 2.6;
+/**
+ * How far (m) a coarser stand-in is pulled in along its normals on steep faces in the shadow pass.
+ * A coarse cliff bulges out of the drawn rock in places (sedimentary ledges are carved only into
+ * level 0); where it does, a cliff turned away from the sun "sees" past its own rock and shows lit
+ * blotches. Inset, the cliff stays inside the rock. Anything less steep than a cliff
+ * (normal.y > 0.3) stays put.
+ */
+const PROXY_INSET = 1.2;
 /** LOD distance scale per quality level. */
 const LOD_SCALE: Record<QualityProfile['level'], number> = { low: 0.6, medium: 0.8, high: 1, ultra: 1.35 };
 
@@ -48,13 +65,22 @@ interface Feature {
   /** Islands only: the shape and the part currently drawn. */
   island?: IslandShape;
   part: Part;
+  /** Shadow-only stand-in (shares the geometry of a built level, or casts from shadowGeo). */
+  proxy: Mesh | null;
+  /** Islands only: builds the shadow mesh (ISLAND_SHADOW_LOD). */
+  buildShadow?: () => Generator<void, { data: MeshData; splitIndex?: number }>;
+  /** The shadow mesh, while the camera is within level 0's range. */
+  shadowGeo: BufferGeometry | null;
 }
 
 interface Job {
   feature: Feature;
+  /** A visible level, or SHADOW_JOB for the feature's shadow mesh. */
   level: number;
   gen: Generator<void, { data: MeshData; splitIndex?: number }>;
 }
+
+const SHADOW_JOB = -1;
 
 export interface WorldStats {
   /** Triangles per level, summed over every feature that currently has that level built. */
@@ -78,6 +104,8 @@ export class World implements WorldSystem {
   private unlimitedBudget: boolean;
   private firstUpdate = true;
   private debris: Debris;
+  /** Shadow-only stand-ins. */
+  private proxies = new Group();
 
   constructor(scene: Scene, quality: QualityProfile) {
     const t0 = performance.now();
@@ -87,6 +115,8 @@ export class World implements WorldSystem {
     this.lodScale = LOD_SCALE[quality.level];
     this.unlimitedBudget = readDebugParams().manual;
     this.group.name = 'world';
+    this.proxies.name = 'world-shadow-proxies';
+    this.group.add(this.proxies);
 
     for (const shape of this.terrain.islands) this.addIsland(shape);
     for (const shape of this.terrain.spires) this.addSpire(shape);
@@ -102,14 +132,24 @@ export class World implements WorldSystem {
 
   // --- Features -------------------------------------------------------------------------------
 
-  private addFeature(name: string, bounds: Bounds, distances: number[], position: Vector3Like, build: Builder, island?: IslandShape): void {
+  private addFeature(
+    name: string,
+    bounds: Bounds,
+    distances: number[],
+    position: Vector3Like,
+    build: Builder,
+    island?: IslandShape,
+    buildShadow?: Feature['buildShadow'],
+  ): void {
     const lod = new BoundsLOD(bounds);
     lod.name = name;
     lod.position.set(position[0], position[1], position[2]);
     lod.updateMatrix();
     lod.matrixAutoUpdate = false;
     this.group.add(lod);
-    this.features.push({ name, lod, bounds, distances, meshes: distances.map(() => null), build, island, part: 'all' });
+    const index = this.features.length;
+    lod.onSelect = (object) => this.syncProxy(this.features[index], object as Mesh);
+    this.features.push({ name, lod, bounds, distances, meshes: distances.map(() => null), build, island, part: 'all', proxy: null, buildShadow, shadowGeo: null });
   }
 
   private addIsland(shape: IslandShape): void {
@@ -121,6 +161,7 @@ export class World implements WorldSystem {
       [d.x, d.y, d.z],
       (level) => buildIslandMesh(shape, ISLAND_LODS[level]),
       shape,
+      () => buildIslandMesh(shape, ISLAND_SHADOW_LOD),
     );
   }
 
@@ -152,22 +193,83 @@ export class World implements WorldSystem {
     mesh.userData.split = result.splitIndex ?? -1;
     applyPart(mesh, f.part);
     mesh.name = `${f.name}-lod${level}`;
-    mesh.castShadow = this.quality.shadows;
+    // The stand-in casts instead (see updateProxy).
+    mesh.castShadow = false;
     mesh.receiveShadow = true;
     mesh.matrixAutoUpdate = false;
     f.meshes[level] = mesh;
+    if (!f.proxy) this.createProxy(f, mesh);
+    // Picks the visible level, which points the stand-in at what it should cast from.
     f.lod.setLevel(mesh, f.distances[level] * this.lodScale);
     this.stats.trianglesBuilt[level] += data.indices.length / 3;
+  }
+
+  /**
+   * Point the stand-in at what to cast from while `drawn` is the visible level (see the header).
+   * Runs whenever the LOD picks a level, so it matches the drawn rock in the same frame.
+   */
+  private syncProxy(f: Feature, drawn: Mesh): void {
+    const p = f.proxy;
+    if (!p) return;
+    let geometry = drawn.geometry;
+    let depth: MeshDepthMaterial | undefined;
+    if (drawn === f.meshes[0]) {
+      const coarser = f.shadowGeo ?? (f.island ? null : f.meshes[1]?.geometry);
+      if (coarser) {
+        geometry = coarser;
+        depth = insetDepthMaterial();
+      }
+    }
+    if (p.geometry !== geometry) p.geometry = geometry;
+    if (p.customDepthMaterial !== depth) p.customDepthMaterial = depth;
+  }
+
+  /** Re-sync the stand-in with whatever level is visible now. */
+  private resyncProxy(f: Feature): void {
+    const level = f.lod.levels[f.lod.getCurrentLevel()];
+    if (level) this.syncProxy(f, level.object as Mesh);
+  }
+
+  private createProxy(f: Feature, mesh: Mesh): void {
+    // A level's geometry is shared (with its hidden-part draw range): no extra GPU memory. Culled
+    // from the main pass; the shadow pass culls it against the shadow box like any caster.
+    const p = makeShadowOnly(new Mesh(mesh.geometry, shadowProxyMaterial()));
+    p.name = `${f.name}-shadow`;
+    p.position.copy(f.lod.position);
+    p.updateMatrix();
+    p.matrixAutoUpdate = false;
+    p.castShadow = this.quality.shadows;
+    p.receiveShadow = false;
+    f.proxy = p;
+    this.proxies.add(p);
   }
 
   private evict(f: Feature, level: number): void {
     const mesh = f.meshes[level];
     if (!mesh) return;
+    f.meshes[level] = null;
+    // Re-picking the visible level moves the stand-in off this geometry before it is freed.
     f.lod.removeLevel(f.distances[level] * this.lodScale);
     f.lod.refresh();
     this.stats.trianglesBuilt[level] -= (mesh.geometry.index?.count ?? 0) / 3;
     mesh.geometry.dispose();
-    f.meshes[level] = null;
+    // The shadow mesh serves the same range as level 0.
+    if (level === 0) this.evictShadow(f);
+  }
+
+  private installShadow(f: Feature, result: { data: MeshData }): void {
+    f.shadowGeo?.dispose();
+    f.shadowGeo = toGeometry(result.data);
+    f.shadowGeo.name = `${f.name}-shadow`;
+    this.resyncProxy(f);
+  }
+
+  private evictShadow(f: Feature): void {
+    const geo = f.shadowGeo;
+    if (!geo) return;
+    f.shadowGeo = null;
+    this.resyncProxy(f);
+    geo.dispose();
   }
 
   // --- Per frame --------------------------------------------------------------------------------
@@ -181,11 +283,16 @@ export class World implements WorldSystem {
     return n - 1;
   }
 
-  /** The nearest feature missing a level it needs, and evicts levels far behind the camera. */
+  /**
+   * The nearest feature missing a level it needs (or, once every visible level is in, the nearest
+   * island in level 0's range missing its shadow mesh), and evicts levels far behind the camera.
+   */
   private nextMissing(cam: Vector3, evict: boolean): Job | null {
     let best: Feature | null = null;
     let bestLevel = 0;
     let bestDist = Infinity;
+    let shadow: Feature | null = null;
+    let shadowDist = Infinity;
     for (const f of this.features) {
       const dist = boundsDistance(f.bounds, cam.x, cam.y, cam.z);
       const need = this.neededLevel(f, dist);
@@ -197,13 +304,18 @@ export class World implements WorldSystem {
           bestDist = dist;
         }
       }
+      if (need === 0 && f.buildShadow && !f.shadowGeo && dist < shadowDist) {
+        shadow = f;
+        shadowDist = dist;
+      }
       if (evict) {
         for (let k = 0; k < f.distances.length - 1; k++) {
           if (f.meshes[k] && dist > f.distances[k + 1] * this.lodScale * EVICT_FACTOR + PREFETCH) this.evict(f, k);
         }
       }
     }
-    return best ? { feature: best, level: bestLevel, gen: best.build(bestLevel) } : null;
+    if (best) return { feature: best, level: bestLevel, gen: best.build(bestLevel) };
+    return shadow?.buildShadow ? { feature: shadow, level: SHADOW_JOB, gen: shadow.buildShadow() } : null;
   }
 
   update(dt: number, camera: PerspectiveCamera, _focus: Vector3): void {
@@ -218,7 +330,8 @@ export class World implements WorldSystem {
       while (unlimited || performance.now() < deadline) {
         const r = this.job.gen.next();
         if (r.done) {
-          this.install(this.job.feature, this.job.level, r.value);
+          if (this.job.level === SHADOW_JOB) this.installShadow(this.job.feature, r.value);
+          else this.install(this.job.feature, this.job.level, r.value);
           done = true;
           break;
         }
@@ -267,9 +380,9 @@ export class World implements WorldSystem {
       for (const level of f.lod.levels) {
         const k = f.meshes.indexOf(level.object as Mesh);
         if (k >= 0) level.distance = f.distances[k] * scale;
-        level.object.castShadow = q.shadows;
       }
       f.lod.refresh();
+      if (f.proxy) f.proxy.castShadow = q.shadows;
     }
     this.lodScale = scale;
     this.debris.setQuality(q);
@@ -277,6 +390,35 @@ export class World implements WorldSystem {
 }
 
 type Vector3Like = [number, number, number];
+
+let proxyMaterial: MeshBasicMaterial | null = null;
+let insetMaterial: MeshDepthMaterial | null = null;
+
+/**
+ * Shadow-pass material for the stand-ins: steep faces are pulled in by PROXY_INSET along their
+ * normals (object space is world-aligned: features are only translated), tops stay put.
+ */
+function insetDepthMaterial(): MeshDepthMaterial {
+  if (insetMaterial) return insetMaterial;
+  const m = new MeshDepthMaterial();
+  m.name = 'world-shadow-inset';
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `vec3 transformed = vec3( position ) - normal * ( ${PROXY_INSET.toFixed(3)} * ( 1.0 - smoothstep( 0.1, 0.3, normal.y ) ) );`,
+    );
+  };
+  m.customProgramCacheKey = () => 'dw-shadow-inset';
+  insetMaterial = m;
+  return m;
+}
+
+/** Never drawn on screen (see makeShadowOnly); the shadow pass uses its own depth material. */
+function shadowProxyMaterial(): MeshBasicMaterial {
+  proxyMaterial ??= new MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  proxyMaterial.name = 'world-shadow-proxy';
+  return proxyMaterial;
+}
 
 function runBuilder<T>(gen: Generator<void, T>): T {
   for (;;) {

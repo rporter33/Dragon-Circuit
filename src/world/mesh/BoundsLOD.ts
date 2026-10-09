@@ -23,6 +23,11 @@ export class BoundsLOD extends LOD {
   readonly bounds: Bounds;
   /** Distance used at the last update (for the build scheduler and debugging). */
   lastDistance = Infinity;
+  /**
+   * Called with the visible level's object whenever a level is picked (each update, during the
+   * main pass's scene walk and so before the shadow pass, and after levels change).
+   */
+  onSelect: ((object: Object3D) => void) | null = null;
 
   constructor(bounds: Bounds) {
     super();
@@ -65,6 +70,8 @@ export class BoundsLOD extends LOD {
       } else break;
     }
     (this as unknown as { _currentLevel: number })._currentLevel = i - 1;
+    const current = levels[i - 1].object;
     for (; i < levels.length; i++) levels[i].object.visible = false;
+    this.onSelect?.(current);
   }
 }

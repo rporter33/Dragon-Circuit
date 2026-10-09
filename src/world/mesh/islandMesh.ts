@@ -44,6 +44,19 @@ export const ISLAND_LODS: IslandLodSpec[] = [
 ];
 
 /**
+ * The shadow caster for an island drawn at level 0 (never drawn itself; see World): level 0's
+ * exact top, rim and brow, so hills and terraces shadow themselves exactly as drawn (at a low
+ * sun, any other surface bands across the slopes), over level 1's cliffs (no carved ledges) and
+ * underside. About 60% of level 0's triangles.
+ */
+export const ISLAND_SHADOW_LOD: IslandLodSpec = {
+  ...ISLAND_LODS[0],
+  cliffSpacing: ISLAND_LODS[1].cliffSpacing,
+  ledges: false,
+  underSpacing: ISLAND_LODS[1].underSpacing,
+};
+
+/**
  * Switch distances (m from the island's bounds, before quality scaling) for each LOD of an
  * island of this radius.
  */
