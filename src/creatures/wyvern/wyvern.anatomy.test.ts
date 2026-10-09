@@ -548,3 +548,33 @@ describe('wing-walker hand and reptile foot (A5, A7)', () => {
     }
   });
 });
+
+describe('breeds by silhouette (Q5, A8)', () => {
+  /** Visual aspect ratio: span squared over the area of both membranes (bind pose). */
+  const aspect = (b: BreedId) => {
+    const w = new Wyvern(look(b));
+    const ar = BREEDS[b].wingspan ** 2 / (2 * w.stats.membraneArea);
+    w.dispose();
+    return ar;
+  };
+  /** Torso depth (top to keel) at the deepest of the shoulder and mid keys. */
+  const depth = (b: BreedId) => Math.max(...(['shoulder', 'mid'] as const).map((k) => keyProfile(b, k).hu + keyProfile(b, k).hl));
+
+  it('gives the glider the long narrow wing: galewing aspect ratio at least 1.5x the harrier', () => {
+    expect(aspect('galewing') / aspect('harrier')).toBeGreaterThanOrEqual(1.5);
+  });
+
+  it('gives the tank the deep barrel: ironback torso depth at least 1.25x the harrier', () => {
+    expect(depth('ironback') / depth('harrier')).toBeGreaterThanOrEqual(1.25);
+  });
+
+  it('gives the sprinter a broad, rounded hand-wing: the widest chord between the finger tips', () => {
+    // Hand-wing chord: the distance between the wingtip finger's tip and the innermost finger's
+    // tip, relative to the half-span (bind pose).
+    const chord = (b: BreedId) => {
+      const r = rigFor(b);
+      return r.fingerTips[0].distanceTo(r.fingerTips[2]) / (BREEDS[b].wingspan / 2);
+    };
+    for (const b of ['harrier', 'galewing', 'ironback'] as const) expect(chord('skimmer'), b).toBeGreaterThan(chord(b));
+  });
+});

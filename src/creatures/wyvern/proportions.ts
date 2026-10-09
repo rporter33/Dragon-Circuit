@@ -147,12 +147,12 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     wing: W({
       fingers: [
         [0.2, 0.17],
+        [0.21, 0.18],
         [0.2, 0.17],
-        [0.19, 0.16],
       ],
-      azFingers: [-4 * DEG, -34 * DEG, -68 * DEG],
-      scallop: 0.24,
-      trailZ: -0.6,
+      azFingers: [0 * DEG, -42 * DEG, -88 * DEG],
+      scallop: 0.2,
+      trailZ: -0.7,
     }),
     legAngles: { ...LEG_ANGLES },
     thigh: 0.36,
