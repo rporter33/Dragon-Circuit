@@ -6,10 +6,13 @@
 //     with distance so they never scribble over far landmarks,
 //   - motes: warm specks spiraling up inside it (the close-up detail when you're in the lift),
 //     opaque enough to read as gold on white cloud.
-// The four thermals nearest the camera share fixed populations. All motion is analytic in the
-// vertex shaders: rise + swirl with a world-anchored vertical wrap inside a window around the
-// camera's height, so the column never slides when the camera climbs. `presence` dims the whole
-// effect off the wing (title, stable, on foot): thermals are for flyers.
+// Every thermal gets its haze, by distance alone. The motes and wind lines are a fixed budget
+// shared by the THERMAL_SLOTS nearest thermals: a thermal keeps its slot (and so its motes'
+// pattern) for as long as it stays among them, and its motes and lines fade with its lead over
+// the nearest thermal left out, so a thermal joins or leaves the set at zero, never with a pop.
+// All motion is analytic in the vertex shaders: rise + swirl with a world-anchored vertical wrap
+// inside a window around the camera's height, so the column never slides when the camera climbs.
+// `presence` dims the whole effect off the wing (title, stable, on foot): thermals are for flyers.
 
 import {
   DoubleSide,
@@ -30,27 +33,30 @@ import type { ThermalDef } from '../world/layout';
 import { FX_COMMON_GLSL, FX_NOISE_GLSL } from './shaders';
 import { damp, smoothstep } from '../core/math';
 
+/** Thermals whose motes and wind lines are drawn at once (they share the particle budget). */
 export const THERMAL_SLOTS = 4;
+/**
+ * Lead (m) over the nearest thermal without a slot at which a slot's motes and lines are at full
+ * strength. At a hand-off the two thermals are level, so both are at zero.
+ */
+export const SLOT_HANDOFF = 150;
 /** Vertical extent of the window around the camera's height (m). */
 const WINDOW = 460;
 
-/** Shared slot lookup + fades. */
-const SLOT_GLSL = /* glsl */ `
+/** Shared slot lookup + fades. `n` is the size of the slot arrays (fixed per material). */
+const slotGlsl = (n: number) => /* glsl */ `
 attribute vec4 aSeed;
 attribute float aSlot;
-uniform vec4 uThermA[${THERMAL_SLOTS}]; // x, z, radius, strength
-uniform vec4 uThermB[${THERMAL_SLOTS}]; // baseY, topY, visibility, window bottom
+uniform vec4 uThermA[${n}]; // x, z, radius, strength
+uniform vec4 uThermB[${n}]; // baseY, topY, visibility, window bottom
 uniform float uNow;
 uniform float uWindow;
 uniform float uPresence;
 
 void thermalSlot(out vec4 A, out vec4 B) {
-  int slot = int(aSlot);
-  A = uThermA[0];
-  B = uThermB[0];
-  if (slot == 1) { A = uThermA[1]; B = uThermB[1]; }
-  else if (slot == 2) { A = uThermA[2]; B = uThermB[2]; }
-  else if (slot == 3) { A = uThermA[3]; B = uThermB[3]; }
+  int slot = clamp(int(aSlot + 0.5), 0, ${n - 1});
+  A = uThermA[slot];
+  B = uThermB[slot];
 }
 
 float columnFade(vec4 B, float y) {
@@ -63,9 +69,9 @@ vec2 leanAt(vec4 B, float y) {
 }
 `;
 
-const MOTE_VERT = /* glsl */ `
+const moteVert = (n: number) => /* glsl */ `
 ${FX_COMMON_GLSL}
-${SLOT_GLSL}
+${slotGlsl(n)}
 uniform float uSize;
 varying vec2 vUv;
 varying float vAlpha;
@@ -117,9 +123,9 @@ void main() {
 }
 `;
 
-const LINE_VERT = /* glsl */ `
+const lineVert = (n: number) => /* glsl */ `
 ${FX_COMMON_GLSL}
-${SLOT_GLSL}
+${slotGlsl(n)}
 varying vec2 vUv;
 varying float vAlpha;
 varying vec3 vColor;
@@ -191,12 +197,12 @@ void main() {
 `;
 
 /**
- * Heat haze: one camera-facing card per slot around the column's (leaning) axis, spanning the
+ * Heat haze: one camera-facing card per thermal around the column's (leaning) axis, spanning the
  * window. The fragment shader paints a soft cylinder of rising, streaky shimmer.
  */
-const HAZE_VERT = /* glsl */ `
+const hazeVert = (n: number) => /* glsl */ `
 ${FX_COMMON_GLSL}
-${SLOT_GLSL}
+${slotGlsl(n)}
 varying vec2 vUv;
 varying float vAlpha;
 varying vec3 vColor;
@@ -229,6 +235,7 @@ void main() {
   vUv = vec2(position.x * 2.0, v);
   vY = y;
   vRise = A.w * 0.9;
+  // One card per thermal, so the streak pattern belongs to the thermal.
   vSlotSeed = aSeed.x * 17.0;
 }
 `;
@@ -283,27 +290,73 @@ export function stripGeometry(segs: number): InstancedBufferGeometry {
   return g;
 }
 
+/**
+ * Sticky slot assignment for the mote and line budget. `order` lists every thermal by distance
+ * (nearest first); the first `slots.length` of them hold the slots. A thermal keeps its slot for
+ * as long as it stays among them, so a change of rank inside the set never re-deals a column's
+ * motes, and a newcomer takes the slot that was freed. `fades[s]` is the slot's strength: its
+ * thermal's lead over the nearest thermal left out, eased over `handoff` meters. At a hand-off
+ * the leaving and the arriving thermal are level, so both are at zero.
+ * Mutates `slots` (thermal index per slot, -1 = empty) and `fades`; allocates nothing.
+ */
+export function assignThermalSlots(order: readonly number[], dists: ArrayLike<number>, slots: number[], fades: number[], handoff: number): void {
+  const k = slots.length;
+  const n = Math.min(k, order.length);
+  // The nearest thermal left without a slot sets the bar.
+  const cut = order.length > k ? dists[order[k]] : Infinity;
+  for (let s = 0; s < k; s++) {
+    const i = slots[s];
+    if (i < 0) continue;
+    let kept = false;
+    for (let r = 0; r < n; r++) {
+      if (order[r] === i) {
+        kept = true;
+        break;
+      }
+    }
+    if (!kept) slots[s] = -1;
+  }
+  for (let r = 0; r < n; r++) {
+    const i = order[r];
+    if (slots.indexOf(i) >= 0) continue;
+    slots[slots.indexOf(-1)] = i;
+  }
+  for (let s = 0; s < k; s++) {
+    const i = slots[s];
+    fades[s] = i < 0 ? 0 : smoothstep(0, handoff, cut - dists[i]);
+  }
+}
+
 export class ThermalMotes {
   readonly mesh: Mesh;
   readonly lines: Mesh;
   readonly haze: Mesh;
   private mats: ShaderMaterial[] = [];
   private geos: InstancedBufferGeometry[] = [];
+  /** Per slot (motes and lines). */
   private thermA: Vector4[];
   private thermB: Vector4[];
+  /** Per thermal (haze). */
+  private hazeA: Vector4[];
+  private hazeB: Vector4[];
   private uNow = { value: 0 };
   private uPresence = { value: 1 };
   private readonly counts: number[];
   /** Indices of the thermals currently in each slot (-1 = empty). */
-  private slots: number[] = [-1, -1, -1, -1];
+  private slots: number[] = Array.from({ length: THERMAL_SLOTS }, () => -1);
+  /** Each slot's hand-off strength (see assignThermalSlots). */
+  private fades: number[] = Array.from({ length: THERMAL_SLOTS }, () => 0);
   private order: number[];
   private dists: number[];
   private byDistance = (a: number, b: number) => this.dists[a] - this.dists[b];
 
   constructor(scene: Scene, private thermals: readonly ThermalDef[], moteCount = 2000, lineCount = 360) {
-    this.counts = [moteCount, lineCount, THERMAL_SLOTS];
+    const hazeCount = Math.max(1, thermals.length);
+    this.counts = [moteCount, lineCount, hazeCount];
     this.thermA = Array.from({ length: THERMAL_SLOTS }, () => new Vector4());
     this.thermB = Array.from({ length: THERMAL_SLOTS }, () => new Vector4());
+    this.hazeA = Array.from({ length: hazeCount }, () => new Vector4());
+    this.hazeB = Array.from({ length: hazeCount }, () => new Vector4());
     this.order = thermals.map((_, i) => i);
     this.dists = thermals.map(() => 0);
     const shared = {
@@ -313,13 +366,13 @@ export class ThermalMotes {
       uWindow: { value: WINDOW },
       uPresence: this.uPresence,
     };
-    const make = (geo: InstancedBufferGeometry, n: number, seed: number, vert: string, frag: string, extra: Record<string, { value: unknown }>): Mesh => {
+    const make = (geo: InstancedBufferGeometry, n: number, slotCount: number, seed: number, vert: string, frag: string, extra: Record<string, { value: unknown }>): Mesh => {
       const rand = mulberry32(seed);
       const seeds = new Float32Array(n * 4);
       const slots = new Float32Array(n);
       for (let i = 0; i < n; i++) {
         for (let k = 0; k < 4; k++) seeds[i * 4 + k] = rand();
-        slots[i] = i % THERMAL_SLOTS;
+        slots[i] = i % slotCount;
       }
       geo.setAttribute('aSeed', new InstancedBufferAttribute(seeds, 4));
       geo.setAttribute('aSlot', new InstancedBufferAttribute(slots, 1));
@@ -344,19 +397,22 @@ export class ThermalMotes {
       this.geos.push(geo);
       return mesh;
     };
-    this.mesh = make(quad(), moteCount, 0x7e41, MOTE_VERT, MOTE_FRAG, { uSize: { value: 1.1 } });
+    this.mesh = make(quad(), moteCount, THERMAL_SLOTS, 0x7e41, moteVert(THERMAL_SLOTS), MOTE_FRAG, { uSize: { value: 1.1 } });
     this.mesh.name = 'fx-thermal-motes';
-    this.lines = make(stripGeometry(10), lineCount, 0x9a11, LINE_VERT, LINE_FRAG, {});
+    this.lines = make(stripGeometry(10), lineCount, THERMAL_SLOTS, 0x9a11, lineVert(THERMAL_SLOTS), LINE_FRAG, {});
     this.lines.name = 'fx-thermal-lines';
-    // One haze card per slot (slot = instance index): a strip so the column can lean.
-    this.haze = make(stripGeometry(12), THERMAL_SLOTS, 0x4a2e, HAZE_VERT, HAZE_FRAG, {});
+    // One haze card per thermal (instance = thermal index): a strip so the column can lean.
+    this.haze = make(stripGeometry(12), hazeCount, hazeCount, 0x4a2e, hazeVert(hazeCount), HAZE_FRAG, {
+      uThermA: { value: this.hazeA },
+      uThermB: { value: this.hazeB },
+    });
     this.haze.name = 'fx-thermal-haze';
     this.haze.renderOrder = 3;
   }
 
   setDensity(particles: number): void {
-    // The haze (last) always draws one card per slot.
-    this.geos.forEach((g, i) => (g.instanceCount = i === 2 ? THERMAL_SLOTS : Math.max(THERMAL_SLOTS, Math.round((this.counts[i] * particles) / 1.4))));
+    // The haze (last) always draws one card per thermal.
+    this.geos.forEach((g, i) => (g.instanceCount = i === 2 ? this.counts[2] : Math.max(THERMAL_SLOTS, Math.round((this.counts[i] * particles) / 1.4))));
   }
 
   setPxScale(v: number): void {
@@ -368,15 +424,25 @@ export class ThermalMotes {
     return this.slots;
   }
 
-  /**
-   * @param presence  0..1 target for how strongly thermals show (1 in flight; dimmer on foot,
-   *                  in the title and the stable). Eased, so mode changes never pop.
-   */
+  /** Strength (0..1, before presence and fog) of a slot's motes and lines, for tests/debug. */
+  slotVisibility(slot: number): number {
+    return this.thermB[slot].z;
+  }
+
+  /** Strength (0..1, before presence and fog) of a thermal's haze column, for tests/debug. */
+  hazeVisibility(thermal: number): number {
+    return this.hazeB[thermal].z;
+  }
+
   /** Step the clock back by `by` seconds (see Fx: done while the screen is faded out). */
   wrapTime(by: number): void {
     this.uNow.value -= by;
   }
 
+  /**
+   * @param presence  0..1 target for how strongly thermals show (1 in flight; dimmer on foot,
+   *                  in the title and the stable). Eased, so mode changes never pop.
+   */
   update(dt: number, cam: { x: number; y: number; z: number }, maxDistance: number, presence = 1): void {
     this.uNow.value += dt;
     this.uPresence.value = damp(this.uPresence.value, presence, 1.5, dt);
@@ -387,26 +453,31 @@ export class ThermalMotes {
       const dz = th[i].z - cam.z;
       this.dists[i] = Math.max(0, Math.sqrt(dx * dx + dz * dz) - th[i].radius);
     }
-    this.order.sort(this.byDistance);
     let any = false;
-    for (let s = 0; s < THERMAL_SLOTS; s++) {
-      const i = s < this.order.length ? this.order[s] : -1;
-      this.slots[s] = i;
-      const A = this.thermA[s];
-      const B = this.thermB[s];
-      if (i < 0) {
-        B.z = 0;
-        continue;
-      }
+    // Haze: every thermal, faded by its own distance alone.
+    for (let i = 0; i < th.length; i++) {
       const t = th[i];
       const vis = 1 - smoothstep(maxDistance * 0.55, maxDistance, this.dists[i]);
       // The window follows the camera's height, clamped inside the column.
       const lo = t.baseY;
       const hi = Math.max(lo + WINDOW, t.topY);
       const center = Math.min(Math.max(cam.y, lo + WINDOW / 2), hi - WINDOW / 2);
-      A.set(t.x, t.z, t.radius, t.strength);
-      B.set(t.baseY, t.topY, vis, center - WINDOW / 2);
+      this.hazeA[i].set(t.x, t.z, t.radius, t.strength);
+      this.hazeB[i].set(t.baseY, t.topY, vis, center - WINDOW / 2);
       if (vis > 0) any = true;
+    }
+    // Motes and lines: the nearest few, handed over at zero.
+    this.order.sort(this.byDistance);
+    assignThermalSlots(this.order, this.dists, this.slots, this.fades, SLOT_HANDOFF);
+    for (let s = 0; s < THERMAL_SLOTS; s++) {
+      const i = this.slots[s];
+      if (i < 0) {
+        this.thermB[s].z = 0;
+        continue;
+      }
+      this.thermA[s].copy(this.hazeA[i]);
+      this.thermB[s].copy(this.hazeB[i]);
+      this.thermB[s].z *= this.fades[s];
     }
     const show = any && this.uPresence.value > 0.01;
     this.mesh.visible = show;
