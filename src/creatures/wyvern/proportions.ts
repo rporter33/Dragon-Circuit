@@ -141,7 +141,9 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     headHalfHeight: 0.33,
     tailLength: 3.2,
     tailBaseRadius: 0.44,
-    shoulder: [0.62, 0.28, 0.3],
+    // The short sprinter's torso puts the wing roots close to the rider's feet: the shoulder
+    // joints sit a little further forward in the girdle.
+    shoulder: [0.62, 0.28, 0.33],
     hip: [0.74, -0.3, -0.33],
     // A sprinter's broad, rounded bat-like hand-wing: short, even fingers fanned wide.
     wing: W({

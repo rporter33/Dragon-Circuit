@@ -210,14 +210,69 @@ describe('seat', () => {
     expect(STAND_ROOT_PITCH).toBeLessThan(0);
   });
 
-  it('straddles a horse-like width at the seat and holds the grip up and forward', () => {
+  it('raises a narrow seat on a frame: a horse-width straddle, knees clear of the back, grip on the pommel', () => {
+    // A9: the seat is a narrow block 0.22-0.28 m (plus the rider's hips) above the back on every
+    // breed, the thighs grip 0.28 m out, and the barrel the legs wrap is only as wide as the
+    // flaps at the top of the back but as wide as the body at its equator.
+    for (const breed of BREED_ORDER) {
+      for (const saddle of ['rider', 'racing', 'royal', 'nomad']) {
+        const w = new Wyvern(look(breed, { saddle }));
+        const rig = w.rigDef;
+        const st = rig.plan.station(rig.plan.sAtZ(rig.seat.z));
+        const topY = st.center.y + st.upper;
+        const seat = (w as unknown as { info: { saddle: { seat: Vector3 } } }).info.saddle.seat;
+        expect(seat.y - topY, `${breed} ${saddle} seat height`).toBeGreaterThanOrEqual(0.22 - 1e-9);
+        expect(seat.y - topY, `${breed} ${saddle} seat height`).toBeLessThanOrEqual(0.4);
+        expect(w.saddle.userData.halfWidth).toBeCloseTo(0.28, 6);
+        const flank = w.saddle.userData.flank as { cy: number; rx: number; ry: number; sq: number };
+        const width = (y: number) => {
+          const t = Math.abs(y - flank.cy) / flank.ry;
+          return t >= 1 ? 0 : flank.rx * Math.pow(1 - Math.pow(t, flank.sq), 1 / flank.sq);
+        };
+        expect(width(topY - seat.y), `${breed} ${saddle} flank at the knees`).toBeLessThanOrEqual(0.3);
+        expect(width(st.center.y - seat.y), `${breed} ${saddle} flank at the equator`).toBeGreaterThan(st.halfWidth);
+        // Hands on the pommel (racing: the neck handles): up and forward of the hips.
+        const g = w.saddle.userData.gripOffset as Vector3;
+        expect(g.y, `${breed} ${saddle} grip`).toBeGreaterThan(0.1);
+        expect(g.y).toBeLessThan(0.45);
+        expect(g.z, `${breed} ${saddle} grip`).toBeGreaterThan(0.2);
+        w.dispose();
+      }
+    }
+  });
+
+  it('exposes the pommel and the forearm steps as sockets that follow the animation', () => {
     for (const breed of BREED_ORDER) {
       const w = new Wyvern(look(breed));
-      expect(w.saddle.userData.halfWidth).toBeGreaterThan(0.4);
-      expect(w.saddle.userData.halfWidth).toBeLessThanOrEqual(0.5);
-      const g = w.saddle.userData.gripOffset as Vector3;
-      expect(g.y).toBeGreaterThan(0.32);
-      expect(g.z).toBeGreaterThan(0.45);
+      const pose = standing(breed);
+      for (let i = 0; i < 60; i++) w.update(1 / 60, pose);
+      const seat = w.socket('seat', new Vector3())!;
+      const pommel = w.socket('pommel', new Vector3())!;
+      // The pommel just ahead of and above the hips, on the midline, behind the withers.
+      expect(pommel.z - seat.z).toBeGreaterThan(0.18);
+      expect(pommel.z - pose.position.z).toBeLessThan(0.28 * w.rigDef.props.shape.torsoLength);
+      expect(pommel.y - seat.y).toBeGreaterThan(0);
+      expect(Math.abs(pommel.x - pose.position.x)).toBeLessThan(0.02);
+      // A step on each forearm, on its side of the body, between the ground and the shoulder.
+      for (const [name, sx] of [
+        ['stepL', 1],
+        ['stepR', -1],
+      ] as const) {
+        const step = w.socket(name, new Vector3())!;
+        expect((step.x - pose.position.x) * sx, `${breed} ${name}`).toBeGreaterThan(0.5);
+        expect(step.y - 10, `${breed} ${name}`).toBeGreaterThan(0.3);
+        expect(step.y - 10, `${breed} ${name}`).toBeLessThan(0.75 * BREEDS[breed].standHeight);
+        // Near the forearm bone (on its surface, not inside the body or off in the air).
+        const fore = boneWorld(w, `forearm${name === 'stepL' ? 'L' : 'R'}`);
+        const hand = boneWorld(w, `hand${name === 'stepL' ? 'L' : 'R'}`);
+        const mid = fore.clone().lerp(hand, 0.55);
+        expect(step.distanceTo(mid), `${breed} ${name}`).toBeLessThan(0.45);
+      }
+      // Sockets move with the body.
+      const before = w.socket('pommel', new Vector3())!;
+      pose.position.x += 3;
+      w.update(1 / 60, pose);
+      expect(w.socket('pommel', new Vector3())!.x - before.x).toBeCloseTo(3, 1);
       w.dispose();
     }
   });

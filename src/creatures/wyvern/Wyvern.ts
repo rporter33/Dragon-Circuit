@@ -1,4 +1,4 @@
-// The wyvern: a procedurally built SkinnedMesh (body + membranes, two draw calls) on a ~53-bone
+// The wyvern: a procedurally built SkinnedMesh (body + membranes, two draw calls) on a 58-bone
 // skeleton, posed every frame by the procedural animator from the player's WyvernPose.
 //
 // setLook() only touches uniforms when colors or the pattern change; a breed or a shape cosmetic
@@ -12,7 +12,7 @@ import type { WyvernRenderable } from '../../game/contracts';
 import type { TerrainQuery } from '../../core/types';
 import { rigFor, type RigDef } from './rig';
 import { buildWyvernGeometry, type WyvernMeshInfo } from './geometry';
-import { foldRest, type FoldRest } from './parts/wings';
+import { armScale, foldRest, type FoldRest } from './parts/wings';
 import {
   applyLookUniforms,
   createBodyMaterial,
@@ -36,12 +36,14 @@ const _mb = new Matrix4();
 const _mt = new Matrix4();
 const _mInv = new Matrix4();
 const X_AXIS = new Vector3(1, 0, 0);
-const _s = new Vector3();
+/** The forearm's radius about half way down (× the arm scale; parts/wings.ts). */
+const FOREARM_STEP_R = 0.16;
 
 /**
  * Attachment points on the wyvern (world space, see Wyvern.socket): the seat (the saddle origin),
- * the pommel (where the rider's hand grips), and the steps on each forearm a mounting rider puts a
- * foot on (the anatomy pass places these exactly).
+ * the pommel (where the rider's hand grips, at the top of the pommel horn), and the steps on each
+ * forearm a mounting rider puts a foot on (on the top face of the forearm, 55% of the way from the
+ * elbow to the wrist; outward when the wing is folded).
  */
 export type WyvernSocket = 'seat' | 'pommel' | 'stepL' | 'stepR';
 
@@ -64,6 +66,8 @@ export class Wyvern implements WyvernRenderable {
   private quality: QualityLevel = 'high';
   private tipOffset = new Vector3();
   private foldRest!: FoldRest;
+  /** The forearm steps (WyvernSocket stepL/R) in each forearm bone's space. */
+  private stepOffset: [Vector3, Vector3] = [new Vector3(), new Vector3()];
   private mouthOffset = new Vector3();
 
   constructor(look: WyvernLook, opts: WyvernOptions = {}) {
@@ -183,15 +187,12 @@ export class Wyvern implements WyvernRenderable {
       this.saddle.updateWorldMatrix(true, false);
       return out.copy(grip).applyMatrix4(this.saddle.matrixWorld);
     }
-    // A step on the forearm, 40% of the way from the elbow to the wrist.
-    const w = this.rig.idx.wings[name === 'stepL' ? 0 : 1];
-    const elbow = this.bones[w.forearm];
-    const wrist = this.bones[w.hand];
-    elbow.updateWorldMatrix(true, false);
-    wrist.updateWorldMatrix(false, false);
-    elbow.getWorldPosition(out);
-    wrist.getWorldPosition(_s);
-    return out.lerp(_s, 0.4);
+    // A step on the top (dorsal, outward when folded) face of the forearm, a little over half
+    // way down from the elbow: where a mounting rider plants a foot.
+    const side = name === 'stepL' ? 0 : 1;
+    const fore = this.bones[this.rig.idx.wings[side].forearm];
+    fore.updateWorldMatrix(true, false);
+    return out.copy(this.stepOffset[side]).applyMatrix4(fore.matrixWorld);
   }
 
   dispose(): void {
@@ -298,6 +299,17 @@ export class Wyvern implements WyvernRenderable {
     this.saddle.userData.halfWidth = this.info.saddle.halfWidth;
     this.saddle.userData.gripOffset = this.info.saddle.grip.clone();
     this.saddle.userData.flank = { ...this.info.saddle.flank };
+
+    // Forearm steps: on the forearm's top surface (bind: the wing spread flat, dorsal = +Y).
+    for (let side = 0; side < 2; side++) {
+      const fi = rig.idx.wings[side].forearm;
+      const elbow = rig.bones[fi].pos;
+      const wrist = rig.bones[rig.idx.wings[side].hand].pos;
+      this.stepOffset[side]
+        .lerpVectors(elbow, wrist, 0.55)
+        .add(_v.set(0, FOREARM_STEP_R * armScale(rig), 0))
+        .sub(elbow);
+    }
 
     // Wingtip: end of the distal wingtip finger, in that bone's space. Mouth: in head space.
     const fb = rig.idx.wings[0].fingers[0][1];
