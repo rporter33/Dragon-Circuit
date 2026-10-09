@@ -375,8 +375,11 @@ function buildLayout(): WorldLayout {
     arches,
     thermals,
     landmarks,
-    spawn: { position: [14, 0, 30], yaw: Math.PI },
-    wyvernSpawn: { position: [-30, 0, 44], yaw: Math.PI * 0.85 },
+    // The rider starts a few strides from the waiting wyvern, north of the plaza's middle: the
+    // title camera frames them as a two-shot from the south (rider left, wyvern right, both
+    // turned three-quarters toward it), with the northern sky — never the sun — behind them.
+    spawn: { position: [10, 0, 30], yaw: -1.6 },
+    wyvernSpawn: { position: [-1, 0, 33], yaw: 2.1 },
     stable: { x: 0, z: -20, yaw: 0, interactRadius: 14 },
     boundaryRadius: 2900,
     cloudFloor: 25,

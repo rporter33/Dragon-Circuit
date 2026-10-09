@@ -2,8 +2,9 @@
 //   1. moves the sun and moon and picks the key light (sun by day, moon by night),
 //   2. samples the time-of-day palette and lets the weather grey, fog or darken it,
 //   3. writes every shared uniform (render/uniforms.ts), the lights, the shadow camera (texel-
-//      snapped around the focus so shadows never shimmer), the grade and the bloom,
-//   4. updates the dome, the cloud sea and the cumulus banks.
+//      snapped around and a little ahead of the focus so shadows never shimmer; how its shadows
+//      fade at the edges and with occluder distance is in shadowFade.ts), the grade and the bloom,
+//   4. updates the dome, the cloud sea, the cumulus banks and the storm wall at the world's edge.
 
 import {
   Color,
@@ -24,24 +25,40 @@ import { clamp01, smoothstep } from '../core/math';
 import { LATITUDE, keyLightDirection, moonDirection, nightAmount, shadowStrength, sunDirection } from './sunPath';
 import { applyWeather, createPalette, samplePalette, type PaletteWeather, type SkyPalette } from './palette';
 import { SkyDome } from './SkyDome';
-import { CloudSea, MAX_SHADOWERS, SEA_BASE, SEA_TOP } from './CloudSea';
+import { CloudSea, MAX_SHADOWERS, SEA_BASE, SEA_TOP, type SeaQuality } from './CloudSea';
 import { CloudBanks } from './CloudBanks';
 import { CloudBankField, buildBanks } from './cloudBankField';
+import { BoundaryWall } from './BoundaryWall';
 import { SEA_RANGE, generateSeaField, puffAtlas, seaHeight01, seaTexture, type SeaField } from './cloudTextures';
 import type { Weather } from './Weather';
+import { SHADOW_RANGE, SHADOW_UP, installShadowFade } from './shadowFade';
+
+// The key light's shadows fade at the shadow box's border and with occluder distance; the chunk
+// must be patched before any lit material compiles, so it happens as soon as the sky is loaded.
+installShadowFade();
 
 /** Directional light intensity at noon (palette keyI = 1). */
 const KEY_SCALE = 2.7;
-/** How far up the light direction the shadow camera sits (m). */
-const SHADOW_DISTANCE = 700;
+/**
+ * How far ahead of the focus, along the camera's view on the ground plane, the shadow box is
+ * centered (fraction of its half-extent): the map covers what is on screen, not what's behind.
+ */
+const SHADOW_AHEAD = 0.3;
 const SEA_TEX_SIZE = 512;
 
-/** Cloud work per quality.clouds level: [sea march steps, sea shadow steps, banks, puffs per bank]. */
-const CLOUD_LEVELS: [number, number, number, number][] = [
-  [10, 2, 14, 9],
-  [16, 3, 26, 13],
-  [24, 4, 38, 16],
+/**
+ * Cloud work per quality.clouds level: the sea's per-pixel work and the cumulus banks. Low and
+ * medium march the sea at half resolution (a quarter of the pixels); low also drops the fine
+ * detail normal, the cavity term and the self-shadow march.
+ */
+export const CLOUD_LEVELS: { sea: SeaQuality; banks: number; puffs: number }[] = [
+  { sea: { steps: 8, secant: 2, shadowSteps: 0, detail: false, shadowers: 4, half: true }, banks: 14, puffs: 9 },
+  { sea: { steps: 14, secant: 3, shadowSteps: 2, detail: true, shadowers: 10, half: true }, banks: 26, puffs: 13 },
+  { sea: { steps: 24, secant: 3, shadowSteps: 4, detail: true, shadowers: MAX_SHADOWERS, half: false }, banks: 38, puffs: 16 },
 ];
+
+/** The storm wall stands this far beyond the boundary radius (m), past where the headwind stops a flyer. */
+const WALL_OFFSET = 480;
 
 const NEUTRAL_WEATHER = { overcast: 0, mist: 0, rain: 0, fog: 1 };
 const UP = new Vector3(0, 1, 0);
@@ -49,6 +66,7 @@ const UP = new Vector3(0, 1, 0);
 const POLE = new Vector3(0, Math.sin(LATITUDE), Math.cos(LATITUDE)).normalize();
 
 const tmpRight = new Vector3();
+const tmpAhead = new Vector3();
 const tmpUp = new Vector3();
 const tmpV = new Vector3();
 const tmpM4 = new Matrix4();
@@ -77,6 +95,8 @@ export class Sky implements SkySystem {
   private sea: CloudSea;
   private banks: CloudBanks | null = null;
   private bankField: CloudBankField;
+  /** The storm at the world's edge. */
+  private wall: BoundaryWall;
   private seaField: SeaField;
   private seaMean01: number;
   private shared = {
@@ -109,8 +129,10 @@ export class Sky implements SkySystem {
     this.sun = new DirectionalLight(0xfff0dd, KEY_SCALE);
     this.sun.name = 'keyLight';
     const sc = this.sun.shadow.camera;
-    sc.near = 1;
-    sc.far = SHADOW_DISTANCE * 2;
+    // Casters up to SHADOW_UP toward the light, receivers SHADOW_DOWN below the focus: islands
+    // hanging far overhead are outside the box (culled from the shadow pass, no shadow on the hub).
+    sc.near = 0;
+    sc.far = SHADOW_RANGE;
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.5;
     scene.add(this.sun, this.sun.target);
@@ -121,7 +143,7 @@ export class Sky implements SkySystem {
     const field = generateSeaField(SEA_TEX_SIZE);
     this.seaField = field;
     this.seaMean01 = field.mean01;
-    this.sea = new CloudSea(scene, seaTexture(field), SEA_TEX_SIZE, this.shared, CLOUD_LEVELS[2][0]);
+    this.sea = new CloudSea(scene, seaTexture(field), SEA_TEX_SIZE, this.shared, CLOUD_LEVELS[2].sea);
     this.sea.farField.uSeaMean01.value = field.mean01;
     this.dome = new SkyDome(scene, { ...this.shared, ...this.sea.farField });
     this.dome.uniforms.uSeaY.value = SEA_BASE + field.mean01 * SEA_RANGE;
@@ -129,7 +151,7 @@ export class Sky implements SkySystem {
     // Occluders: islands and spires are static; banks are appended per refresh.
     const statics = this.layout.islands.length + this.layout.spires.length;
     this.staticOccluders = statics;
-    const maxBanks = CLOUD_LEVELS[CLOUD_LEVELS.length - 1][2];
+    const maxBanks = CLOUD_LEVELS[CLOUD_LEVELS.length - 1].banks;
     this.occluders = new Float32Array((statics + maxBanks) * 4);
     this.occluderScore = new Float32Array(statics + maxBanks);
     let k = 0;
@@ -143,6 +165,7 @@ export class Sky implements SkySystem {
     }
 
     this.bankField = new CloudBankField(this.layout, []);
+    this.wall = new BoundaryWall(scene, this.layout.boundaryRadius + WALL_OFFSET, this.shared);
     this.setQuality(quality);
     this.setTimeOfDay(this.timeOfDay);
   }
@@ -175,8 +198,8 @@ export class Sky implements SkySystem {
     const level = Math.max(0, Math.min(CLOUD_LEVELS.length - 1, Math.round(q.clouds)));
     if (level !== this.cloudLevel) {
       this.cloudLevel = level;
-      const [steps, shadowSteps, bankCount, puffs] = CLOUD_LEVELS[level];
-      this.sea.setSteps(steps, shadowSteps);
+      const { sea, banks: bankCount, puffs } = CLOUD_LEVELS[level];
+      this.sea.setQuality(sea);
       if (this.banks) {
         this.scene.remove(this.banks.mesh);
         this.banks.dispose();
@@ -245,7 +268,7 @@ export class Sky implements SkySystem {
     this.hemi.color.copy(pal.hemiSky);
     this.hemi.groundColor.copy(pal.hemiGround);
     this.hemi.intensity = pal.hemiI + flash * 0.9;
-    this.followShadow(focus);
+    this.followShadow(focus, camera);
     const overcast = w ? w.overcast : 0;
     this.sun.shadow.intensity = shadowStrength(this.sunDirection, this.moonDirection) * (1 - 0.78 * overcast) * (1 - 0.3 * this.night);
     this.sun.shadow.radius = 2 + 3 * this.night + 3 * overcast;
@@ -275,6 +298,7 @@ export class Sky implements SkySystem {
     const cover = w ? w.cloudCover : 0.32;
     this.bankField.update(drift, this.time, cover, dt);
     this.banks?.update(camera);
+    this.wall.update(dt, camera);
     this.refreshShadowers(dt, camera);
     const seaShadows = smoothstep(0.04, 0.14, this.keyDirection.y) * (1 - 0.7 * overcast);
     this.sea.update(camera, drift, this.shadowerCount, seaShadows, this.renderer.gl.domElement.height);
@@ -282,21 +306,31 @@ export class Sky implements SkySystem {
 
   // --- Internals ----------------------------------------------------------------------------
 
-  /** Center the shadow camera on the focus, snapped to whole shadow-map texels (no shimmer). */
-  private followShadow(focus: Vector3): void {
+  /**
+   * Center the shadow camera on the focus (nudged ahead along the view), snapped to whole
+   * shadow-map texels so shadows never shimmer.
+   */
+  private followShadow(focus: Vector3, camera: PerspectiveCamera): void {
     const L = this.keyDirection;
-    const texel = (2 * this.quality.shadowExtent) / this.quality.shadowMapSize;
+    const e = this.quality.shadowExtent;
+    const texel = (2 * e) / this.quality.shadowMapSize;
+    camera.getWorldDirection(tmpAhead);
+    tmpAhead.y = 0;
+    const len = tmpAhead.length();
+    if (len > 1e-3) tmpAhead.multiplyScalar((e * SHADOW_AHEAD) / len);
+    else tmpAhead.set(0, 0, 0);
+    tmpAhead.add(focus);
     // The same basis three builds for the shadow camera with lookAt (eye = target + L·d).
     tmpRight.crossVectors(UP, L);
     if (tmpRight.lengthSq() < 1e-8) tmpRight.set(1, 0, 0);
     tmpRight.normalize();
     tmpUp.crossVectors(L, tmpRight);
-    const fx = Math.round(focus.dot(tmpRight) / texel) * texel;
-    const fy = Math.round(focus.dot(tmpUp) / texel) * texel;
+    const fx = Math.round(tmpAhead.dot(tmpRight) / texel) * texel;
+    const fy = Math.round(tmpAhead.dot(tmpUp) / texel) * texel;
     const fz = focus.dot(L);
     tmpV.copy(tmpRight).multiplyScalar(fx).addScaledVector(tmpUp, fy).addScaledVector(L, fz);
     this.sun.target.position.copy(tmpV);
-    this.sun.position.copy(tmpV).addScaledVector(L, SHADOW_DISTANCE);
+    this.sun.position.copy(tmpV).addScaledVector(L, SHADOW_UP);
     this.sun.target.updateMatrixWorld();
   }
 
@@ -362,7 +396,7 @@ export class Sky implements SkySystem {
     // Partial selection of the best MAX_SHADOWERS (small n, no allocation).
     const out = this.sea.shadowers;
     let count = 0;
-    const taken = MAX_SHADOWERS;
+    const taken = Math.min(MAX_SHADOWERS, this.sea.quality.shadowers);
     for (let s = 0; s < taken; s++) {
       let best = -1;
       let bestScore = 4500;

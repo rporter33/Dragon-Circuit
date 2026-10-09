@@ -18,7 +18,11 @@ describe('control scheme', () => {
     expect(bindingFor('flap')!.xbox).toBe('RT');
     expect(bindingFor('flap')!.playstation).toBe('R2');
     expect(bindingFor('flap')!.keyboard).toBe('Space / Left click');
-    expect(bindingFor('tuck')!.playstation).toBe('✕ (hold)');
+    // Tuck is a chord: both shoulder buttons together (the right thumb stays on the camera).
+    expect(bindingFor('tuck')!.xbox).toBe('LB + RB (hold)');
+    expect(bindingFor('tuck')!.playstation).toBe('L1 + R1 (hold)');
+    expect(bindingFor('tuck')!.chord).toBe(true);
+    expect(bindingFor('yaw')!.xbox).toBe('LB / RB');
     expect(bindingFor('interact')!.playstation).toBe('△');
     expect(bindingFor('pitch')!.xbox).toBe('LS ↕');
     expect(bindingFor('flare')!.keyboard).toBe('C / Right click');
@@ -28,6 +32,10 @@ describe('control scheme', () => {
     for (const list of Object.values(KEYS)) {
       for (const code of list) expect(code.startsWith('Control')).toBe(false);
     }
+  });
+
+  it('keeps a dive off the camera thumb: no face button and no right stick in the tuck', () => {
+    for (const c of PAD.tuck) expect(['A', 'B', 'X', 'Y', 'R3']).not.toContain(c);
   });
 
   it('only uses real standard-mapping buttons', () => {

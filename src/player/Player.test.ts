@@ -104,6 +104,10 @@ describe('new game', () => {
   it('waits by the stable until called, then comes to the rider', () => {
     const r = rig();
     r.player.placeAtSpawn();
+    // Step away from where it waits (still inside its leash), so the call has ground to cover.
+    const ws = r.player.position;
+    r.player.foot.place(new Vector3(ws.x + 22, 260, ws.z), 0, terrain);
+    r.run(DT);
     const w0 = r.player.position.clone();
     const rider0 = r.player.riderPosition.clone();
     r.run(5);
@@ -576,7 +580,9 @@ describe('prompts', () => {
   it('suggests the right thing in each state', () => {
     const r = rig();
     r.player.placeAtSpawn();
-    // The wyvern waits by the stable, 46 m away: a hint that you can call it.
+    // Far from where the wyvern waits: a hint that you can call it.
+    r.player.foot.place(new Vector3(r.player.position.x + 45, 260, r.player.position.z - 20), 0, terrain);
+    r.run(DT);
     expect(computePrompt(r.player, LAYOUT)?.action).toBe('interact');
     r.player.teleport(new Vector3(LAYOUT.stable.x, 250, LAYOUT.stable.z + 5), 0, 'onFoot');
     // The wyvern stands 4.5 m away, so mounting wins over the stable door.

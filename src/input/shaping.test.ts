@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BumperChord,
+  MouseStick,
   RepeatTimer,
   SHAPING,
   StickNav,
@@ -8,6 +10,7 @@ import {
   detectPadStyle,
   dominant,
   expo,
+  keyPitchTarget,
   radialDeadzone,
   rampAxis,
   triggerDeadzone,
@@ -222,5 +225,109 @@ describe('misc', () => {
   it('dominant keeps the larger deflection with its sign', () => {
     expect(dominant(0.2, -0.7)).toBe(-0.7);
     expect(dominant(-1, 0.5)).toBe(-1);
+  });
+});
+
+describe('keyboard pitch for a heavy body (INP-01)', () => {
+  it('eases in soft, then grows to full only once held', () => {
+    expect(keyPitchTarget(0, 5)).toBe(0);
+    expect(keyPitchTarget(-1, 0)).toBeCloseTo(-SHAPING.keyPitchSoft, 6);
+    expect(keyPitchTarget(1, SHAPING.keyPitchHold)).toBeCloseTo(SHAPING.keyPitchSoft, 6);
+    expect(keyPitchTarget(1, SHAPING.keyPitchHold + SHAPING.keyPitchGrow)).toBeCloseTo(1, 6);
+    expect(Math.abs(keyPitchTarget(-1, 0.8))).toBeGreaterThan(SHAPING.keyPitchSoft);
+    expect(Math.abs(keyPitchTarget(-1, 0.8))).toBeLessThan(1);
+  });
+
+  it('a tap trims (well under half a deflection); holding W reaches full only after ~1 s', () => {
+    const run = (seconds: number) => {
+      let v = 0;
+      let held = 0;
+      const dt = 1 / 120;
+      for (let t = 0; t < seconds; t += dt) {
+        v = rampAxis(v, keyPitchTarget(-1, held), dt, SHAPING.keyPitchAttack, SHAPING.keyRelease);
+        held += dt;
+      }
+      return v;
+    };
+    expect(Math.abs(run(0.1))).toBeLessThan(0.45);
+    expect(Math.abs(run(0.5))).toBeCloseTo(SHAPING.keyPitchSoft, 2);
+    expect(Math.abs(run(0.8))).toBeLessThan(0.95);
+    expect(run(1.3)).toBeCloseTo(-1, 3);
+  });
+});
+
+describe('tap-to-flap meets the Player threshold (INP-02)', () => {
+  it('a light squeeze still gives one soft beat, never a lost one', () => {
+    const tap = new TapPulse();
+    let pulses = 0;
+    let lastOut = 0;
+    let peakOut = 0;
+    for (let i = 0; i < 30; i++) {
+      const out = tap.update(i < 10 ? 0.22 : 0, 1 / 60);
+      if (out > 0 && lastOut === 0) pulses++;
+      peakOut = Math.max(peakOut, out);
+      lastOut = out;
+    }
+    expect(pulses).toBe(1);
+    expect(peakOut).toBeCloseTo(SHAPING.tapMinStrength, 6);
+  });
+
+  it('a hard squeeze carries its strength', () => {
+    const tap = new TapPulse();
+    let peak = 0;
+    for (let i = 0; i < 10; i++) peak = Math.max(peak, tap.update(0.95, 1 / 60));
+    expect(peak).toBeCloseTo(0.95, 6);
+  });
+});
+
+describe('shoulder chord: LB + RB tucks, either alone is rudder (INP-05)', () => {
+  const dt = 1 / 60;
+  it('both together tuck with no rudder blip, even when the second finger is late', () => {
+    const c = new BumperChord();
+    let rudder = 0;
+    c.update(true, false, dt); // LB first…
+    rudder += c.out.left || c.out.right ? 1 : 0;
+    c.update(true, false, dt);
+    rudder += c.out.left || c.out.right ? 1 : 0;
+    const o = c.update(true, true, dt); // …RB two frames later
+    expect(o.tuck).toBe(true);
+    expect(rudder).toBe(0);
+  });
+
+  it('a lone bumper steers after the chord window', () => {
+    const c = new BumperChord();
+    let t = 0;
+    while (t < SHAPING.chordWindow + 0.05) {
+      c.update(false, true, dt);
+      t += dt;
+    }
+    expect(c.out.right).toBe(true);
+    expect(c.out.tuck).toBe(false);
+  });
+
+  it('releasing a dive one bumper at a time never kicks the tail', () => {
+    const c = new BumperChord();
+    for (let i = 0; i < 30; i++) c.update(true, true, dt);
+    for (let i = 0; i < 30; i++) {
+      const o = c.update(true, false, dt); // RB let go first, LB still down
+      expect(o.left || o.right || o.tuck).toBe(false);
+    }
+    c.update(false, false, dt);
+    for (let i = 0; i < 12; i++) c.update(true, false, dt); // a fresh press steers again
+    expect(c.out.left).toBe(true);
+  });
+});
+
+describe('mouse steering stick (INP-03)', () => {
+  it('moves with the mouse and eases back to centre when it stops', () => {
+    const m = new MouseStick();
+    for (let i = 0; i < 10; i++) m.update(12, -6, 1, 1 / 60);
+    expect(m.x).toBeGreaterThan(0.3);
+    expect(m.y).toBeLessThan(-0.15);
+    const x0 = m.x;
+    for (let i = 0; i < 60; i++) m.update(0, 0, 1, 1 / 60);
+    expect(m.x).toBeLessThan(x0 * 0.15);
+    for (let i = 0; i < 200; i++) m.update(400, 0, 1, 1 / 60);
+    expect(m.x).toBeLessThanOrEqual(1);
   });
 });

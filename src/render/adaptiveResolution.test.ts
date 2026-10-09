@@ -40,4 +40,18 @@ describe('AdaptiveResolution', () => {
     run(a, 1 / 70, 30); // the memory expires, and it tries full resolution again
     expect(a.scale).toBe(1);
   });
+
+  it('startup shader hitches (unclamped frame times) do not lower the resolution (ADAPT-01)', () => {
+    const a = new AdaptiveResolution();
+    const changes: number[] = [];
+    // 25 frames that really took 0.4-1.6 s each (program links): the game now passes the raw time.
+    for (let i = 0; i < 25; i++) {
+      const s = a.sample(0.4 + i * 0.05);
+      if (s !== null) changes.push(s);
+    }
+    changes.push(...run(a, 1 / 60, 20));
+    expect(changes).toEqual([]);
+    expect(a.scale).toBe(1);
+  });
 });
+

@@ -1,10 +1,15 @@
 // Thermals made visible, so players can find the rising air from a distance and fly into it:
-//   - wind lines: long pale streaks climbing each column in a lazy helix (they read from far
-//     away as a tall swirling column),
-//   - motes: warm specks spiraling up inside it (the close-up detail when you're in the lift).
+//   - heat haze: a soft, warm column of rising shimmer (a camera-facing card around each
+//     column's axis, broken into rising streaks) — what you spot from several hundred meters,
+//     painted air rather than an object; it thins away as you fly into it,
+//   - wind lines: dry-brush strokes climbing each column in a lazy helix, warm and broken, fading
+//     with distance so they never scribble over far landmarks,
+//   - motes: warm specks spiraling up inside it (the close-up detail when you're in the lift),
+//     opaque enough to read as gold on white cloud.
 // The four thermals nearest the camera share fixed populations. All motion is analytic in the
 // vertex shaders: rise + swirl with a world-anchored vertical wrap inside a window around the
-// camera's height, so the column never slides when the camera climbs.
+// camera's height, so the column never slides when the camera climbs. `presence` dims the whole
+// effect off the wing (title, stable, on foot): thermals are for flyers.
 
 import {
   DoubleSide,
@@ -22,8 +27,8 @@ import {
 import { globalUniforms } from '../render/uniforms';
 import { mulberry32 } from '../core/rng';
 import type { ThermalDef } from '../world/layout';
-import { FX_COMMON_GLSL } from './shaders';
-import { smoothstep } from '../core/math';
+import { FX_COMMON_GLSL, FX_NOISE_GLSL } from './shaders';
+import { damp, smoothstep } from '../core/math';
 
 export const THERMAL_SLOTS = 4;
 /** Vertical extent of the window around the camera's height (m). */
@@ -37,6 +42,7 @@ uniform vec4 uThermA[${THERMAL_SLOTS}]; // x, z, radius, strength
 uniform vec4 uThermB[${THERMAL_SLOTS}]; // baseY, topY, visibility, window bottom
 uniform float uNow;
 uniform float uWindow;
+uniform float uPresence;
 
 void thermalSlot(out vec4 A, out vec4 B) {
   int slot = int(aSlot);
@@ -83,7 +89,7 @@ void main() {
   vec4 mv = viewMatrix * vec4(wp, 1.0);
   float size = uSize * (0.6 + 0.8 * fract(aSeed.w * 5.3));
   float px = size * uPxScale / max(-mv.z, 0.1);
-  float grow = px < 2.0 ? 2.0 / max(px, 1e-3) : 1.0;
+  float grow = px < 2.5 ? 2.5 / max(px, 1e-3) : 1.0;
   mv.xy += position.xy * size * grow;
   gl_Position = projectionMatrix * mv;
 
@@ -91,8 +97,9 @@ void main() {
   float twinkle = 0.65 + 0.35 * sin(uNow * (1.5 + aSeed.w * 2.0) + aSeed.x * 40.0);
   float nearFade = smoothstep(2.0, 10.0, -mv.z);
   // Grown (distant) motes dim only linearly, so the column still sparkles from afar.
-  vAlpha = B.z * columnFade(B, y) * winFade * twinkle * nearFade * fxFogTransmittance(wp) / grow;
-  vColor = mix(vec3(1.0, 0.8, 0.45) * (0.9 + 0.9 * uSunColor), vec3(1.0, 0.6, 0.35) * 0.8, uNight);
+  vAlpha = uPresence * B.z * columnFade(B, y) * winFade * twinkle * nearFade * fxFogTransmittance(wp) / sqrt(grow);
+  // Deep warm gold: reads against white cloud as well as blue sky.
+  vColor = mix(vec3(1.0, 0.72, 0.32) * (0.75 + 0.6 * uSunColor), vec3(1.0, 0.6, 0.35) * 0.8, uNight);
   vUv = position.xy;
 }
 `;
@@ -105,7 +112,8 @@ void main() {
   float r = length(vUv * 2.0);
   float a = exp(-r * r * 3.5) * (1.0 - smoothstep(0.7, 1.0, r)) * vAlpha;
   if (a < 0.002) discard;
-  gl_FragColor = vec4(vColor * a, a * 0.35);
+  // Mostly covering, a little glowing: gold specks, not white-on-white.
+  gl_FragColor = vec4(vColor * a, a * 0.8);
 }
 `;
 
@@ -115,6 +123,7 @@ ${SLOT_GLSL}
 varying vec2 vUv;
 varying float vAlpha;
 varying vec3 vColor;
+varying float vSeed;
 
 void main() {
   vec4 A;
@@ -141,21 +150,26 @@ void main() {
   float sl = length(side);
   side = sl > 1e-4 ? side / sl : vec3(1.0, 0.0, 0.0);
   float dist = length(wp - cameraPosition);
-  // Wider with distance (about 2.5 px at 1080p far away) so the column reads from across the sky.
-  float width = max(0.3, 2.4 * dist / uPxScale);
-  wp += side * position.x * width;
+  // A fine brush: ~2 px far away, 0.35 m up close.
+  float width = max(0.35, 2.1 * dist / uPxScale);
+  // Taper: thin at both ends, full in the middle of the stroke.
+  wp += side * position.x * width * (0.35 + 0.65 * sin(u * 3.14159));
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
 
   float winFade = smoothstep(0.0, 0.1, yy / H) * (1.0 - smoothstep(0.9, 1.0, yy / H));
-  float ends = smoothstep(0.0, 0.35, u) * (1.0 - smoothstep(0.8, 1.0, u));
+  float ends = smoothstep(0.0, 0.5, u) * (1.0 - smoothstep(0.7, 1.0, u));
   float nearFade = smoothstep(6.0, 30.0, dist);
+  // Strokes are a mid-range read; from afar the haze column carries the thermal.
+  float farFade = 1.0 - smoothstep(450.0, 1200.0, dist);
   // The far side of the column is dimmer: reads as a turning column, not a crosshatch.
   vec2 radial = vec2(cos(theta), sin(theta));
   vec2 toCam = normalize(cameraPosition.xz - vec2(A.x, A.y) + 1e-4);
   float front = 0.3 + 0.7 * smoothstep(-0.4, 0.5, dot(radial, toCam));
-  vAlpha = 0.6 * front * B.z * columnFade(B, y) * winFade * ends * nearFade * fxFogTransmittance(wp);
-  vColor = dwApplyFog(fxLitDust(vec3(1.0, 0.96, 0.88), wp) * 1.45, wp, cameraPosition);
+  vAlpha = 0.55 * uPresence * front * B.z * columnFade(B, y) * winFade * ends * nearFade * farFade * fxFogTransmittance(wp);
+  // Warm, sunlit gold: reads against white cloud and blue sky, never as a white vector line.
+  vColor = dwApplyFog(fxLitDust(vec3(1.0, 0.78, 0.46), wp) * 1.15, wp, cameraPosition);
   vUv = vec2(position.x * 2.0, u);
+  vSeed = aSeed.y * 37.0 + aSeed.w * 11.0;
 }
 `;
 
@@ -163,13 +177,84 @@ const LINE_FRAG = /* glsl */ `
 varying vec2 vUv;
 varying float vAlpha;
 varying vec3 vColor;
+varying float vSeed;
 void main() {
   float across = 1.0 - abs(vUv.x);
-  // Bright core, cooler darker edges: reads on cloud and sky alike.
-  vec3 col = mix(vColor * vec3(0.66, 0.75, 0.92), vColor, smoothstep(0.25, 0.75, across));
-  float a = smoothstep(0.0, 0.6, across) * vAlpha;
+  // Dry brush: the stroke breaks up along its length.
+  float brush = 0.5 + 0.5 * sin(vUv.y * 19.0 + vSeed) * sin(vUv.y * 7.0 + vSeed * 1.7);
+  brush = smoothstep(0.1, 0.75, brush);
+  vec3 col = mix(vColor * vec3(0.82, 0.8, 0.86), vColor, smoothstep(0.25, 0.75, across));
+  float a = smoothstep(0.0, 0.75, across) * (0.3 + 0.7 * brush) * vAlpha;
   if (a < 0.003) discard;
   gl_FragColor = vec4(col * a, a);
+}
+`;
+
+/**
+ * Heat haze: one camera-facing card per slot around the column's (leaning) axis, spanning the
+ * window. The fragment shader paints a soft cylinder of rising, streaky shimmer.
+ */
+const HAZE_VERT = /* glsl */ `
+${FX_COMMON_GLSL}
+${SLOT_GLSL}
+varying vec2 vUv;
+varying float vAlpha;
+varying vec3 vColor;
+varying float vY;
+varying float vRise;
+varying float vSlotSeed;
+
+void main() {
+  vec4 A;
+  vec4 B;
+  thermalSlot(A, B);
+  if (B.z <= 0.001) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  float v = position.y + 0.5;
+  float y = B.w + v * uWindow;
+  vec2 lean = leanAt(B, y);
+  vec3 axis = vec3(A.x + lean.x, y, A.y + lean.y);
+  vec2 toCam = cameraPosition.xz - axis.xz;
+  float dh = length(toCam);
+  vec2 side = dh > 1e-3 ? vec2(-toCam.y, toCam.x) / dh : vec2(1.0, 0.0);
+  float halfW = A.z * 1.15;
+  vec3 wp = axis + vec3(side.x, 0.0, side.y) * position.x * 2.0 * halfW;
+  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+
+  float winFade = smoothstep(0.0, 0.18, v) * (1.0 - smoothstep(0.82, 1.0, v));
+  // Thin away as you fly in (the motes and strokes take over), and with great distance.
+  float inside = smoothstep(A.z * 0.8, A.z * 2.6, dh);
+  float far = 1.0 - smoothstep(1300.0, 2100.0, dh);
+  vAlpha = 0.36 * uPresence * B.z * columnFade(B, y) * winFade * inside * far * fxFogTransmittance(axis);
+  vColor = dwApplyFog(fxLitDust(vec3(1.0, 0.76, 0.42), axis) * 1.15, axis, cameraPosition);
+  vUv = vec2(position.x * 2.0, v);
+  vY = y;
+  vRise = A.w * 0.9;
+  vSlotSeed = aSeed.x * 17.0;
+}
+`;
+
+const HAZE_FRAG = /* glsl */ `
+${FX_COMMON_GLSL}
+${FX_NOISE_GLSL}
+uniform float uNow;
+varying vec2 vUv;
+varying float vAlpha;
+varying vec3 vColor;
+varying float vY;
+varying float vRise;
+varying float vSlotSeed;
+void main() {
+  float x = vUv.x;
+  // A cylinder's thickness seen side-on, softened at the rim.
+  float thick = pow(max(0.0, 1.0 - x * x), 1.5);
+  if (thick * vAlpha < 0.002) discard;
+  // Rising shimmer: tall streaks drifting upward with the air.
+  vec2 q = vec2(x * 3.2 + vSlotSeed, (vY - uNow * vRise) / 55.0);
+  float n = fxNoise(q) * 0.62 + fxNoise(q * vec2(2.1, 2.7) + 4.3) * 0.38;
+  float streak = smoothstep(0.4, 0.78, n);
+  float a = thick * (0.14 + 0.86 * streak) * vAlpha;
+  if (a < 0.002) discard;
+  gl_FragColor = vec4(vColor * a, a);
 }
 `;
 
@@ -201,11 +286,13 @@ export function stripGeometry(segs: number): InstancedBufferGeometry {
 export class ThermalMotes {
   readonly mesh: Mesh;
   readonly lines: Mesh;
+  readonly haze: Mesh;
   private mats: ShaderMaterial[] = [];
   private geos: InstancedBufferGeometry[] = [];
   private thermA: Vector4[];
   private thermB: Vector4[];
   private uNow = { value: 0 };
+  private uPresence = { value: 1 };
   private readonly counts: number[];
   /** Indices of the thermals currently in each slot (-1 = empty). */
   private slots: number[] = [-1, -1, -1, -1];
@@ -213,8 +300,8 @@ export class ThermalMotes {
   private dists: number[];
   private byDistance = (a: number, b: number) => this.dists[a] - this.dists[b];
 
-  constructor(scene: Scene, private thermals: readonly ThermalDef[], moteCount = 1400, lineCount = 520) {
-    this.counts = [moteCount, lineCount];
+  constructor(scene: Scene, private thermals: readonly ThermalDef[], moteCount = 2000, lineCount = 360) {
+    this.counts = [moteCount, lineCount, THERMAL_SLOTS];
     this.thermA = Array.from({ length: THERMAL_SLOTS }, () => new Vector4());
     this.thermB = Array.from({ length: THERMAL_SLOTS }, () => new Vector4());
     this.order = thermals.map((_, i) => i);
@@ -224,6 +311,7 @@ export class ThermalMotes {
       uThermB: { value: this.thermB },
       uNow: this.uNow,
       uWindow: { value: WINDOW },
+      uPresence: this.uPresence,
     };
     const make = (geo: InstancedBufferGeometry, n: number, seed: number, vert: string, frag: string, extra: Record<string, { value: unknown }>): Mesh => {
       const rand = mulberry32(seed);
@@ -256,14 +344,19 @@ export class ThermalMotes {
       this.geos.push(geo);
       return mesh;
     };
-    this.mesh = make(quad(), moteCount, 0x7e41, MOTE_VERT, MOTE_FRAG, { uSize: { value: 0.85 } });
+    this.mesh = make(quad(), moteCount, 0x7e41, MOTE_VERT, MOTE_FRAG, { uSize: { value: 1.1 } });
     this.mesh.name = 'fx-thermal-motes';
     this.lines = make(stripGeometry(10), lineCount, 0x9a11, LINE_VERT, LINE_FRAG, {});
     this.lines.name = 'fx-thermal-lines';
+    // One haze card per slot (slot = instance index): a strip so the column can lean.
+    this.haze = make(stripGeometry(12), THERMAL_SLOTS, 0x4a2e, HAZE_VERT, HAZE_FRAG, {});
+    this.haze.name = 'fx-thermal-haze';
+    this.haze.renderOrder = 3;
   }
 
   setDensity(particles: number): void {
-    this.geos.forEach((g, i) => (g.instanceCount = Math.max(THERMAL_SLOTS, Math.round((this.counts[i] * particles) / 1.4))));
+    // The haze (last) always draws one card per slot.
+    this.geos.forEach((g, i) => (g.instanceCount = i === 2 ? THERMAL_SLOTS : Math.max(THERMAL_SLOTS, Math.round((this.counts[i] * particles) / 1.4))));
   }
 
   setPxScale(v: number): void {
@@ -275,8 +368,13 @@ export class ThermalMotes {
     return this.slots;
   }
 
-  update(dt: number, cam: { x: number; y: number; z: number }, maxDistance: number): void {
+  /**
+   * @param presence  0..1 target for how strongly thermals show (1 in flight; dimmer on foot,
+   *                  in the title and the stable). Eased, so mode changes never pop.
+   */
+  update(dt: number, cam: { x: number; y: number; z: number }, maxDistance: number, presence = 1): void {
     this.uNow.value += dt;
+    this.uPresence.value = damp(this.uPresence.value, presence, 1.5, dt);
     const th = this.thermals;
     for (let i = 0; i < th.length; i++) this.dists[i] = Math.max(0, Math.hypot(th[i].x - cam.x, th[i].z - cam.z) - th[i].radius);
     this.order.sort(this.byDistance);
@@ -300,12 +398,14 @@ export class ThermalMotes {
       B.set(t.baseY, t.topY, vis, center - WINDOW / 2);
       if (vis > 0) any = true;
     }
-    this.mesh.visible = any;
-    this.lines.visible = any;
+    const show = any && this.uPresence.value > 0.01;
+    this.mesh.visible = show;
+    this.lines.visible = show;
+    this.haze.visible = show;
   }
 
   dispose(): void {
-    for (const m of [this.mesh, this.lines]) m.removeFromParent();
+    for (const m of [this.mesh, this.lines, this.haze]) m.removeFromParent();
     for (const g of this.geos) g.dispose();
     for (const m of this.mats) m.dispose();
   }
