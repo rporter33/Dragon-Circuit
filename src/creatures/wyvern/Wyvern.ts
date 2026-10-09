@@ -32,8 +32,6 @@ export interface WyvernOptions {
 
 const _m = new Matrix4();
 const _v = new Vector3();
-const _mb = new Matrix4();
-const _mt = new Matrix4();
 const _mInv = new Matrix4();
 const X_AXIS = new Vector3(1, 0, 0);
 /** The forearm's radius about half way down (× the arm scale; parts/wings.ts). */
@@ -224,10 +222,14 @@ export class Wyvern implements WyvernRenderable {
       const rest = this.foldRest[side];
       for (let i = 0; i < rest.length; i++) {
         const { bone, weight } = rest[i];
-        // This bone's skinning matrix, carried to the helper's bind pivot.
+        // This bone's skinning matrix carried to the helper's bind pivot: M · T(pivot − bone).
         _v.subVectors(pivot, rig.bones[bone].pos);
-        const e = _mb.copy(B[bone].matrixWorld).multiply(_mt.makeTranslation(_v.x, _v.y, _v.z)).elements;
-        for (let k = 0; k < 16; k++) out[k] += e[k] * weight;
+        const e = B[bone].matrixWorld.elements;
+        for (let k = 0; k < 12; k++) out[k] += e[k] * weight;
+        out[12] += (e[0] * _v.x + e[4] * _v.y + e[8] * _v.z + e[12]) * weight;
+        out[13] += (e[1] * _v.x + e[5] * _v.y + e[9] * _v.z + e[13]) * weight;
+        out[14] += (e[2] * _v.x + e[6] * _v.y + e[10] * _v.z + e[14]) * weight;
+        out[15] += e[15] * weight;
       }
       fold.matrixWorld.copy(_m);
       fold.matrix.multiplyMatrices(_mInv, _m);
