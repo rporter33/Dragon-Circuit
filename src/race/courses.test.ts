@@ -1,5 +1,6 @@
 // Course validation against the real world: every ring clear of rock, Rootfall's roots and the
-// waterfalls; the flight line between rings clear; the Eye of the Gale threaded with room to
+// waterfalls, and of every building, tree, deck and gate (all collider kinds); the flight line
+// between rings clear; the Eye of the Gale threaded with room to
 // spare; medals ordered; and every course actually flown with the autopilot and the real flight
 // model to prove it can be finished inside the medal times.
 
@@ -16,6 +17,8 @@ import { COURSES, courseVia } from './courses';
 import { ClearanceField } from './clearance';
 import { coursePoints, gateRing, GATE_RADIUS, medalFor, polylineLength } from './courseMath';
 import { ringGeom } from './ringMath';
+import { gateColliders } from './gateMesh';
+import { ColliderIndex, deckCollider } from '../world/colliders';
 import { flyCourse, thermalAir, type FlyResult } from './flyCourse';
 
 const SLOW = 240_000;
@@ -80,6 +83,42 @@ describe('the seven courses', () => {
       for (let i = 1; i < line.length; i++) {
         const { min, at } = field.along(line[i - 1], line[i], 3);
         expect(min, `${c.id} leg ${i - 1}→${i} near ${at.map(Math.round)}`).toBeGreaterThan(c.kind === 'sprint' ? 10 : 6);
+      }
+    }
+  }, SLOW);
+
+  it('keeps ring openings and the flight line clear of buildings, trees, decks and the gates', () => {
+    // Every collider kind the dressing makes (cylinders, spheres, boxes; foliage soft), measured
+    // with the index's signed distance, plus every start gate's own solid parts.
+    const hard = new ColliderIndex();
+    const soft = new ColliderIndex();
+    for (const c of [...dressing.colliders, ...dressing.forest.colliders, ...dressing.decks.map(deckCollider), ...COURSES.flatMap(gateColliders)]) (c.soft ? soft : hard).add(c);
+    const p = new Vector3();
+    for (const c of COURSES) {
+      c.rings.forEach((r, i) => {
+        const g = ringGeom(r);
+        const n = new Vector3(g.nx, g.ny, g.nz);
+        const a1 = new Vector3().crossVectors(n, Math.abs(n.y) < 0.95 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0)).normalize();
+        const a2 = new Vector3().crossVectors(n, a1);
+        for (const k of [0, 0.5, 0.95]) {
+          for (let j = 0; j < 16; j++) {
+            const th = (j / 16) * Math.PI * 2;
+            p.fromArray(r.position).addScaledVector(a1, Math.cos(th) * k * r.radius).addScaledVector(a2, Math.sin(th) * k * r.radius);
+            expect(Math.min(hard.distance(p, 20), soft.distance(p, 20)), `${c.id} ring ${i}`).toBeGreaterThan(3);
+          }
+        }
+      });
+      const line = coursePoints(c, courseVia(c.id)).map((q) => ('p' in q ? q.p : q));
+      for (let i = 1; i < line.length; i++) {
+        const a = new Vector3(...line[i - 1]);
+        const b = new Vector3(...line[i]);
+        const L = a.distanceTo(b);
+        for (let d = 0; d <= L; d += 3) {
+          p.copy(a).lerp(b, d / L);
+          const at = `${c.id} leg ${i - 1}→${i} at ${p.toArray().map(Math.round)}`;
+          expect(hard.distance(p, 20), at).toBeGreaterThan(6);
+          expect(soft.distance(p, 20), at).toBeGreaterThan(3);
+        }
       }
     }
   }, SLOW);

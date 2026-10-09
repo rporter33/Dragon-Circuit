@@ -1,22 +1,28 @@
 // Races: ring courses and sprints, timing, medals and ghosts.
 //
-// Flow: flying toward a start gate arms its race (raceArmed; the HUD shows its name), crossing
-// the gate starts the clock (raceStart), rings must be flown through in order (ringPassed with
-// split and delta vs the best run, or ringMissed when one is passed by), and the last ring or
-// a sprint's finish beacon ends it (raceFinish, a RaceRecord, unlocks). begin() from the menu
-// puts the player on a rolling start ~140 m before the gate. Respawning, dismounting or
-// wandering far off course aborts.
+// Flow: a deliberate approach to a start gate arms its race (raceArmed; the HUD shows its name):
+// airborne a while (never straight off a launch, a catch or a respawn), lined up with the gate's
+// axis, aimed at its opening, close and at flying speed. Crossing the gate starts the clock
+// (raceStart); missing the opening, turning away or landing stands the race down
+// (raceDisarmed, with a reason). Rings must be flown through in order (ringPassed with split and
+// delta vs the best run, or ringMissed when one is passed by), and the last ring or a sprint's
+// finish beacon ends it (raceFinish, a RaceRecord, unlocks). begin() from the menu puts the
+// player on a rolling start before the gate, high enough for its breed and clear of the world.
+// Respawning, dismounting, changing breed or wandering far off course aborts (raceAbort, with a
+// reason); restart() then tries the same race again for a little while.
+//
+// A record always holds the breed (and look) the run was flown with, captured at the gate.
+// Erasing progress (the save document is swapped) drops the best time and ghost in hand.
 //
 // Timing runs in fixedUpdate at the physics rate with sub-step precision (the swept test
 // reports where in the step a plane was crossed). The best run's ghost flies alongside.
 
 import { Vector3, type PerspectiveCamera, type Scene } from 'three';
 import type { GameEventBus } from '../core/events';
-import type { Settings } from '../core/types';
+import type { BreedId, Collider, GameEvents, RiderLook, Settings, TerrainQuery, WyvernLook } from '../core/types';
 import type { CameraSystem, GhostRecording, PlayerSystem, RaceDef, RaceSystem, SaveData, SaveStore } from '../game/contracts';
 import type { QualityProfile } from '../render/quality';
-import { createWyvernPose } from '../player/poses';
-import { Wyvern } from '../creatures/wyvern/Wyvern';
+import { DEG } from '../core/math';
 import { COURSES } from './courses';
 import { GATE_HALF_HEIGHT, GATE_HALF_WIDTH, gateRing, medalFor, RACE_START } from './courseMath';
 import { missRadiusFor, ringGeom, ringSide, sweepGate, sweepRing, type RingGeom } from './ringMath';
@@ -24,13 +30,36 @@ import { createGhostSample, ghostDuration, GHOST_RATE, GhostRecorder, sampleGhos
 import { raceStartPosition } from './flyCourse';
 import { bestMedal, grantUnlocks } from '../progression/unlocks';
 import { RaceVisuals } from './RaceVisuals';
+import { RaceGhost } from './RaceGhost';
+import { courseColors, gateColliders } from './gateMesh';
 
-/** Arming: within this distance of a gate, on its approach side, heading through it. */
-const ARM_DISTANCE = 260;
-const ARM_OFF_AXIS = 110;
-const ARM_HEADING_DOT = 0.35;
-/** An armed race lets go beyond this distance (or once you're past the gate's plane). */
+export type RaceAbortReason = GameEvents['raceAbort']['reason'];
+export type RaceDisarmReason = NonNullable<GameEvents['raceDisarmed']['reason']>;
+
+/**
+ * Arming takes a deliberate approach, so exploring (a takeoff from the launch deck, a glide past a
+ * gate) never starts a race by accident. All must hold:
+ */
+export const ARMING = {
+  /** Within this distance of the gate's center (m)... */
+  distance: 200,
+  /** ...and at least this far before its plane (m), so the countdown has time to run. */
+  minLead: 15,
+  /** Heading (horizontal) within this angle of the gate's axis (degrees). */
+  headingDeg: 25,
+  /** Aimed at it: the current line crosses the gate's plane within the opening plus this (m). */
+  aimMargin: 20,
+  /** At flying speed (m/s). */
+  minSpeed: 12,
+  /** Airborne at least this long since the last takeoff, catch or respawn (s). */
+  airborne: 6,
+} as const;
+/** An armed race stands down beyond this distance (m)... */
 const DISARM_DISTANCE = 340;
+/** ...or after flying away from the gate for this long (s). */
+const DISARM_AWAY_SECONDS = 2.5;
+/** After a race stands down or is abandoned, restart() tries it again for this long (s). */
+const RETRY_WINDOW = 20;
 /** How long the result stays up before the race goes idle (s). */
 const FINISHED_HOLD = 8;
 /** Abort when this far from the next ring for this long. */
@@ -46,11 +75,18 @@ export interface RacesDeps {
   settings: () => Settings;
   /** Snapped after a teleport to the start (it also snaps on its own for big jumps). */
   camera?: CameraSystem;
+  /** Keeps begin()'s rolling start clear of rock, trees and buildings. */
+  terrain?: Pick<TerrainQuery, 'distance'>;
   defs?: RaceDef[];
 }
 
 const _p = new Vector3();
 const _v = new Vector3();
+
+/** Where the player is: the rider on foot (the wyvern may be waiting far off), else the wyvern. */
+function focusOf(player: PlayerSystem): Vector3 {
+  return player.mode === 'onFoot' || player.mode === 'falling' ? player.riderPosition : player.position;
+}
 
 export class Races implements RaceSystem {
   readonly defs: RaceDef[];
@@ -64,6 +100,11 @@ export class Races implements RaceSystem {
   readonly splits: number[] = [];
   /** The last finish (for the results screen). */
   lastResult: { raceId: string; timeMs: number; medal: string; newBest: boolean } | null = null;
+  /**
+   * Solid parts of every start gate (pillars, the rocks under them, the lintel). Static: Game
+   * registers it as a collider source on the terrain.
+   */
+  readonly colliders: readonly Collider[];
 
   private deps: RacesDeps;
   private gates: RingGeom[];
@@ -74,27 +115,47 @@ export class Races implements RaceSystem {
   private stepCount = 0;
   private bestGhost: GhostRecording | null = null;
   private ghostRequest = 0;
-  private ghostWyvern: Wyvern | null = null;
-  private ghostPose = createWyvernPose();
+  private ghost: RaceGhost;
   private ghostSample = createGhostSample();
   private showGhost: boolean;
   private countdownShown = 4;
   private missedAt = -1;
   private offCourseTime = 0;
   private finishedTime = 0;
-  private time = 0;
   private armCheck = 0;
+  /** Seconds flying since the last takeoff, catch or respawn. */
+  private airTime = 0;
+  /** Seconds an armed race has been flown away from. */
+  private awayTime = 0;
+  /** What the run is flown with, captured at the gate. */
+  private runBreed: BreedId | null = null;
+  private runLook: WyvernLook | null = null;
+  private runRider: RiderLook | null = null;
+  /**
+   * The race restart() tries again after a stand-down or an abort, and the seconds left to do so
+   * (a countdown, not a session clock: nothing here grows without bound).
+   */
+  private retry: { id: string; left: number } | null = null;
+  /** The save document this state belongs to (a reset swaps it). */
+  private saveData: SaveData;
 
   constructor(deps: RacesDeps) {
     this.deps = deps;
     this.defs = deps.defs ?? COURSES;
     this.gates = this.defs.map((d) => gateRing(d));
     this.rings = this.defs.map((d) => d.rings.map(ringGeom));
+    this.colliders = this.defs.flatMap((d) => gateColliders(d));
     this.showGhost = deps.settings().showGhost;
+    this.saveData = deps.save.data;
     this.visuals = new RaceVisuals(deps.scene, this.defs, deps.quality);
+    this.ghost = new RaceGhost(deps.scene, deps.quality, deps.save.data.wyvern);
     deps.events.on('respawn', () => {
-      if (this.activeId && (this.state === 'running' || this.state === 'countdown')) this.abort('respawn');
+      this.airTime = 0;
+      if (this.activeId && this.state === 'running') this.abort('respawn');
+      else if (this.activeId && this.state === 'countdown') this.disarm('respawn');
     });
+    deps.events.on('takeoff', () => (this.airTime = 0));
+    deps.events.on('caught', () => (this.airTime = 0));
   }
 
   // --- Queries ----------------------------------------------------------------------------------
@@ -104,7 +165,7 @@ export class Races implements RaceSystem {
     if (d && this.state === 'countdown') return out.fromArray(d.start.position);
     if (d && this.state === 'running') return out.fromArray(d.rings[this.nextRingIndex].position);
     if (this.state === 'idle') {
-      const near = this.nearestStart(this.deps.player.position, 900);
+      const near = this.nearestStart(focusOf(this.deps.player), 900);
       return near ? out.fromArray(near.start.position) : null;
     }
     return null;
@@ -132,49 +193,81 @@ export class Races implements RaceSystem {
     return this.bestGhost ? ghostDuration(this.bestGhost) : 0;
   }
 
+  /**
+   * The race restart() would begin again when none is active: the one that just stood down at
+   * its gate or was abandoned, for RETRY_WINDOW seconds. Null otherwise.
+   */
+  get retryId(): string | null {
+    return this.retry?.id ?? null;
+  }
+
   // --- Commands ---------------------------------------------------------------------------------
 
   begin(raceId: string): void {
     const def = this.defs.find((d) => d.id === raceId);
     if (!def) return;
+    this.checkSave();
     if (this.activeId && (this.state === 'running' || this.state === 'countdown')) this.abort(this.activeId === raceId ? 'restart' : 'quit');
     const g = gateRing(def);
-    const start = raceStartPosition(def, _p);
-    this.deps.player.teleport(start, Math.atan2(g.nx, g.nz), 'flying', RACE_START.speed);
-    this.deps.camera?.snap(this.deps.player);
+    const player = this.deps.player;
+    const start = raceStartPosition(def, _p, { breed: player.breed, terrain: this.deps.terrain });
+    player.teleport(start, Math.atan2(g.nx, g.nz), 'flying', RACE_START.speed);
+    this.deps.camera?.snap(player);
+    this.airTime = 0;
     this.arm(def);
   }
 
   restart(): void {
-    if (this.activeId) this.begin(this.activeId);
+    const id = this.activeId ?? this.retryId;
+    if (id) this.begin(id);
   }
 
-  abort(reason: 'quit' | 'restart' | 'respawn' | 'left-course'): void {
+  abort(reason: RaceAbortReason): void {
     const id = this.activeId;
     if (!id) return;
-    if (this.state === 'running' || this.state === 'countdown') this.deps.events.emit('raceAbort', { raceId: id, reason });
+    const live = this.state === 'running' || this.state === 'countdown';
+    if (live) this.deps.events.emit('raceAbort', { raceId: id, reason });
     this.reset();
+    this.retry = live && reason !== 'quit' && reason !== 'restart' ? { id, left: RETRY_WINDOW } : null;
+  }
+
+  /**
+   * Forget the progress in hand (Erase progress): abandon any race, drop the best time and the
+   * best run's ghost (its stored copy went with the save). Runs by itself when the save document
+   * is swapped; Game may also call it directly.
+   */
+  resetProgress(): void {
+    this.saveData = this.deps.save.data;
+    this.abort('quit');
+    this.retry = null;
+    this.bestGhost = null;
+    this.ghostRequest++;
+    this.bestMs = null;
+    this.lastResult = null;
+    this.ghost.hide();
   }
 
   setShowGhost(on: boolean): void {
     this.showGhost = on;
-    if (!on && this.ghostWyvern) this.ghostWyvern.group.visible = false;
+    if (!on) this.ghost.hide();
   }
 
   // --- Simulation -------------------------------------------------------------------------------
 
   fixedUpdate(dt: number, player: PlayerSystem): void {
-    this.time += dt;
+    if (this.retry && (this.retry.left -= dt) <= 0) this.retry = null;
+    this.checkSave();
     const a = player.prevPosition;
     const b = player.position;
     const flying = player.mode === 'flying';
+    this.airTime = flying ? this.airTime + dt : 0;
 
     if (this.state === 'idle') {
       // Arming is a cheap check; a few times a second is plenty.
       this.armCheck -= dt;
       if (flying && this.armCheck <= 0) {
         this.armCheck = 0.1;
-        const def = this.armable(b, player.flight.velocity);
+        const def = this.airTime >= ARMING.airborne ? this.armable(b, player.flight.velocity) : null;
         if (def) this.arm(def);
       }
       return;
@@ -186,15 +279,17 @@ export class Races implements RaceSystem {
       const gate = this.gates[idx];
       const c = sweepGate(a.x, a.y, a.z, b.x, b.y, b.z, gate, GATE_HALF_WIDTH, GATE_HALF_HEIGHT);
       if (c !== null) {
-        this.start((1 - c) * dt);
+        this.start((1 - c) * dt, player);
         return;
       }
+      const v = player.flight.velocity;
+      this.awayTime = v.x * gate.nx + v.z * gate.nz < 0 ? this.awayTime + dt : 0;
       const dist = _p.set(gate.cx, gate.cy, gate.cz).distanceTo(b);
       const side = ringSide(b.x, b.y, b.z, gate);
-      if (!flying || dist > DISARM_DISTANCE || side > 2) {
-        this.reset();
-        return;
-      }
+      if (side > 2) this.disarm('missed-gate');
+      else if (!flying) this.disarm(player.mode === 'respawning' ? 'respawn' : 'landed');
+      else if (dist > DISARM_DISTANCE || this.awayTime > DISARM_AWAY_SECONDS) this.disarm('away');
+      if (this.state !== 'countdown') return;
       // Three-two-one as the gate comes up (seconds to the gate at the current speed).
       const speed = Math.max(5, player.flight.velocity.dot(_v.set(gate.nx, gate.ny, gate.nz)));
       const eta = Math.ceil(-side / speed);
@@ -224,9 +319,13 @@ export class Races implements RaceSystem {
     this.elapsedMs += dt * 1000;
     this.record(player);
 
-    // Off course: dismounted, or far from the next ring for a while.
+    // Off: dismounted, changed breed, or far from the next ring for a while.
     if (player.mode === 'onFoot' || player.mode === 'dismounting') {
-      this.abort('left-course');
+      this.abort('dismount');
+      return;
+    }
+    if (player.breed.id !== this.runBreed) {
+      this.abort('breed-change');
       return;
     }
     const next = this.rings[idx][this.nextRingIndex];
@@ -236,34 +335,41 @@ export class Races implements RaceSystem {
   }
 
   update(dt: number, camera: PerspectiveCamera, player: PlayerSystem): void {
+    this.checkSave();
     const idx = this.active ? this.defs.indexOf(this.active) : -1;
     this.visuals.update(dt, camera, {
       activeIndex: idx,
       state: this.state,
       nextRing: this.nextRingIndex,
     });
-    this.updateGhost(dt);
+    this.updateGhost(dt, camera);
     void player;
   }
 
   // --- Internals --------------------------------------------------------------------------------
 
-  /** The race whose gate the player is flying toward, if any. */
+  /** The race whose gate the player is deliberately lining up on, if any (see ARMING). */
   private armable(p: Vector3, vel: Vector3): RaceDef | null {
     const speed = vel.length();
-    if (speed < 8) return null;
+    const hs = Math.hypot(vel.x, vel.z);
+    if (speed < ARMING.minSpeed || hs < 1) return null;
+    const cosHeading = Math.cos(ARMING.headingDeg * DEG);
     for (let i = 0; i < this.defs.length; i++) {
-      const g = this.gates[i];
-      const dx = g.cx - p.x;
-      const dy = g.cy - p.y;
-      const dz = g.cz - p.z;
-      const dist = Math.hypot(dx, dy, dz);
-      if (dist > ARM_DISTANCE) continue;
-      const along = -(dx * g.nx + dy * g.ny + dz * g.nz); // signed side of the gate plane
-      if (along > -5) continue; // not on the approach side
-      const offAxis = Math.sqrt(Math.max(0, dist * dist - along * along));
-      if (offAxis > ARM_OFF_AXIS) continue;
-      if ((vel.x * g.nx + vel.y * g.ny + vel.z * g.nz) / speed < ARM_HEADING_DOT) continue;
+      const g = this.gates[i]; // gate normals are horizontal
+      const dx = p.x - g.cx;
+      const dy = p.y - g.cy;
+      const dz = p.z - g.cz;
+      if (dx * dx + dy * dy + dz * dz > ARMING.distance * ARMING.distance) continue;
+      const along = dx * g.nx + dz * g.nz; // signed side of the gate plane (negative = approach)
+      if (along > -ARMING.minLead) continue;
+      const vn = vel.x * g.nx + vel.z * g.nz;
+      if (vn / hs < cosHeading) continue;
+      // Where the current line crosses the gate's plane, relative to the opening's center.
+      const t = -along / vn;
+      const lateral = (dx + vel.x * t) * g.nz - (dz + vel.z * t) * g.nx;
+      const up = dy + vel.y * t;
+      if (Math.abs(lateral) > GATE_HALF_WIDTH + ARMING.aimMargin) continue;
+      if (Math.abs(up) > GATE_HALF_HEIGHT + ARMING.aimMargin) continue;
       return this.defs[i];
     }
     return null;
@@ -271,17 +377,38 @@ export class Races implements RaceSystem {
 
   private arm(def: RaceDef): void {
     this.reset();
+    this.retry = null;
     this.active = def;
     this.activeId = def.id;
     this.state = 'countdown';
     this.countdownShown = 4;
+    this.awayTime = 0;
     this.bestMs = this.deps.save.data.races[def.id]?.bestMs ?? null;
     this.loadGhost(def.id);
     this.deps.events.emit('raceArmed', { raceId: def.id });
   }
 
-  private start(sinceCrossing: number): void {
+  /** An armed race stands down without starting. */
+  private disarm(reason: RaceDisarmReason): void {
+    const id = this.activeId;
+    if (!id || this.state !== 'countdown') return;
+    this.reset();
+    this.retry = { id, left: RETRY_WINDOW };
+    this.deps.events.emit('raceDisarmed', { raceId: id, reason });
+  }
+
+  /** A swapped save document means progress was erased: drop what was kept from the old one. */
+  private checkSave(): void {
+    if (this.deps.save.data !== this.saveData) this.resetProgress();
+  }
+
+  private start(sinceCrossing: number, player: PlayerSystem): void {
     const def = this.active!;
+    const save = this.deps.save.data;
+    // The run belongs to the breed and look it is flown with from the gate.
+    this.runBreed = player.breed.id;
+    this.runLook = { ...save.wyvern, breed: player.breed.id };
+    this.runRider = { ...save.rider };
     this.state = 'running';
     this.elapsedMs = sinceCrossing * 1000;
     this.nextRingIndex = 0;
@@ -291,7 +418,7 @@ export class Races implements RaceSystem {
     this.offCourseTime = 0;
     this.recorder.reset();
     this.stepCount = 0;
-    this.record(this.deps.player);
+    this.record(player);
     this.visuals.gatePassed(this.defs.indexOf(def));
     this.deps.events.emit('raceStart', { raceId: def.id });
   }
@@ -324,10 +451,11 @@ export class Races implements RaceSystem {
     const previousBestMs = prev?.bestMs ?? null;
     const medal = medalFor(timeMs, def.medals);
     const newBest = previousBestMs === null || timeMs < previousBestMs;
+    const breed = this.runBreed ?? player.breed.id;
     save.data.races[def.id] = {
       bestMs: newBest ? timeMs : previousBestMs!,
       medal: bestMedal(prev?.medal ?? 'none', medal),
-      breed: newBest ? player.breed.id : prev!.breed,
+      breed: newBest ? breed : prev!.breed,
       runs: (prev?.runs ?? 0) + 1,
     };
     this.elapsedMs = timeMs;
@@ -338,9 +466,9 @@ export class Races implements RaceSystem {
       this.bestMs = timeMs;
       const ghost = this.recorder.finish({
         raceId: def.id,
-        breed: player.breed.id,
-        look: save.data.wyvern,
-        rider: save.data.rider,
+        breed,
+        look: this.runLook ?? { ...save.data.wyvern, breed },
+        rider: this.runRider ?? { ...save.data.rider },
         timeMs,
         splits: this.splits,
       });
@@ -350,7 +478,7 @@ export class Races implements RaceSystem {
     save.save();
     this.deps.events.emit('raceFinish', { raceId: def.id, timeMs, medal, newBest, previousBestMs });
     grantUnlocks(save.data, this.deps.events);
-    if (this.ghostWyvern) this.ghostWyvern.group.visible = false;
+    this.ghost.hide();
   }
 
   /** Back to idle: no race, nothing shown. */
@@ -363,8 +491,12 @@ export class Races implements RaceSystem {
     this.nextRingIndex = 0;
     this.lastDeltaMs = null;
     this.splits.length = 0;
+    this.runBreed = null;
+    this.runLook = null;
+    this.runRider = null;
+    this.awayTime = 0;
     this.armCheck = 0.5; // don't instantly re-arm the gate we just left
-    if (this.ghostWyvern) this.ghostWyvern.group.visible = false;
+    this.ghost.hide();
   }
 
   /** 30 Hz samples of the physics state (the fixed step is 120 Hz). */
@@ -387,33 +519,20 @@ export class Races implements RaceSystem {
     });
   }
 
-  private updateGhost(dt: number): void {
+  private updateGhost(dt: number, camera: PerspectiveCamera): void {
     const g = this.bestGhost;
     const show = this.showGhost && g !== null && this.state === 'running' && this.elapsedMs / 1000 <= ghostDuration(g!) + 0.5;
     if (!show) {
-      if (this.ghostWyvern) this.ghostWyvern.group.visible = false;
+      this.ghost.hide();
       return;
     }
-    if (!this.ghostWyvern) {
-      this.ghostWyvern = new Wyvern(g!.look, { ghost: true });
-      this.deps.scene.add(this.ghostWyvern.group);
-    }
     const s = sampleGhost(g!, this.elapsedMs / 1000, this.ghostSample);
-    const pose = this.ghostPose;
-    pose.position.copy(s.position);
-    pose.orientation.copy(s.orientation);
-    pose.velocity.copy(s.velocity);
-    pose.airborne = true;
-    pose.airspeed = s.velocity.length();
-    pose.wingSpread = s.wingSpread;
-    pose.flapPhase = s.flapPhase;
-    pose.flapStrength = s.flapStrength;
-    pose.flare = s.flare;
-    pose.gait = 'idle';
-    pose.groundY = null;
-    pose.lookTarget.copy(s.position).addScaledVector(s.velocity, 1.5);
-    this.ghostWyvern.group.visible = true;
-    this.ghostWyvern.update(dt, pose);
+    this.ghost.show(g!, s, courseColors(g!.raceId).light, dt, camera);
+  }
+
+  /** The ghost's model (for showcases and tests). */
+  get ghostWyvern(): RaceGhost['wyvern'] {
+    return this.ghost.wyvern;
   }
 
   /** The ghost recording currently flown against (for showcases). */
@@ -439,5 +558,9 @@ export class Races implements RaceSystem {
     this.state = state;
     this.nextRingIndex = Math.min(next, def.rings.length - 1);
     this.elapsedMs = elapsedMs;
+    const p = this.deps.player;
+    this.runBreed = p.breed.id;
+    this.runLook = { ...this.deps.save.data.wyvern, breed: p.breed.id };
+    this.runRider = { ...this.deps.save.data.rider };
   }
 }

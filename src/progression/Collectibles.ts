@@ -3,8 +3,10 @@
 // Pickup: within PICKUP_RADIUS of the rider on foot (riderPosition) or of the wyvern in the air
 // (position). A find emits 'collect' (with counts), a toast, records itself in the save and
 // evaluates unlocks (which emit 'unlock' + toasts of their own). Entering a landmark's vicinity
-// the first time emits 'discover'. Visuals: instanced shader feathers, relic artifacts on
-// pedestals, twinkling halos (see collectibleVisuals.ts).
+// the first time emits 'discover'. Pickups and discovery only run while active (Game turns them
+// off outside play, so the title screen never announces anything). Visuals: instanced shader
+// feathers, relic artifacts on pedestals, twinkling halos (see collectibleVisuals.ts). Relic
+// pedestals and floating stones are solid (`colliders`, a source on the terrain's index).
 
 import {
   BufferAttribute,
@@ -29,7 +31,7 @@ import type { Terrain } from '../world/terrain';
 import { lightPoolMesh } from '../world/dressing/structures/lightPools';
 import { relicById, FEATHER_COUNT, RELICS } from './relics';
 import { placeCollectibles, type Collectible } from './collectibleDefs';
-import { FEATHER_COLORS, RELIC_SCALE, buildRelic, featherGeometry, featherMaterial, haloMaterial } from './collectibleVisuals';
+import { FEATHER_COLORS, FEATHER_GLINT, RELIC_SCALE, buildRelic, featherGeometry, featherMaterial, haloMaterial } from './collectibleVisuals';
 import { grantUnlocks } from './unlocks';
 import { discoveryZones, newlyDiscovered, type DiscoveryZone } from './discovery';
 import { beaconMaterial } from '../race/raceMaterials';
@@ -39,6 +41,7 @@ import { hashString } from '../core/rng';
 export const PICKUP_RADIUS = { foot: 4, air: 7 } as const;
 /** Seconds the pickup flourish takes. */
 const COLLECT_TIME = 0.9;
+const TAU = Math.PI * 2;
 
 export interface CollectiblesDeps {
   scene: Scene;
@@ -48,6 +51,11 @@ export interface CollectiblesDeps {
   /** The world dressing: its launch deck carries a feather. */
   dressing?: { deckAt(x: number, z: number, fromY: number): { y: number } | null; readonly colliders?: readonly Collider[] };
   quality: QualityProfile;
+  /**
+   * Height of the drawing buffer in pixels (the canvas, after device pixel ratio, render scale
+   * and adaptive resolution), so halo glints keep their size on any screen. Defaults to the window.
+   */
+  viewportHeight?: () => number;
 }
 
 interface Live {
@@ -67,6 +75,10 @@ export class Collectibles implements CollectibleSystem {
   readonly relics = RELICS;
   readonly group = new Group();
   readonly items: Collectible[];
+  /** Relic pedestals and floating stones (static; a collider source on the terrain). */
+  readonly colliders: Collider[] = [];
+  /** Pickups and landmark discovery run only while active (play); visuals always animate. */
+  active = true;
 
   private deps: CollectiblesDeps;
   private live: Live[] = [];
@@ -76,7 +88,9 @@ export class Collectibles implements CollectibleSystem {
   private haloState: BufferAttribute;
   private zones: DiscoveryZone[];
   private discoverTimer = 0;
-  private time = 0;
+  /** Relic turn and breathing phases (radians, wrapped: no clock grows without bound). */
+  private spin = 0;
+  private bob = 0;
   /** The save document the visuals reflect (a reset swaps it for a fresh one). */
   private shownData: SaveData;
 
@@ -126,6 +140,7 @@ export class Collectibles implements CollectibleSystem {
         const r = buildRelic(c.id, c.groundY === null, i);
         const restY = c.groundY !== null ? c.groundY + 0.95 : c.position.y - 0.45;
         r.base.position.set(c.position.x, c.groundY !== null ? c.groundY : c.position.y - 0.6, c.position.z);
+        this.colliders.push(...relicBaseColliders(c.position.x, c.position.z, c.groundY !== null ? c.groundY : c.position.y - 0.6, c.groundY === null));
         r.artifact.position.set(c.position.x, restY, c.position.z);
         this.group.add(r.base, r.artifact);
         if (c.groundY !== null) pools.push(c.position.x, c.groundY + 0.05, c.position.z, 4.5);
@@ -150,8 +165,8 @@ export class Collectibles implements CollectibleSystem {
     const state = new Float32Array(n * 2);
     this.live.forEach((l, i) => {
       pos.set([l.c.position.x, l.c.position.y + (l.c.kind === 'relic' ? 0.4 : 0), l.c.position.z], i * 3);
-      size[i] = l.c.kind === 'relic' ? 7 : 4.5;
-      const light = l.c.kind === 'relic' ? new Color(relicLight(l.c.id)) : new Color(FEATHER_COLORS[hashString(l.c.id) % FEATHER_COLORS.length][1]);
+      size[i] = l.c.kind === 'relic' ? 7 : 6.5;
+      const light = new Color(l.c.kind === 'relic' ? relicLight(l.c.id) : FEATHER_GLINT);
       col.set([light.r, light.g, light.b], i * 3);
       state.set([(hashString(l.c.id) % 101) / 101, l.collect === 2 ? 0 : 1], i * 2);
     });
@@ -203,20 +218,27 @@ export class Collectibles implements CollectibleSystem {
     return best ? best.position : null;
   }
 
+  /** Turn pickups and discovery on (play) or off (title, menus, the stable). */
+  setActive(on: boolean): void {
+    this.active = on;
+  }
+
   update(dt: number, camera: PerspectiveCamera, player: PlayerSystem): void {
-    this.time += dt;
+    this.spin = (this.spin + dt * 0.45) % TAU;
+    this.bob = (this.bob + dt * 1.3) % TAU;
     if (this.deps.save.data !== this.shownData) this.resetFromSave();
     // Pickups: rider on foot, wyvern in the air (or carrying the rider on the ground).
     const onFoot = player.mode === 'onFoot';
     const reach = onFoot ? PICKUP_RADIUS.foot : PICKUP_RADIUS.air;
     const from = onFoot ? player.riderPosition : player.position;
     const r2 = reach * reach;
+    const canPick = this.active && player.mode !== 'respawning' && player.mode !== 'falling';
     let dirty = false;
     for (let i = 0; i < this.live.length; i++) {
       const l = this.live[i];
       if (l.collect === -1) {
         // Ground relics also count the rider standing at the pedestal (artifact sits higher).
-        if (l.c.position.distanceToSquared(from) <= r2 && player.mode !== 'respawning' && player.mode !== 'falling') this.pick(l);
+        if (canPick && l.c.position.distanceToSquared(from) <= r2) this.pick(l);
         else continue;
       }
       if (l.collect >= 0 && l.collect < 1.5) {
@@ -244,13 +266,17 @@ export class Collectibles implements CollectibleSystem {
     for (const l of this.live) {
       if (!l.relic || l.collect === 2) continue;
       const a = l.relic.artifact;
-      a.rotation.y = this.time * 0.45 + l.relic.spin;
-      if (l.collect === -1) a.position.y = (l.c.groundY !== null ? l.c.groundY + 0.95 : l.c.position.y - 0.45) + 0.06 * Math.sin(this.time * 1.3 + l.relic.spin);
+      a.rotation.y = this.spin + l.relic.spin;
+      if (l.collect === -1) a.position.y = (l.c.groundY !== null ? l.c.groundY + 0.95 : l.c.position.y - 0.45) + 0.06 * Math.sin(this.bob + l.relic.spin);
     }
     // Halo size follows the view so glints stay a sensible size on any screen.
     (this.halo.material as import('three').ShaderMaterial).uniforms.uPixelScale.value = this.pixelScale(camera);
 
-    // Discovery, a few times a second.
+    // Discovery, a few times a second (the first check runs on the first active frame).
+    if (!this.active) {
+      this.discoverTimer = 0;
+      return;
+    }
     this.discoverTimer -= dt;
     if (this.discoverTimer <= 0) {
       this.discoverTimer = 0.25;
@@ -258,9 +284,12 @@ export class Collectibles implements CollectibleSystem {
     }
   }
 
-  private pixelScale(camera: PerspectiveCamera): number {
-    // Points are sized in world meters: pixels = size × (viewport height / 2) / tan(fov/2) / distance.
-    const h = typeof window !== 'undefined' ? window.innerHeight * Math.min(2, window.devicePixelRatio || 1) : 1080;
+  /**
+   * Points are sized in world meters: pixels = size × (buffer height / 2) / tan(fov/2) / distance.
+   * gl_PointSize is in drawing-buffer pixels, so this must be the buffer's height, not the window's.
+   */
+  pixelScale(camera: PerspectiveCamera): number {
+    const h = this.deps.viewportHeight?.() || (typeof window !== 'undefined' ? window.innerHeight * Math.min(2, window.devicePixelRatio || 1) : 1080);
     return h / 2 / Math.tan((camera.fov * Math.PI) / 360);
   }
 
@@ -316,3 +345,15 @@ function relicLight(id: string): string {
   return { 'relic-ember': '#ff9a4a', 'relic-antler': '#fff0c8', 'relic-mane': '#bfe8ff', 'relic-ribbon': '#ffd27a', 'relic-howdah': '#7fe0ff', 'relic-charts': '#ffe0a0', 'relic-circlet': '#ffb459' }[id] ?? '#ffe0a0';
 }
 
+
+/**
+ * A relic's base as collision shapes: a pedestal is a squat stone box (its top at the visible
+ * ~1 m, which a rider can step onto); a floating stone is a slab with its crag hanging beneath.
+ */
+export function relicBaseColliders(x: number, z: number, y: number, floating: boolean): Collider[] {
+  if (!floating) return [{ kind: 'box', x, y: y + 0.5, z, hx: 0.5, hy: 0.5, hz: 0.5, yaw: 0, surface: 'stone' }];
+  return [
+    { x, z, radius: 1.25, y0: y - 0.9, y1: y + 0.15, surface: 'stone' },
+    { x, z, radius: 0.7, y0: y - 2.6, y1: y - 0.9, surface: 'stone' },
+  ];
+}

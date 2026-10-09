@@ -28,7 +28,7 @@ import type { QualityProfile } from '../render/quality';
 import { damp } from '../core/math';
 import { dressMaterial, swayDepthMaterial } from '../world/dressing/materials';
 import { lightPoolMesh } from '../world/dressing/structures/lightPools';
-import { beaconMaterial, curtainMaterial, discMaterial, ringMaterial } from './raceMaterials';
+import { beaconMaterial, curtainMaterial, discMaterial, DISC_REACH, ringMaterial } from './raceMaterials';
 import { buildGate, courseColors, curtainMesh } from './gateMesh';
 import { ringGeom } from './ringMath';
 
@@ -121,7 +121,7 @@ export class RaceVisuals {
 
     // The next ring's membrane.
     this.discMat = discMaterial(new Color('#ffffff'));
-    this.disc = new Mesh(new CircleGeometry(1, 48), this.discMat);
+    this.disc = new Mesh(new CircleGeometry(1, 64), this.discMat);
     this.disc.visible = false;
     this.disc.renderOrder = 4;
     this.group.add(this.disc);
@@ -274,7 +274,11 @@ export class RaceVisuals {
       _n.set(g.nx, g.ny, g.nz);
       this.disc.quaternion.setFromUnitVectors(Z, _n);
       this.disc.position.fromArray(nextDef.position);
-      this.disc.scale.setScalar(nextDef.radius);
+      this.disc.scale.setScalar(nextDef.radius * DISC_REACH);
+      // Where the tube's outer edge sits, in inner radii (the halo starts there).
+      const last = next === def.rings.length - 1;
+      const tube = Math.max(0.9, nextDef.radius * 0.09) * (last ? 1.3 : 1);
+      this.discMat.uniforms.uTubeOut.value = (nextDef.radius + 2 * tube) / nextDef.radius;
     }
     this.discMat.uniforms.uOpacity.value = this.discLevel;
 

@@ -135,6 +135,7 @@ export class Game implements GameActions {
       quality,
       settings: () => this.settings,
       camera: this.cameraRig,
+      terrain: this.world.terrain,
     });
     this.cameraRig.setWaypointSource((out) => (this.races.state === 'running' || this.races.state === 'countdown' ? this.races.waypoint(out) : null));
     this.collectibles = new Collectibles({
@@ -144,7 +145,10 @@ export class Game implements GameActions {
       terrain: this.world.terrain,
       dressing: this.dressing,
       quality,
+      viewportHeight: () => this.renderer.canvas.height,
     });
+    colliders.addSource('race-gates', () => this.races.colliders);
+    colliders.addSource('relics', () => this.collectibles.colliders);
     this.fx = new Fx({
       scene: this.scene,
       renderer: this.renderer,
@@ -382,6 +386,7 @@ export class Game implements GameActions {
     this.adaptiveGrace = Math.max(this.adaptiveGrace, 1);
     this.ui.setScreen(screen);
     this.cameraRig.mode = screen === 'title' ? 'title' : screen === 'stable' ? 'stable' : 'follow';
+    this.collectibles.setActive(screen === 'play');
     this.input.setPointerLock(screen === 'play');
   }
 
@@ -391,7 +396,7 @@ export class Game implements GameActions {
       this.pause();
       this.input.consume(); // the press that opened the menu must not also close it this frame
     }
-    if (p.restart && this.races.activeId) this.restartRace();
+    if (p.restart && (this.races.activeId || this.races.retryId)) this.restartRace();
     // The prompt decides what interact does here (mounting wins over the stable door).
     if (p.interact && this.prompt?.action === 'stable') this.openStable();
     else if (p.interact && this.activeInteractable) this.activeInteractable.onInteract();

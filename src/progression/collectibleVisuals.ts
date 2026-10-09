@@ -1,12 +1,13 @@
 // How the finds look. Feathers: one procedural feather geometry, instanced; the shader bobs,
-// spins and tilts each one (per-instance phase), paints a soft gradient with barb streaks and a
-// glowing edge, and plays the pickup (a rising flourish that fades out). Relics: a small,
+// spins and tilts each one (per-instance phase), paints a deep base hue running out to a gilded
+// tip and edge with barb streaks, a cream-gold quill and a glint that sweeps up the vane, and
+// plays the pickup (a rising flourish that fades out). Relics: a small,
 // distinct artifact each, built from the dressing kit, on a stone pedestal (or a floating stone
-// for the ones in open air), turning slowly. Every find carries a halo that twinkles, so a glint
-// catches the eye from a hundred meters off.
+// for the ones in open air), turning slowly. Every find carries a halo that pulses (gold for
+// feathers), drawn so it reads on white cloud as well as at night, and catches the eye from a
+// hundred meters off.
 
 import {
-  AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -16,6 +17,7 @@ import {
   IcosahedronGeometry,
   LatheGeometry,
   Mesh,
+  NormalBlending,
   ShaderMaterial,
   SphereGeometry,
   TorusGeometry,
@@ -96,17 +98,24 @@ export function featherGeometry(): BufferGeometry {
   return g;
 }
 
-/** Feather colorways (base → tip), all from the game's palette. */
+/**
+ * Feather colorways: a deep, saturated base at the quill running out to a gold tip. Every find
+ * shares the gilding (that is what makes a feather read as treasure, and gold holds its color
+ * against white cloud where a pale feather vanishes); the base hue varies feather to feather.
+ */
 export const FEATHER_COLORS: [string, string][] = [
-  ['#c8862a', '#ffe7a3'], // gold
-  ['#2f8f8a', '#c9fff1'], // teal
-  ['#b5562f', '#ffd0a0'], // ember
-  ['#5a4a9a', '#e6d6ff'], // violet
-  ['#e8e0d0', '#ffffff'], // white
-  ['#3f7d5a', '#e9ffc8'], // green
-  ['#9a3a5a', '#ffd6e8'], // rose
-  ['#2f5d8f', '#cfe6ff'], // sky
+  ['#b06a18', '#ffd25e'], // amber
+  ['#1c6a68', '#f4c65a'], // teal
+  ['#a33c1c', '#ffbf4a'], // ember
+  ['#4c3a8c', '#f2c25e'], // violet
+  ['#d9c49a', '#eda93a'], // pearl
+  ['#2c6a42', '#f6cf62'], // green
+  ['#8c2c4c', '#ffc35a'], // rose
+  ['#24568e', '#f6cb64'], // sky
 ];
+
+/** The halo's glint color for feathers: warm gold, whatever the feather's base hue. */
+export const FEATHER_GLINT = '#ffb238';
 
 const FEATHER_VERT = /* glsl */ `
 attribute vec4 aInst;     // phase, collect progress (0..1, 2 = gone), scale, unused
@@ -119,6 +128,7 @@ varying vec2 vUv2;
 varying vec3 vColA;
 varying vec3 vColB;
 varying float vGlow;
+varying float vPhase;
 mat3 rotY(float a) { float c = cos(a), s = sin(a); return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c); }
 mat3 rotZ(float a) { float c = cos(a), s = sin(a); return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0); }
 void main() {
@@ -139,7 +149,9 @@ void main() {
   vUv2 = uv;
   vColA = aColorA;
   vColB = aColorB;
-  vGlow = 0.6 + 0.4 * sin(t * 2.3) + c * 2.0;
+  // Breathes with the halo's pulse (0.8 Hz), flares on pickup.
+  vGlow = 0.65 + 0.35 * sin(uTime * 5.03 + ph * 17.0) + c * 2.0;
+  vPhase = ph;
   gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
@@ -152,25 +164,32 @@ varying vec2 vUv2;
 varying vec3 vColA;
 varying vec3 vColB;
 varying float vGlow;
+varying float vPhase;
 void main() {
   float u = abs(vUv2.x);
   float v = vUv2.y;
   vec3 N = normalize(vN);
   vec3 V = normalize(cameraPosition - vDwWorldPos);
   if (dot(N, V) < 0.0) N = -N;
-  // Base → tip gradient, a darker shaft line, barb streaks running out toward the tip.
-  vec3 col = mix(vColA, vColB, smoothstep(0.0, 1.0, v * 0.8 + u * 0.35));
-  float barbs = 0.85 + 0.15 * sin((v * 46.0 - u * 9.0) * 3.14159);
+  // Base hue at the quill running out to gold at the tip and along the vane's outer edge.
+  vec3 col = mix(vColA, vColB, smoothstep(0.3, 1.0, v * 0.85 + u * 0.25));
+  // Barbs: fine streaks sweeping out toward the tip, with real contrast.
+  float barbs = 0.75 + 0.25 * sin((v * 46.0 - u * 9.0) * 3.14159);
   col *= barbs;
-  col *= mix(0.7, 1.0, smoothstep(0.0, 0.08, u));
+  // Gilded edge and a cream-gold quill.
+  vec3 gilt = vec3(1.0, 0.78, 0.36);
+  col = mix(col, gilt, smoothstep(0.82, 0.98, u) * 0.85);
+  col = mix(vec3(0.95, 0.83, 0.55), col, smoothstep(0.02, 0.08, u));
   // Soft painterly light: two bands and a warm rim.
   float ndl = dot(N, uSunDir) * 0.5 + 0.5;
   float band = 0.62 + 0.25 * smoothstep(0.4, 0.5, ndl) + 0.13 * smoothstep(0.75, 0.85, ndl);
   vec3 lit = col * band * (0.65 + 0.35 * uSunColor);
   float fres = pow(1.0 - abs(dot(N, V)), 2.0);
-  // It glows: the edge most, breathing slowly, brighter at night.
-  vec3 glow = vColB * (0.08 + 0.4 * smoothstep(0.6, 1.0, u)) * vGlow * (1.0 + 1.5 * uNight);
-  vec3 outc = lit + glow + vColB * fres * 0.35;
+  // A glint sweeping up the vane now and then, like light on lacquer.
+  float sweep = pow(max(0.0, sin(v * 5.0 - uTime * 1.7 + vPhase * 9.0)), 16.0);
+  // It glows: the gilded edge most, breathing with the halo, brighter at night.
+  vec3 glow = gilt * (0.06 + 0.35 * smoothstep(0.7, 1.0, u)) * vGlow * (1.0 + 1.5 * uNight);
+  vec3 outc = lit + glow + gilt * (fres * 0.3 + sweep * 0.45);
   outc = mix(dwApplyFog(outc, vDwWorldPos, cameraPosition), outc, 0.3);
   gl_FragColor = vec4(outc, 1.0);
 }
@@ -199,6 +218,7 @@ uniform float uPixelScale;
 varying vec3 vColor;
 varying float vFade;
 varying float vTw;
+varying float vFar;
 varying vec3 vDwWorldPos;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
@@ -206,10 +226,13 @@ void main() {
   vec4 mv = viewMatrix * wp;
   float dist = -mv.z;
   vColor = aColor;
-  vTw = 0.5 + 0.5 * sin(uTime * 2.7 + aState.x * 17.0);
+  // A slow pulse (0.8 Hz), each find on its own beat.
+  vTw = 0.5 + 0.5 * sin(uTime * 5.03 + aState.x * 17.0);
   // Glints fade out far away (a hint, not a map marker).
   vFade = aState.y * (1.0 - smoothstep(180.0, 320.0, dist));
-  gl_PointSize = clamp(aSize * uPixelScale / max(dist, 1.0), 2.0, 160.0);
+  // Up close the find speaks for itself: the soft glow gives way to the star.
+  vFar = smoothstep(4.0, 16.0, dist);
+  gl_PointSize = clamp(aSize * (0.9 + 0.2 * vTw) * uPixelScale / max(dist, 1.0), 2.0, 160.0);
   gl_Position = projectionMatrix * mv;
 }
 `;
@@ -219,17 +242,23 @@ ${FOG_PARS_GLSL}
 varying vec3 vColor;
 varying float vFade;
 varying float vTw;
+varying float vFar;
 varying vec3 vDwWorldPos;
 void main() {
   vec2 p = gl_PointCoord * 2.0 - 1.0;
   float r = length(p);
   float soft = exp(-r * r * 5.0);
-  // A four-point star that twinkles.
+  // A four-point star that twinkles with the pulse.
   float star = (exp(-abs(p.x) * 26.0) * exp(-abs(p.y) * 3.0) + exp(-abs(p.y) * 26.0) * exp(-abs(p.x) * 3.0)) * (0.35 + 0.65 * vTw);
-  float a = (soft * 0.55 + star * 0.8) * vFade * (1.0 + uNight);
-  vec3 col = vColor * a;
-  vec3 att = dwApplyFog(col, vDwWorldPos, cameraPosition) - dwApplyFog(vec3(0.0), vDwWorldPos, cameraPosition);
-  gl_FragColor = vec4(max(att, 0.0), 1.0);
+  float a = clamp((soft * 0.8 * (0.25 + 0.75 * vFar) + star * 0.9) * vFade * (1.0 + uNight), 0.0, 1.5);
+  // Haze takes light away, never adds fog color.
+  float clear = dwApplyFog(vec3(1.0), vDwWorldPos, cameraPosition).g - dwApplyFog(vec3(0.0), vDwWorldPos, cameraPosition).g;
+  a *= max(clear, 0.0);
+  // Premultiplied: glowing light that also tints what is behind it by day, so a gold glint
+  // still reads on white cloud (pure additive light vanishes there); at night, all glow.
+  float cover = min(1.0, a) * 0.75 * (1.0 - uNight);
+  // A little over white, so the glint blooms.
+  gl_FragColor = vec4(vColor * a * 1.15, cover);
 }
 `;
 
@@ -241,7 +270,8 @@ export function haloMaterial(): ShaderMaterial {
     fragmentShader: HALO_FRAG,
     transparent: true,
     depthWrite: false,
-    blending: AdditiveBlending,
+    blending: NormalBlending,
+    premultipliedAlpha: true,
   });
 }
 

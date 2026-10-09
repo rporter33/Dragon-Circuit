@@ -544,14 +544,23 @@ export interface GameEvents {
   modeChange: { from: PlayerMode; to: PlayerMode };
 
   raceArmed: { raceId: string };
-  /** An armed race stood down without starting (flew past or away from the gate). */
-  raceDisarmed: { raceId: string };
+  /**
+   * An armed race stood down without starting (flew past or away from the gate). `reason`
+   * (optional): 'missed-gate' = crossed the gate's plane outside the opening (worth telling the
+   * player, who can press restart to try again); 'away' = turned or flew away; 'landed' = stopped
+   * flying; 'respawn' = dropped into the cloud sea.
+   */
+  raceDisarmed: { raceId: string; reason?: 'missed-gate' | 'away' | 'landed' | 'respawn' };
   raceCountdown: { raceId: string; count: number };
   raceStart: { raceId: string };
   ringPassed: { raceId: string; index: number; total: number; splitMs: number; deltaMs: number | null; position: Vector3 };
   ringMissed: { raceId: string; index: number };
   raceFinish: { raceId: string; timeMs: number; medal: Medal; newBest: boolean; previousBestMs: number | null };
-  raceAbort: { raceId: string; reason: 'quit' | 'restart' | 'respawn' | 'left-course' };
+  /**
+   * A race was abandoned. 'dismount': the rider got off mid-race; 'breed-change': the wyvern's
+   * breed was changed mid-race (a record always holds the breed it was flown on).
+   */
+  raceAbort: { raceId: string; reason: 'quit' | 'restart' | 'respawn' | 'left-course' | 'dismount' | 'breed-change' };
 
   collect: { id: string; kind: 'feather' | 'relic'; name: string; position: Vector3; total: number; ofTotal: number };
   unlock: { cosmeticId: string; name: string; slot: CosmeticSlot };

@@ -75,9 +75,12 @@ export const COURSE_SPECS: CourseSpec[] = [
     description: 'Off the launch deck, a lap of Gull’s Rest and home along the Roost’s cliffs. The first race every rider flies.',
     difficulty: 1,
     landmark: 'roost',
-    start: { p: [219, 238, 137] },
+    // The gate hangs off to the left of the launch deck's line (60 m clear of it, its axis 34°
+    // across it), so a plain glide off the deck flies past it; to race, bank left ~100 m out and
+    // line up. Ring 0 bends the line back toward Gull's Rest.
+    start: { p: [280, 232, 250], yawDeg: 24 },
     rings: [
-      { p: [340, 232, 230] },
+      { p: [400, 228, 300] },
       { p: [520, 222, 300] },
       { p: [680, 213, 420] },
       { p: [560, 205, 545] },

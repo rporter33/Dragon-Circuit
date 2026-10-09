@@ -4,6 +4,7 @@
 // palette as the Roost so it belongs to the world. Build-time only.
 
 import { BoxGeometry, Color, CylinderGeometry, IcosahedronGeometry, Matrix4, Mesh, PlaneGeometry, Vector3, type BufferGeometry, type Material } from 'three';
+import type { BoxCollider, Collider, CylinderCollider } from '../core/types';
 import type { RaceDef } from '../game/contracts';
 import { displace, under, xf, type GeoBuilder } from '../world/dressing/geom';
 import { PALETTE, bannerCloth, box, jitter, lantern, resetJitter, siteBuilders, stoneBlock, v, type SiteBuilders } from '../world/dressing/structures/kit';
@@ -16,14 +17,18 @@ export interface CourseColors {
   light: string;
 }
 
+/**
+ * Lights are saturated mid-tones (relative luminance at most ~0.35), never pastel: they have to
+ * read against white cloud and pale sky (luminance ~0.75), where a pale glow disappears.
+ */
 export const COURSE_COLORS: Record<string, CourseColors> = {
-  'roost-loop': { cloth: PALETTE.bannerBlue, trim: PALETTE.gold, light: '#7fd6ff' },
-  'cascade-run': { cloth: '#2f6f7a', trim: PALETTE.cream, light: '#7ff0d8' },
-  'archway-thread': { cloth: '#a8582a', trim: PALETTE.cream, light: '#ffc46b' },
-  underspan: { cloth: '#4b6a2e', trim: PALETTE.gold, light: '#b8ff7a' },
-  'needle-slalom': { cloth: PALETTE.bannerRed, trim: PALETTE.gold, light: '#ff8a6b' },
-  'lantern-dash': { cloth: '#8a3a2a', trim: PALETTE.gold, light: '#ffb459' },
-  'long-drift': { cloth: '#4b3a6b', trim: PALETTE.cream, light: '#c9a8ff' },
+  'roost-loop': { cloth: PALETTE.bannerBlue, trim: PALETTE.gold, light: '#2f9dff' },
+  'cascade-run': { cloth: '#2f6f7a', trim: PALETTE.cream, light: '#0fa88a' },
+  'archway-thread': { cloth: '#a8582a', trim: PALETTE.cream, light: '#f08a1c' },
+  underspan: { cloth: '#4b6a2e', trim: PALETTE.gold, light: '#4fa61c' },
+  'needle-slalom': { cloth: PALETTE.bannerRed, trim: PALETTE.gold, light: '#ff6a45' },
+  'lantern-dash': { cloth: '#8a3a2a', trim: PALETTE.gold, light: '#f07a18' },
+  'long-drift': { cloth: '#4b3a6b', trim: PALETTE.cream, light: '#a07cff' },
 };
 
 export function courseColors(id: string): CourseColors {
@@ -153,6 +158,73 @@ export function buildGate(def: RaceDef, floating: boolean): GateParts {
   curtain.translate(0, (PILLAR_TOP + PILLAR_BOTTOM) / 2 + 0.2, 0);
   curtain.applyMatrix4(frame);
   return { site, curtain, frame };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Collision
+// ---------------------------------------------------------------------------------------------
+
+/** Lintel arc: rises this much from its ends to the keystone; voussoirs this tall/deep. */
+const LINTEL_RISE = 4.5;
+const LINTEL_SPAN = PILLAR_X + 0.1;
+
+/**
+ * The gate's solid parts as simple shapes in world space: each pillar (plinth to brazier) as a
+ * box, the floating rock under it (a walkable slab and its hanging point), and the arched lintel
+ * stepped into five boxes that follow the arc. Pillar tops, the lintel and the rocks can be
+ * landed on. Banners, lanterns and the curtain of light stay soft to the touch (not here).
+ */
+export function gateColliders(def: RaceDef): Collider[] {
+  const [gx, gy, gz] = def.start.position;
+  const yaw = def.start.yaw;
+  const cs = Math.cos(yaw);
+  const sn = Math.sin(yaw);
+  // Gate frame: local +X = (cos, 0, -sin), local +Z = (sin, 0, cos) (as xf/BoxCollider).
+  const wx = (lx: number, lz: number) => gx + lx * cs + lz * sn;
+  const wz = (lx: number, lz: number) => gz - lx * sn + lz * cs;
+  const box = (lx: number, y0: number, y1: number, hx: number, hz: number): BoxCollider => ({
+    kind: 'box',
+    x: wx(lx, 0),
+    y: gy + (y0 + y1) / 2,
+    z: wz(lx, 0),
+    hx,
+    hy: (y1 - y0) / 2,
+    hz,
+    yaw,
+    surface: 'stone',
+  });
+  const cyl = (lx: number, y0: number, y1: number, radius: number): CylinderCollider => ({
+    x: wx(lx, 0),
+    z: wz(lx, 0),
+    radius,
+    y0: gy + y0,
+    y1: gy + y1,
+    surface: 'stone',
+  });
+  const out: Collider[] = [];
+  for (const side of [-1, 1]) {
+    const x = side * PILLAR_X;
+    // Plinth, drums, capital and the brazier bowl on top.
+    out.push(box(x, PILLAR_BOTTOM, PILLAR_TOP + 0.85, 2.3, 2.3));
+    // The floating rock: a grassy top around the plinth, and the crag hanging beneath it.
+    out.push(cyl(x, PILLAR_BOTTOM - 3, PILLAR_BOTTOM - 0.9, 4.8));
+    out.push(cyl(x, PILLAR_BOTTOM - 10.2, PILLAR_BOTTOM - 3, 2.6));
+  }
+  // The lintel, in five steps along its arc.
+  const base = PILLAR_TOP + 0.8;
+  const arcY = (lx: number) => base + LINTEL_RISE * (1 - (lx / PILLAR_X) ** 2);
+  const n = 5;
+  for (let i = 0; i < n; i++) {
+    const x0 = -LINTEL_SPAN + (2 * LINTEL_SPAN * i) / n;
+    const x1 = x0 + (2 * LINTEL_SPAN) / n;
+    const keystone = i === (n - 1) / 2;
+    const half = keystone ? 1.6 : 1.2;
+    const ys = [arcY(x0), arcY(x1), x0 < 0 && x1 > 0 ? arcY(0) : arcY(x0)];
+    const top = Math.max(...ys) + half + 0.3;
+    const bottom = Math.min(...ys) - half - 0.3;
+    out.push(box((x0 + x1) / 2, bottom, top, (x1 - x0) / 2, keystone ? 1.9 : 1.6));
+  }
+  return out;
 }
 
 /** World position of a gate's keystone (for a far-off glint). */

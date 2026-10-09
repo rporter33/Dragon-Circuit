@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PerspectiveCamera, Scene, Vector3 } from 'three';
+import { Color, PerspectiveCamera, SRGBColorSpace, Scene, Vector3, type Points } from 'three';
 import { EventBus } from '../core/events';
 import type { GameEvents, PlayerMode } from '../core/types';
 import type { PlayerSystem } from '../game/contracts';
@@ -9,20 +9,22 @@ import { QUALITY } from '../render/quality';
 import { Dressing } from '../world/dressing/Dressing';
 import { LocalSaveStore, MemoryGhostStore } from './save';
 import { Collectibles, PICKUP_RADIUS } from './Collectibles';
+import { ColliderIndex } from '../world/colliders';
 import { discoveryZones, inZone, newlyDiscovered } from './discovery';
 import { featherId } from './relics';
+import { FEATHER_COLORS, FEATHER_GLINT } from './collectibleVisuals';
 
 const terrain = new Terrain(LAYOUT);
 const camera = new PerspectiveCamera(60, 16 / 9, 0.5, 5000);
 const dressing = new Dressing({ scene: new Scene(), terrain, quality: QUALITY.low, asyncStreaming: false });
 
-function setup(collected: string[] = []) {
+function setup(collected: string[] = [], viewportHeight?: () => number) {
   const events = new EventBus<GameEvents>();
   const log: { type: string; payload: any }[] = [];
   for (const type of ['collect', 'unlock', 'discover', 'toast'] as const) events.on(type, (payload) => log.push({ type, payload }));
   const save = new LocalSaveStore({ storage: null, ghosts: new MemoryGhostStore() });
   save.data.collected.push(...collected);
-  const sys = new Collectibles({ scene: new Scene(), events, save, terrain, dressing, quality: QUALITY.low });
+  const sys = new Collectibles({ scene: new Scene(), events, save, terrain, dressing, quality: QUALITY.low, viewportHeight });
   const player = {
     mode: 'flying' as PlayerMode,
     position: new Vector3(0, 5000, 0),
@@ -126,5 +128,77 @@ describe('landmark discovery', () => {
     expect(found[0].payload).toEqual({ landmarkId: 'gullrest', name: "Gull's Rest" });
     expect(save.data.discovered).toContain('gullrest');
     expect(newlyDiscovered(zones, save.data.discovered, ...gull.position)).toEqual([]);
+  });
+});
+
+describe('only during play (PLAY-15)', () => {
+  it('announces and collects nothing while inactive (the title screen), then catches up at once', () => {
+    const { log, save, sys, player, step } = setup();
+    sys.setActive(false);
+    const gull = LAYOUT.landmarks.find((l) => l.id === 'gullrest')!;
+    const f = sys.items.find((c) => c.access === 'air' && c.kind === 'feather')!;
+    player.riderPosition.set(...gull.position);
+    player.position.copy(f.position);
+    for (let i = 0; i < 10; i++) step(0.3);
+    expect(log).toHaveLength(0);
+    expect(save.data.discovered).not.toContain('gullrest');
+    expect(save.data.collected).toHaveLength(0);
+    // Play begins: the first frame discovers and picks up.
+    sys.setActive(true);
+    step(1 / 60);
+    expect(log.filter((e) => e.type === 'discover').map((e) => e.payload.landmarkId)).toContain('gullrest');
+    expect(log.find((e) => e.type === 'collect')?.payload.id).toBe(f.id);
+  });
+});
+
+describe('halo glints are sized for the drawing buffer (HALO-01)', () => {
+  it('uses the buffer height it is given', () => {
+    const { sys } = setup([], () => 675);
+    const cam = new PerspectiveCamera(60, 16 / 9, 0.5, 5000);
+    expect(sys.pixelScale(cam)).toBeCloseTo(675 / 2 / Math.tan(Math.PI / 6), 6);
+  });
+});
+
+describe('relic bases are solid', () => {
+  it('every relic stands on a pedestal or stone you collide with, without walling off its pickup', () => {
+    const { sys } = setup();
+    const index = new ColliderIndex();
+    index.addAll(sys.colliders);
+    const relics = sys.items.filter((c) => c.kind === 'relic');
+    expect(relics.length).toBe(7);
+    const n = new Vector3();
+    for (const r of relics) {
+      const base = r.groundY !== null ? new Vector3(r.position.x, r.groundY + 0.4, r.position.z) : r.position.clone().add(new Vector3(0, -1.2, 0));
+      expect(index.resolveSphere(base.clone(), 0.3, n), r.id).toBe(true);
+      // The rider can reach the relic: a point within foot reach of it is free.
+      const reach = r.position.clone().add(new Vector3(PICKUP_RADIUS.foot - 1.5, 0, 0));
+      expect(index.resolveSphere(reach, 0.3, n), r.id).toBe(false);
+    }
+  });
+});
+
+describe('feathers look like treasure (VIS-23)', () => {
+  const hsl = { h: 0, s: 0, l: 0 };
+  it('every colorway runs from a saturated base out to a gold tip, and every feather glints gold', () => {
+    for (const [base, tip] of FEATHER_COLORS) {
+      new Color(tip).getHSL(hsl, SRGBColorSpace);
+      expect(hsl.h * 360, tip).toBeGreaterThan(28);
+      expect(hsl.h * 360, tip).toBeLessThan(50);
+      expect(hsl.s, tip).toBeGreaterThan(0.6);
+      // The base is a different, deeper color than the gilding (pearl is the one pale exception).
+      new Color(base).getHSL(hsl, SRGBColorSpace);
+      expect(hsl.l, base).toBeLessThan(0.75);
+    }
+    new Color(FEATHER_GLINT).getHSL(hsl, SRGBColorSpace);
+    expect(hsl.h * 360).toBeGreaterThan(28);
+    expect(hsl.h * 360).toBeLessThan(50);
+    const { sys } = setup();
+    const halo = sys.group.children.find((c) => (c as { isPoints?: boolean }).isPoints) as Points;
+    const color = halo.geometry.getAttribute('aColor');
+    const glint = new Color(FEATHER_GLINT);
+    sys.items.forEach((c, i) => {
+      if (c.kind !== 'feather') return;
+      expect([color.getX(i), color.getY(i), color.getZ(i)]).toEqual([glint.r, glint.g, glint.b].map((v) => Math.fround(v)));
+    });
   });
 });
