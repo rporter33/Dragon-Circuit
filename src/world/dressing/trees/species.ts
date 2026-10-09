@@ -316,11 +316,12 @@ function glowcapLod(lod: number): BufferGeometry {
     [1.5, 0], [1.05, 0.7], [0.82, 2.2], [0.7, 5], [0.72, 8], [0.85, H - 0.5], [0.95, H + 0.4],
   ].map(([r, y]) => new Vector2(r, y));
   const stem = new LatheGeometry(stemPts, seg);
-  // Warm ivory, darker toward the root: stays under the bloom threshold at noon. Only the cap's
-  // spots, rim and gills glow (after dusk).
-  const stemLo = new Color('#8f8678');
-  const stemMid = new Color('#c4bba8');
-  const stemHi = new Color('#b4abc4');
+  // Fawn-ivory, darker toward the root, turning the cap's lilac toward the top: reads as a fungus
+  // by day without standing out as a pale pillar under the moon. Only the cap's spots, rim and
+  // gills glow; after dusk their light spills a little way down the stem.
+  const stemLo = new Color('#776b63');
+  const stemMid = new Color('#a89c8a');
+  const stemHi = new Color('#8e7fb5');
   const stemN = noise3(223);
   const leanM = (g: BufferGeometry) => {
     const pos = g.getAttribute('position');
@@ -338,8 +339,8 @@ function glowcapLod(lod: number): BufferGeometry {
       out.multiplyScalar(1 - 0.4 * Math.min(1, Math.max(0, (p.y - (H - 2.5)) / 2.5)));
     },
     sway: (p) => Math.pow(Math.max(0, p.y) / H, 2) * 0.1,
-    // Only the gills' light spilling onto the top of the stem (after dusk).
-    glow: (p) => 0.2 * Math.min(1, Math.max(0, (p.y - (H - 1.8)) / 1.8)),
+    // The gills' light spilling down the top of the stem (after dusk), lilac like the cap.
+    glow: (p) => 0.42 * Math.pow(Math.min(1, Math.max(0, (p.y - (H - 5)) / 5)), 1.4),
   });
   // Skirt ring on the stem.
   if (lod < 2) {

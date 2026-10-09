@@ -54,7 +54,8 @@ export function fieldStyle(def: IslandDef): FieldStyle {
       return { ...BASE, base: '#4a5a32', tip: '#b9b465', tipDry: '#d6c37a', height: 0.34, density: 3.6, flowers: ['#ffd76a', '#dcd6c6'], flowerDensity: 0.02 };
     case 'plateau':
       return {
-        ...BASE, base: '#56653a', tip: '#cbc070', tipDry: '#ddc98a', height: 0.5, density: 9, heather: 0.36, heatherBase: '#5f5446',
+        // Moor grass: straw and tawny tips over umber roots, matching the moorland turf.
+        ...BASE, base: '#5a5840', tip: '#c0ab78', tipDry: '#cdb092', height: 0.5, density: 9, heather: 0.36, heatherBase: '#5f5446',
         heatherTip: '#8e5d86', heatherTipPale: '#c08db0', flowers: ['#f2e9d8', '#ffd76a'], flowerDensity: 0.025,
       };
     case 'ruin':
