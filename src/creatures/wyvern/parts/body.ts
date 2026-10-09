@@ -40,7 +40,7 @@ export function bodyChain(rig: RigDef): SkinChain {
 export const COLLAR = {
   shoulderClear: [1.15, 0.1] as const,
   /** The cervical line keeps this far (m) ahead of the yoke's centre line. */
-  margin: 0.1,
+  margin: 0.13,
   /** Width (m, along the body) over which the neck's skin blends into the trunk's. */
   blend: 0.4,
   /** The neck rope's flank station: this far (m, body z) ahead of the yoke's course. */

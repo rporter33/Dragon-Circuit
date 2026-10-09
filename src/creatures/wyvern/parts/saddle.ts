@@ -47,11 +47,11 @@ export type TackHold = 'ropeL' | 'ropeR' | 'grab' | 'stirrupL' | 'stirrupR';
 /** The tack's fit: every per-breed difference comes from the body plan, not from these. */
 export const TACK = {
   /** The yoke's shoulder straps: thick padded leather (m). */
-  yoke: { width: 0.15, thick: 0.045 },
+  yoke: { width: 0.2, thick: 0.05 },
   /** The stem and the anchor's straps (m). */
   stem: { width: 0.1, thick: 0.03 },
   /** The sternum plate: half-width and half-height (× the breed's scale) and padding (m). */
-  plate: { halfWidth: 0.3, halfHeight: 0.27, thick: 0.07 },
+  plate: { halfWidth: 0.36, halfHeight: 0.32, thick: 0.08 },
   /** Straps float this far over the hide (m). */
   gap: 0.014,
   /** The membrane's trailing root and the thighs stay this far ahead of the rump straps (m). */
@@ -1099,7 +1099,7 @@ function buildTack(b: GeoBuilder, rig: RigDef, hide: Hide, f: FrameInfo, res: Re
     // A brass boss where the Y meets.
     b.begin(0);
     const boss = pc.clone().addScaledVector(pn, TACK.gap + TACK.plate.thick * Math.sqrt(scale) + 0.01);
-    ellipsoid(b, boss, U, pn, V, [0.05 * scale, 0.025, 0.05 * scale], () => trunk(plateC), () => ({ region: REGION.metal, extra: [1, 0, 0, 0.5] }), 3, 8);
+    ellipsoid(b, boss, U, pn, V, [0.085 * scale, 0.035, 0.085 * scale], () => trunk(plateC), () => ({ region: REGION.metal, extra: [1, 0, 0, 0.5] }), 3, 10);
     b.end();
   }
 
