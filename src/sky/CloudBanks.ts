@@ -108,12 +108,16 @@ void main() {
   vec3 col = uCloudShade * sky * (1.0 + 0.5 * (1.0 - D));
   col += uCloudLit * sky * (1.0 - D) * 0.42;
   col += (uCloudLit - uCloudShade * 0.45) * band * height * D;
-  // Looking toward the sun the whole bank glows with forward-scattered light (strongest through
-  // its thin parts), and its edges catch a silver lining.
+  // Looking toward the sun the whole bank glows with forward-scattered light, and the bank's
+  // outline catches a silver lining. Thinness is judged per bank, not per puff, and only where
+  // the puff is solid: each card's soft, fading rim must not light up (that read as a pile of
+  // soap bubbles).
   float toward = max(dot(rd, uSunDir), 0.0);
   float fwd = toward * toward * toward;
   float back = fwd * fwd;
-  col += uCloudLit * D * (fwd * (0.25 + 0.5 * (1.0 - tex.b)) + back * (1.0 - tex.b) * 1.2);
+  float outline = smoothstep(0.45, 1.05, length((surf - vBank.xyz) * vec3(1.0, 1.5, 1.0)) / vBank.w);
+  float body = smoothstep(0.15, 0.6, tex.a);
+  col += uCloudLit * D * (fwd * (0.25 + 0.4 * outline) + back * outline * 0.6) * body;
   col += dwFlashGlow(vWorld) * 0.8;
   col = dwApplyFog(col, vWorld, cameraPosition);
   gl_FragColor = vec4(col, alpha);

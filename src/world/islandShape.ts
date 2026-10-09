@@ -48,6 +48,31 @@ export class IslandShape {
    * a world-space (x, z) polyline; null on other islands. The last point is the launch point.
    */
   readonly track: [number, number][] | null;
+  /**
+   * Each seeded filler island gets its own character (landmarks keep their authored form):
+   * how pointed its hang is, a keel pulled off-center, twin hanging lobes, a gentle list, a
+   * raised terrace on one side, and a ragged cliff foot. All of it is analytic, so collision,
+   * landing and meshing still share one shape.
+   */
+  private coneExp = 0.6;
+  private skew = 0;
+  private skewDir = 0;
+  private twin = 0;
+  private twinDir = 0;
+  private tiltX = 0;
+  private tiltZ = 0;
+  private terrace = 0;
+  private terraceX = 1;
+  private terraceZ = 0;
+  private terraceOff = 0;
+  private lipVar = 0;
+  private lipN: (theta: number) => number;
+  /** Bays and headlands on top of the smooth outline, and how toothy the hang is. */
+  private rag = 0;
+  private ragN: (theta: number) => number;
+  private pavedN: (theta: number) => number;
+  private toothScale = 1;
+  private toothChance = 0.6;
 
   constructor(def: IslandDef) {
     this.def = def;
@@ -60,16 +85,84 @@ export class IslandShape {
     this.lumpFreq = 1 / Math.max(12, def.radius * 0.6);
     this.toothCell = Math.min(36, Math.max(9, def.radius * 0.2));
     this.ridgedMix = def.kind === 'rocky' || def.kind === 'plateau' ? 0.6 : def.kind === 'cascade' ? 0.35 : 0;
-    this.maxRadius = def.radius * (1 + def.outline);
-    this.maxY = def.y + def.hills + 2;
-    this.minY = def.y - def.depth * 1.3 - 6;
+    this.lipN = periodicNoise(def.seed + 9, 12);
+    this.ragN = raggedNoise(def.seed + 11);
+    this.pavedN = raggedNoise(def.seed + 13);
+    if (!def.landmark && def.kind !== 'roost') {
+      const h = (k: number) => cellHash(k, 17, def.seed % 4093);
+      this.coneExp = 0.4 + 0.5 * h(1);
+      this.skew = (h(2) - 0.5) * 1.3;
+      this.skewDir = h(3) * Math.PI * 2;
+      if (h(4) < 0.4) {
+        this.twin = 0.25 + 0.3 * h(5);
+        this.twinDir = h(6) * Math.PI;
+      }
+      if (h(7) < 0.35) {
+        const tilt = Math.tan(((3 + 4 * h(8)) * Math.PI) / 180);
+        const a = h(9) * Math.PI * 2;
+        this.tiltX = Math.cos(a) * tilt;
+        this.tiltZ = Math.sin(a) * tilt;
+      }
+      if (h(10) < 0.35 && def.radius > 40) {
+        this.terrace = 3 + 4 * h(11);
+        const a = h(12) * Math.PI * 2;
+        this.terraceX = Math.cos(a);
+        this.terraceZ = Math.sin(a);
+        this.terraceOff = (h(13) - 0.3) * def.radius * 0.5;
+      }
+      this.lipVar = 0.25 + 0.35 * h(14);
+      this.rag = 0.025 + 0.03 * h(15);
+      this.toothScale = 0.7 + 1.0 * h(16);
+      this.toothChance = 0.35 + 0.4 * h(18);
+    }
+    this.maxRadius = def.radius * (1 + def.outline + this.rag);
+    const lean = Math.hypot(this.tiltX, this.tiltZ) * this.maxRadius;
+    this.maxY = def.y + def.hills + this.terrace + lean + 2;
+    this.minY = def.y - def.depth * 1.3 - def.lip * this.lipVar * 1.6 - lean - 6;
     this.track = def.kind === 'roost' ? this.buildTrack() : null;
+  }
+
+  /** Height of the island's list (tilt) at local offset (dx, dz) from its center. */
+  private leanAt(dx: number, dz: number): number {
+    return dx * this.tiltX + dz * this.tiltZ;
+  }
+
+  /**
+   * Depth of the cliff band below the rim's baseline at angle theta = atan2(dz, dx): ragged on
+   * filler islands, never thinner than 4.5 m.
+   */
+  lipAt(theta: number): number {
+    const d = this.def;
+    if (this.lipVar === 0) return d.lip;
+    return Math.max(d.lip * 0.8, 7, d.lip * (1 + this.lipVar * this.lipN(theta) * 1.6));
+  }
+
+  /** World height of the underside where it meets the cliff foot, at angle theta. */
+  rimBottomAt(theta: number): number {
+    const R = this.outlineRadius(theta);
+    return this.def.y - this.lipAt(theta) + this.leanAt(Math.cos(theta) * R, Math.sin(theta) * R);
+  }
+
+  /** Exponent of the underside's depth profile (how pointed the hang is). */
+  get coneExponent(): number {
+    return this.coneExp;
+  }
+
+  /**
+   * Normalized radius where the paving of a Roost or ruin courtyard gives way to turf, at the
+   * angle of (x, z): a ragged edge, so the grass creeps in organically; -1 elsewhere.
+   */
+  pavedEdge(x: number, z: number): number {
+    const d = this.def;
+    if (d.kind !== 'roost' && d.kind !== 'ruin') return -1;
+    const th = Math.atan2(z - d.z, x - d.x);
+    return d.flatCenter * (0.47 + 0.035 * this.pavedN(th));
   }
 
   private buildTrack(): [number, number][] {
     const d = this.def;
     const pts: [number, number][] = [];
-    const s0 = d.flatCenter * 0.55 - 0.02;
+    const s0 = this.pavedEdge(d.x + Math.cos(ROOST_LAUNCH_ANGLE), d.z + Math.sin(ROOST_LAUNCH_ANGLE)) - 0.02;
     const n = 9;
     for (let k = 0; k <= n; k++) {
       const u = k / n;
@@ -101,7 +194,7 @@ export class IslandShape {
 
   /** Footprint radius along a world-space angle theta = atan2(dz, dx). */
   outlineRadius(theta: number): number {
-    return this.def.radius * (1 + this.def.outline * this.outlineN(theta));
+    return this.def.radius * (1 + this.def.outline * this.outlineN(theta) + this.rag * this.ragN(theta));
   }
 
   /** Normalized radial coordinate: 0 at the center, 1 on the rim, >1 outside. */
@@ -124,7 +217,13 @@ export class IslandShape {
     const outsideFlat = smoothstep(d.flatCenter * 0.7, d.flatCenter + 0.15, s);
     const rimSoften = 1 - 0.6 * smoothstep(0.72, 1, s);
     const rim = smoothstep(0.86, 1, s);
-    return d.y + d.hills * hill * outsideFlat * rimSoften - RIM_DROP * rim * rim;
+    let y = d.y + d.hills * hill * outsideFlat * rimSoften - RIM_DROP * rim * rim;
+    if (this.terrace > 0) {
+      // A raised terrace on one side: a short rocky step, its line wandering a little.
+      const along = dx * this.terraceX + dz * this.terraceZ - this.terraceOff + 6 * this.hillN(dx * 0.02 + 5.1, dz * 0.02 - 3.7);
+      y += this.terrace * smoothstep(-3, 3, along);
+    }
+    return y + this.leanAt(dx, dz);
   }
 
   /**
@@ -139,8 +238,11 @@ export class IslandShape {
     const dz = z - d.z;
     const r = Math.hypot(dx, dz);
     const theta = Math.atan2(dz, dx);
-    const s = Math.min(1, r / this.outlineRadius(theta));
-    const profile = Math.pow(Math.max(0, 1 - s * s), 0.6);
+    const s0 = Math.min(1, r / this.outlineRadius(theta));
+    // A keel pulled off-center: the radial coordinate is warped (still 0 at the center and 1 at
+    // the rim), so the hang bulges deeper on one side and shallower on the other.
+    const s = this.skew !== 0 ? Math.pow(s0, Math.exp(this.skew * Math.cos(theta - this.skewDir))) : s0;
+    const profile = Math.pow(Math.max(0, 1 - s * s), this.coneExp);
     // Ridged noise sampled around a circle (seamless in theta), drifting slowly with the radius
     // so the creases run downhill instead of across.
     const f = this.ridgeFreq;
@@ -152,9 +254,17 @@ export class IslandShape {
     // inverted peak.
     const cone = 0.72 + 0.46 * Math.pow(1 - smoothstep(0, 1, s), 1.5);
     // Teeth may hang as far as the envelope allows: long on the flanks, short near the tip.
-    const toothLen = Math.min(0.26, 1.3 - cone);
-    const stal = cone * (0.74 + 0.26 * (0.6 * ridge + 0.4 * lump)) + toothLen * teeth;
-    return d.y - d.lip - (d.depth - d.lip) * profile * stal;
+    const toothLen = Math.min(0.26 * this.toothScale, 1.3 - cone);
+    let stal = cone * (0.74 + 0.26 * (0.6 * ridge + 0.4 * lump)) + toothLen * teeth;
+    if (this.twin > 0) {
+      // Two hanging lobes on opposite sides with a saddle between them.
+      const lobe = Math.exp(-(((s - 0.42) / 0.22) ** 2)) * Math.max(0, Math.cos(2 * (theta - this.twinDir)));
+      const saddle = Math.exp(-((s / 0.3) ** 2));
+      stal *= 1 + this.twin * (1.2 * lobe - saddle);
+    }
+    stal = Math.min(1.3, stal);
+    const lip = this.lipAt(theta);
+    return d.y - lip - (d.depth - lip) * profile * stal + this.leanAt(dx, dz);
   }
 
   /** 0..1 hanging-tooth field: sparse cones on a jittered grid (Worley), local (dx, dz). */
@@ -171,7 +281,7 @@ export class IslandShape {
         const cx = ix + ox;
         const cz = iz + oz;
         const h = cellHash(cx, cz, seed);
-        if (h < 0.4) continue; // most cells have no tooth
+        if (h < 1 - this.toothChance) continue; // most cells have no tooth
         const px = cx + 0.2 + 0.6 * cellHash(cx + 17, cz - 5, seed);
         const pz = cz + 0.2 + 0.6 * cellHash(cx - 9, cz + 23, seed);
         const radius = 0.32 + 0.22 * cellHash(cx + 3, cz + 7, seed);
@@ -179,7 +289,7 @@ export class IslandShape {
         if (dist >= 1) continue;
         // Stalactite profile: a flared root tapering to a point.
         const t = 1 - dist;
-        const v = (0.55 + 0.45 * (h - 0.4) / 0.6) * t * t;
+        const v = (0.55 + 0.45 * (h - (1 - this.toothChance)) / this.toothChance) * t * t;
         if (v > best) best = v;
       }
     }
@@ -214,7 +324,7 @@ export class IslandShape {
     if (normalY < 0.72) return 'rock';
     if (s > this.rimDirtEdge(x, z)) return 'dirt';
     const kind = this.def.kind;
-    if ((kind === 'roost' || kind === 'ruin') && s < this.def.flatCenter * 0.55) return 'stone';
+    if ((kind === 'roost' || kind === 'ruin') && s < this.pavedEdge(x, z)) return 'stone';
     if (this.track && this.trackDistance(x, z) < ROOST_TRACK_HALF_WIDTH) return 'dirt';
     if (kind === 'rocky' || kind === 'islet') {
       const r = this.rockN(x * 0.05, z * 0.05);
@@ -271,6 +381,9 @@ export class ArchShape {
   readonly normal: Vector3;
   readonly full: boolean;
   readonly boundRadius: number;
+  /** Cross-section thickness along the plane normal, relative to the in-plane thickness. */
+  readonly squash = 0.8;
+  private lumpPhase: number[];
 
   constructor(def: ArchDef) {
     this.def = def;
@@ -285,7 +398,28 @@ export class ArchShape {
     this.up = u;
     this.normal = n;
     this.full = def.arcEnd - def.arcStart >= Math.PI * 2 - 1e-6;
-    this.boundRadius = def.radius + def.tube + 2;
+    this.boundRadius = def.radius + def.tube * 1.6 + 2;
+    this.lumpPhase = [0, 1, 2, 3, 4, 5].map((k) => cellHash(k, 29, def.seed % 4093) * Math.PI * 2);
+  }
+
+  /**
+   * Stone thickness at arc angle a and around-the-tube angle phi (0 = away from the arch's
+   * center, pi = facing into the opening): a standing arch flares at its feet and slims at the
+   * crown; every arch swells and pinches in broad lumps, mostly on its outer side so the opening
+   * you fly through keeps its size.
+   */
+  radiusAt(a: number, phi: number): number {
+    const d = this.def;
+    const outer = 0.35 + 0.65 * smoothstep(-0.4, 0.7, Math.cos(phi));
+    let r = d.tube;
+    if (!this.full) {
+      const u = Math.min(1, Math.max(0, (a - d.arcStart) / (d.arcEnd - d.arcStart)));
+      const foot = Math.pow(1 - Math.sin(Math.PI * u), 2);
+      r *= 0.84 + 0.5 * foot * outer;
+    }
+    const p = this.lumpPhase;
+    const lump = 0.6 * Math.sin(2 * a + p[0]) * Math.sin(phi + p[1]) + 0.4 * Math.sin(5 * a + p[2]) * Math.sin(2 * phi + p[3]) + 0.3 * Math.sin(9 * a + p[4] + phi);
+    return r * (1 + 0.11 * lump * outer);
   }
 
   /** World position on the arch's center curve at arc angle a. */
@@ -296,7 +430,10 @@ export class ArchShape {
       .addScaledVector(this.up, Math.sin(a) * this.def.radius);
   }
 
-  /** Signed distance to the tube surface (negative inside the stone). */
+  /**
+   * Signed distance to the stone (negative inside): an elliptical cross-section (squashed along
+   * the plane normal) whose radius follows radiusAt.
+   */
   distance(p: Vector3): number {
     const qx = p.x - this.center.x;
     const qy = p.y - this.center.y;
@@ -305,7 +442,8 @@ export class ArchShape {
     const ly = qx * this.up.x + qy * this.up.y + qz * this.up.z;
     const lz = qx * this.normal.x + qy * this.normal.y + qz * this.normal.z;
     let a = Math.atan2(ly, lx);
-    const { arcStart, arcEnd, radius, tube } = this.def;
+    const { arcStart, arcEnd, radius } = this.def;
+    const k = this.squash;
     if (!this.full) {
       // Bring a into [arcStart, arcStart + 2π).
       while (a < arcStart) a += Math.PI * 2;
@@ -317,12 +455,26 @@ export class ArchShape {
         a = toEnd < toStart ? arcEnd : arcStart;
         const ex = Math.cos(a) * radius;
         const ey = Math.sin(a) * radius;
-        return Math.hypot(lx - ex, ly - ey, lz) - tube;
+        const dr = Math.hypot(lx, ly) - radius;
+        return ellipseDistance(Math.hypot(lx - ex, ly - ey), lz, this.radiusAt(a, Math.atan2(lz / k, dr)), k);
       }
     }
-    const rho = Math.hypot(lx, ly);
-    return Math.hypot(rho - radius, lz) - tube;
+    const dr = Math.hypot(lx, ly) - radius;
+    return ellipseDistance(dr, lz, this.radiusAt(a, Math.atan2(lz / k, dr)), k);
   }
+}
+
+/**
+ * Approximate signed distance from (u, v) to an ellipse with semi-axes r (along u) and k·r (along
+ * v): exact on both axes and close in between (the usual "k0·(k0−1)/k1" ellipsoid estimate).
+ */
+function ellipseDistance(u: number, v: number, r: number, k: number): number {
+  const A = r;
+  const B = r * k;
+  const k0 = Math.hypot(u / A, v / B);
+  const k1 = Math.hypot(u / (A * A), v / (B * B));
+  if (k1 < 1e-9) return -B;
+  return (k0 * (k0 - 1)) / k1;
 }
 
 /**
@@ -336,6 +488,29 @@ function softRidged(n: Noise2, x: number, y: number): number {
   const rb = 1 - Math.sqrt(b * b + 0.03);
   const top = 1 - Math.sqrt(0.03);
   return (0.67 * ra * ra + 0.33 * rb * rb) / (top * top);
+}
+
+/**
+ * Seamless angular noise in [-1, 1] made of mid and high harmonics only (bays and headlands a
+ * few tens of meters across), unlike periodicNoise's broad lobes.
+ */
+function raggedNoise(seed: number): (theta: number) => number {
+  const amps: number[] = [];
+  const phases: number[] = [];
+  const freqs: number[] = [];
+  let norm = 0;
+  for (let k = 0; k < 7; k++) {
+    const a = 0.5 + 0.5 * cellHash(k, 3, seed);
+    amps.push(a);
+    phases.push(cellHash(k, 5, seed) * Math.PI * 2);
+    freqs.push(6 + k * 3);
+    norm += a;
+  }
+  return (theta: number) => {
+    let s = 0;
+    for (let k = 0; k < 7; k++) s += amps[k] * Math.sin(freqs[k] * theta + phases[k]);
+    return Math.max(-1, Math.min(1, (s / norm) * 1.8));
+  };
 }
 
 /** Integer-lattice hash in [0, 1) for jittered-grid features. */

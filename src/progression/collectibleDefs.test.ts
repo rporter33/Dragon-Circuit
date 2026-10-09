@@ -9,6 +9,7 @@ import { LAYOUT } from '../world/layout';
 import { Terrain } from '../world/terrain';
 import { QUALITY } from '../render/quality';
 import { Dressing } from '../world/dressing/Dressing';
+import { signedDistance } from '../world/colliders';
 import { COSMETICS } from '../cosmetics/catalog';
 import { ClearanceField } from '../race/clearance';
 import { COLLECTIBLE_SPECS, placeCollectibles } from './collectibleDefs';
@@ -28,10 +29,7 @@ function streamDistance(x: number, z: number): number {
 
 function colliderDistance(p: Vector3): number {
   let best = Infinity;
-  for (const c of dressing.colliders) {
-    if (p.y < c.y0 - 1 || p.y > c.y1 + 2) continue;
-    best = Math.min(best, Math.hypot(c.x - p.x, c.z - p.z) - c.radius);
-  }
+  for (const c of dressing.colliders) best = Math.min(best, signedDistance(c, p, null));
   return best;
 }
 

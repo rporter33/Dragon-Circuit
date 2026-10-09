@@ -6,6 +6,8 @@
 /** Mean band thickness (m). */
 export const STRATA_BAND = 2.6;
 
+import { smoothstep } from '../../core/math';
+
 /** Arithmetic hash (no sine) so the CPU and the GPU agree to float precision. */
 export function hash11(p: number): number {
   let x = p * 0.1031;
@@ -49,9 +51,16 @@ export function valueNoise2(px: number, py: number): number {
 /** Mean thickness of a packet of beds (m): the bold color layers. */
 export const STRATA_PACKET = 9.5;
 
-/** Wobbled height that both strata scales are measured on. */
+/**
+ * Wobbled height that both strata scales are measured on. A broad, slow warp tilts whole
+ * formations a few degrees (beds dip across an island instead of running dead level, like a
+ * stack of bricks), a medium one bends them, a fine one keeps the lines hand-drawn.
+ */
 function strataHeight(x: number, y: number, z: number): number {
-  const wobble = (valueNoise2(x * 0.011, z * 0.011) - 0.5) * 7 + (valueNoise2(x * 0.05 + 13.1, z * 0.05 - 7.7) - 0.5) * 1.6;
+  const wobble =
+    (valueNoise2(x * 0.0035 + 41.3, z * 0.0035 - 17.9) - 0.5) * 22 +
+    (valueNoise2(x * 0.011, z * 0.011) - 0.5) * 7 +
+    (valueNoise2(x * 0.05 + 13.1, z * 0.05 - 7.7) - 0.5) * 1.6;
   return y + wobble;
 }
 
@@ -83,4 +92,28 @@ export function strataRecess(x: number, y: number, z: number): number {
   const u = strataCoord(x, y, z);
   const uf = u - Math.floor(u);
   return (1 - hard) * 0.8 + 0.4 * (1 - pf) * (1 - pf) + 0.15 * (1 - uf) * (1 - uf);
+}
+
+/**
+ * 0..1 gully depth around the rim at direction (cs, sn) on an outline of radius R: narrow deep
+ * gullies every ~15-25 m plus finer fluting, seamless around the island (sampled on a circle).
+ */
+export function gullyAt(cs: number, sn: number, R: number, seed: number): number {
+  const o = (seed % 997) * 1.37;
+  const k1 = R / 9;
+  const k2 = R / 3.2;
+  const a = valueNoise2(cs * k1 + o, sn * k1 - o);
+  const b = valueNoise2(cs * k2 - o * 0.7, sn * k2 + o * 1.3);
+  return Math.min(1, smoothstep(0.52, 0.82, a) + 0.35 * smoothstep(0.45, 0.9, b));
+}
+
+/** How deep (m) an island's cliff gullies cut, by island radius. */
+export function gullyDepth(radius: number): number {
+  return Math.min(3, 0.6 + radius * 0.011);
+}
+
+/** Gullies run on down the steep upper underside, fading out over its first third or so. */
+export function gullyFade(depthBelowFoot: number, islandDepth: number): number {
+  const fade = Math.max(14, islandDepth * 0.35);
+  return 1 - smoothstep(fade * 0.3, fade, depthBelowFoot);
 }

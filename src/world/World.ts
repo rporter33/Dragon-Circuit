@@ -32,7 +32,10 @@ const EVICT_FACTOR = 2.6;
 /** LOD distance scale per quality level. */
 const LOD_SCALE: Record<QualityProfile['level'], number> = { low: 0.6, medium: 0.8, high: 1, ultra: 1.35 };
 
-type Builder = (level: number) => Generator<void, { data: MeshData }>;
+type Builder = (level: number) => Generator<void, { data: MeshData; splitIndex?: number }>;
+
+/** Which part of an island mesh to draw: all, the top only (camera on/above it), or the underside only. */
+type Part = 'all' | 'top' | 'under';
 
 interface Feature {
   name: string;
@@ -42,12 +45,15 @@ interface Feature {
   distances: number[];
   meshes: (Mesh | null)[];
   build: Builder;
+  /** Islands only: the shape and the part currently drawn. */
+  island?: IslandShape;
+  part: Part;
 }
 
 interface Job {
   feature: Feature;
   level: number;
-  gen: Generator<void, { data: MeshData }>;
+  gen: Generator<void, { data: MeshData; splitIndex?: number }>;
 }
 
 export interface WorldStats {
@@ -89,21 +95,21 @@ export class World implements WorldSystem {
     for (const f of this.features) this.install(f, f.distances.length - 1, runBuilder(f.build(f.distances.length - 1)));
 
     this.debris = new Debris(this.terrain, quality);
-    this.group.add(this.debris.mesh);
+    this.group.add(this.debris.group);
     scene.add(this.group);
     this.stats.constructMs = performance.now() - t0;
   }
 
   // --- Features -------------------------------------------------------------------------------
 
-  private addFeature(name: string, bounds: Bounds, distances: number[], position: Vector3Like, build: Builder): void {
+  private addFeature(name: string, bounds: Bounds, distances: number[], position: Vector3Like, build: Builder, island?: IslandShape): void {
     const lod = new BoundsLOD(bounds);
     lod.name = name;
     lod.position.set(position[0], position[1], position[2]);
     lod.updateMatrix();
     lod.matrixAutoUpdate = false;
     this.group.add(lod);
-    this.features.push({ name, lod, bounds, distances, meshes: distances.map(() => null), build });
+    this.features.push({ name, lod, bounds, distances, meshes: distances.map(() => null), build, island, part: 'all' });
   }
 
   private addIsland(shape: IslandShape): void {
@@ -114,6 +120,7 @@ export class World implements WorldSystem {
       islandLodDistances(d.radius),
       [d.x, d.y, d.z],
       (level) => buildIslandMesh(shape, ISLAND_LODS[level]),
+      shape,
     );
   }
 
@@ -139,8 +146,11 @@ export class World implements WorldSystem {
     );
   }
 
-  private install(f: Feature, level: number, data: MeshData): void {
+  private install(f: Feature, level: number, result: { data: MeshData; splitIndex?: number }): void {
+    const data = result.data;
     const mesh = new Mesh(toGeometry(data), terrainMaterial());
+    mesh.userData.split = result.splitIndex ?? -1;
+    applyPart(mesh, f.part);
     mesh.name = `${f.name}-lod${level}`;
     mesh.castShadow = this.quality.shadows;
     mesh.receiveShadow = true;
@@ -208,7 +218,7 @@ export class World implements WorldSystem {
       while (unlimited || performance.now() < deadline) {
         const r = this.job.gen.next();
         if (r.done) {
-          this.install(this.job.feature, this.job.level, r.value.data);
+          this.install(this.job.feature, this.job.level, r.value);
           done = true;
           break;
         }
@@ -219,7 +229,29 @@ export class World implements WorldSystem {
       // Keep going while there is time (always, without a budget) and work left.
       this.job = unlimited || performance.now() < deadline ? this.nextMissing(cam, false) : null;
     }
-    this.debris.update(dt);
+    this.debris.update(dt, camera);
+    this.cullHiddenParts(cam);
+  }
+
+  /**
+   * An island's own rock hides half of it from a camera inside its footprint: from on top you
+   * can't see the underside, from underneath you can't see the top. Draw only the visible part.
+   */
+  private cullHiddenParts(cam: Vector3): void {
+    for (const f of this.features) {
+      const shape = f.island;
+      if (!shape) continue;
+      const d = shape.def;
+      let part: Part = 'all';
+      // Well inside the footprint only: near the rim (and across a bay) both parts can show.
+      if (Math.hypot(cam.x - d.x, cam.z - d.z) < shape.maxRadius && shape.normRadius(cam.x, cam.z) < 0.9) {
+        if (cam.y > shape.topHeight(cam.x, cam.z) + 0.5) part = 'top';
+        else if (cam.y < shape.bottomHeight(cam.x, cam.z) - 0.5) part = 'under';
+      }
+      if (part === f.part) continue;
+      f.part = part;
+      for (const m of f.meshes) if (m) applyPart(m, part);
+    }
   }
 
   /** Builds every level the current view needs right now (debug captures, teleports). */
@@ -246,9 +278,18 @@ export class World implements WorldSystem {
 
 type Vector3Like = [number, number, number];
 
-function runBuilder<T>(gen: Generator<void, { data: T }>): T {
+function runBuilder<T>(gen: Generator<void, T>): T {
   for (;;) {
     const r = gen.next();
-    if (r.done) return r.value.data;
+    if (r.done) return r.value;
   }
+}
+
+/** Limit an island mesh's draw range to the part that can be seen. */
+function applyPart(mesh: Mesh, part: Part): void {
+  const split = mesh.userData.split as number;
+  const total = mesh.geometry.index?.count ?? 0;
+  if (split < 0 || part === 'all') mesh.geometry.setDrawRange(0, Infinity);
+  else if (part === 'top') mesh.geometry.setDrawRange(0, split);
+  else mesh.geometry.setDrawRange(split, total - split);
 }

@@ -17,6 +17,8 @@ export interface FieldStyle {
   heather: number;
   heatherBase: string;
   heatherTip: string;
+  /** The paler end of the heather bloom (clumps vary between the two). */
+  heatherTipPale?: string;
   /** Flower petal colors; flower clusters per m² inside drifts. */
   flowers: string[];
   flowerDensity: number;
@@ -51,7 +53,10 @@ export function fieldStyle(def: IslandDef): FieldStyle {
     case 'rocky':
       return { ...BASE, base: '#4a5a32', tip: '#b9b465', tipDry: '#d6c37a', height: 0.34, density: 3.6, flowers: ['#ffd76a', '#dcd6c6'], flowerDensity: 0.02 };
     case 'plateau':
-      return { ...BASE, base: '#56653a', tip: '#cbc070', tipDry: '#ddc98a', height: 0.5, density: 6, heather: 0.36, heatherBase: '#6a5d4a', heatherTip: '#b56fb8', flowers: ['#f2e9d8', '#ffd76a'], flowerDensity: 0.025 };
+      return {
+        ...BASE, base: '#56653a', tip: '#cbc070', tipDry: '#ddc98a', height: 0.5, density: 9, heather: 0.36, heatherBase: '#5f5446',
+        heatherTip: '#8e5d86', heatherTipPale: '#c08db0', flowers: ['#f2e9d8', '#ffd76a'], flowerDensity: 0.025,
+      };
     case 'ruin':
       return { ...BASE, base: '#3f652f', tip: '#aac262', height: 0.46, density: 5.5, flowers: ['#dcd6c6', '#d8b3ff', '#ffd447'], flowerDensity: 0.07 };
     case 'cascade':

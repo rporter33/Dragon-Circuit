@@ -14,6 +14,13 @@
 import type { MeshToonMaterial, WebGLProgramParametersWithUniforms } from 'three';
 import { toonMaterial } from '../../render/painterly';
 import { STRATA_BAND, STRATA_PACKET } from './strata';
+import { LAYOUT } from '../layout';
+
+/** The wind-rose mosaic in the Roost courtyard: (x, z, radius), off the walk to the stable. */
+const ROSE: [number, number, number] = (() => {
+  const r = LAYOUT.islands.find((i) => i.kind === 'roost');
+  return r ? [r.x - 4, r.z + 4, 9.5] : [1e6, 1e6, 0];
+})();
 
 /** GLSL twins of strata.ts (hash12, valueNoise2, strataCoord). Keep in sync. */
 export const NOISE_GLSL = /* glsl */ `
@@ -66,7 +73,9 @@ float dwNoise3(vec3 p) {
     u.z);
 }
 float dwStrataHeight(vec3 wp) {
-  float wobble = (dwNoise2(wp.xz * 0.011) - 0.5) * 7.0 + (dwNoise2(wp.xz * 0.05 + vec2(13.1, -7.7)) - 0.5) * 1.6;
+  float wobble = (dwNoise2(wp.xz * 0.0035 + vec2(41.3, -17.9)) - 0.5) * 22.0
+    + (dwNoise2(wp.xz * 0.011) - 0.5) * 7.0
+    + (dwNoise2(wp.xz * 0.05 + vec2(13.1, -7.7)) - 0.5) * 1.6;
   return wp.y + wobble;
 }
 float dwStrataCoord(float sy) {
@@ -100,6 +109,8 @@ const vec3 DW_MOSS = vec3(0.075, 0.13, 0.04);
 const vec3 DW_MOSS_LIGHT = vec3(0.15, 0.24, 0.07);
 const vec3 DW_ROOT = vec3(0.07, 0.045, 0.03);
 const vec3 DW_MORTAR = vec3(0.14, 0.15, 0.09);
+// The Roost courtyard's wind-rose mosaic: center (x, z) and radius.
+const vec3 DW_ROSE = vec3(${ROSE[0].toFixed(1)}, ${ROSE[1].toFixed(1)}, ${ROSE[2].toFixed(1)});
 
 vec3 dwStrataTint(float packet) {
   float h = dwHash11(packet * 3.71 + 9.2);
@@ -133,8 +144,9 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
   float M = 0.0;
   if (isTop > 0.5) {
     float cover = vOver.a - 2.0;
-    float n = dwNoise2(wp.xz * 0.42) * 0.6 + dwNoise2(wp.xz * 1.6 + 7.0) * 0.4 - 0.5;
-    float m = cover + n * 0.55 * mid * smoothstep(0.0, 0.08, cover) * smoothstep(1.0, 0.92, cover);
+    // Three octaves: broad wobble, mid bays and a crisp, broken fringe (no soft blobs).
+    float n = dwNoise2(wp.xz * 0.42) * 0.5 + dwNoise2(wp.xz * 1.6 + 7.0) * 0.32 + dwNoise2(wp.xz * 4.3 - 3.0) * 0.18 * fine - 0.5 + 0.09 * (1.0 - fine);
+    float m = cover + n * 0.75 * mid * smoothstep(0.0, 0.08, cover) * smoothstep(1.0, 0.92, cover);
     float w = max(dCover * 1.2, 0.02);
     M = smoothstep(0.5 - w, 0.5 + w, m);
     col = mix(col, vOver.rgb, M);
@@ -166,6 +178,9 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
   }
 
   // --- Rock: strata bands ----------------------------------------------------------------------
+  // Natural sandstone, not masonry: bold packets whose color drifts along the cliff, fine beds
+  // that fade in and out, soft and broken bedding seams, a few wandering fractures that taper
+  // out inside a packet, and long weathering streaks running down from the ledges.
   if (rockW > 0.01) {
     float packet = floor(v);
     float pf = v - packet;
@@ -174,38 +189,53 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
     // fine beds fade much sooner.
     float aaP = smoothstep(0.08, 0.35, dv);
     float aaU = smoothstep(0.08, 0.3, du);
-    vec3 tint = mix(dwStrataTint(packet), DW_STRATA_AVG, aaP);
+    float along = dot(wp.xz, vec2(0.6, 0.8));
+    // Lateral facies change: each packet shifts toward another tint along the cliff.
+    float lat = dwNoise2(vec2(along * 0.016, packet * 1.73));
+    vec3 tint = mix(dwStrataTint(packet), dwStrataTint(packet + 17.0), smoothstep(0.3, 0.8, lat) * 0.65);
+    tint = mix(tint, DW_STRATA_AVG, aaP);
     // Fine beds: small value steps within the packet.
-    tint *= mix(0.95 + 0.1 * dwHash11(floor(u) * 1.37 + 4.1), 1.0, aaU);
+    tint *= mix(0.96 + 0.08 * dwHash11(floor(u) * 1.37 + 4.1), 1.0, aaU);
     vec3 rc = col * tint;
-    // Bedding planes: a dark seam under each packet, fainter ones under each bed.
-    float seamP = mix(0.62, 1.0, smoothstep(0.0, max(0.025, dv * 1.5), pf));
+    // Bedding planes: a soft seam under each packet that thins out in places, and faint seams
+    // under only some fine beds, each running a while and then fading.
+    float seamOn = smoothstep(0.2, 0.55, dwNoise2(vec2(along * 0.045, packet * 3.7)));
+    float seamP = mix(mix(0.93, 0.8, seamOn), 1.0, smoothstep(0.0, max(0.03, dv * 1.5), pf));
     rc *= mix(seamP, 1.0, aaP);
-    float seamU = mix(0.9, 1.0, smoothstep(0.0, max(0.06, du * 1.5), uf));
+    float bedOn = smoothstep(0.5, 0.75, dwNoise2(vec2(along * 0.07, floor(u) * 2.9)));
+    float seamU = mix(1.0 - 0.09 * bedOn, 1.0, smoothstep(0.0, max(0.06, du * 1.5), uf));
     rc *= mix(seamU, 1.0, aaU);
     // A lit lip along the top of each packet.
-    rc *= 1.0 + 0.09 * smoothstep(0.9, 1.0, pf) * (1.0 - aaP);
-    // Vertical joints: two sets of fracture planes, staggered at each packet boundary so they
-    // end at bedding planes like real jointed sandstone.
+    rc *= 1.0 + 0.07 * smoothstep(0.9, 1.0, pf) * (1.0 - aaP);
+    // Fractures: two sparse sets, wandering (warped by height and along-strike noise), present
+    // on only a few segments, tapering out toward the packet's top and bottom.
     float steep = smoothstep(0.35, 0.8, 1.0 - abs(wn.y));
     float joint = 0.0;
     for (int k = 0; k < 2; k++) {
       vec2 jdir = k == 0 ? vec2(0.921, 0.389) : vec2(-0.505, 0.863);
-      float spacing = k == 0 ? 9.0 : 14.0;
+      float spacing = k == 0 ? 11.0 : 17.0;
       float t = dot(wp.xz, jdir) / spacing + dwHash11(packet * 1.93 + float(k) * 7.7);
+      t += 0.6 * (dwNoise2(vec2(wp.y * 0.08, dot(wp.xz, jdir) * 0.03 + float(k) * 5.1)) - 0.5);
       float idx = floor(t + 0.5);
       float dm = abs(t - idx) * spacing;
-      float on = step(0.6, dwHash11(idx * 3.17 + packet * 0.71 + float(k)));
-      float w = 0.07 + abs(dot(dpx.xz, jdir)) + abs(dot(dpy.xz, jdir));
-      joint = max(joint, on * (1.0 - smoothstep(w * 0.5, w, dm)));
+      float on = step(0.82, dwHash11(idx * 3.17 + packet * 0.71 + float(k)));
+      float taper = smoothstep(0.0, 0.3, pf) * smoothstep(1.0, 0.55, pf);
+      float w = 0.06 + abs(dot(dpx.xz, jdir)) + abs(dot(dpy.xz, jdir));
+      joint = max(joint, on * taper * (1.0 - smoothstep(w * 0.5, w, dm)));
     }
     // Only full-strength rock (island cliffs) is jointed; needles, arches and deep undersides
     // carry a lower rock weight and stay unjointed.
-    rc *= 1.0 - 0.38 * joint * steep * mid * (1.0 - aaP) * smoothstep(0.6, 0.85, rockW);
-    float streak = dwNoise3(vec3(wp.x * 0.35, wp.y * 0.03, wp.z * 0.35));
-    rc *= 1.0 - 0.2 * smoothstep(0.5, 0.85, streak) * steep * mid;
-    // Grain.
+    rc *= 1.0 - 0.16 * joint * steep * mid * (1.0 - aaP) * smoothstep(0.6, 0.85, rockW);
+    // Weathering: dark streaks (desert varnish) hanging from the ledges, some long, some short,
+    // and paler washed bands between them.
+    float streak = dwNoise3(vec3(wp.x * 0.3, wp.y * 0.025, wp.z * 0.3));
+    float streak2 = dwNoise3(vec3(wp.x * 0.85, wp.y * 0.06 + pf * 2.0, wp.z * 0.85));
+    float stain = 0.2 * smoothstep(0.5, 0.85, streak) + 0.12 * smoothstep(0.62, 0.9, streak2) * (1.0 - pf);
+    rc *= 1.0 - stain * steep * mid;
+    rc = mix(rc, rc * vec3(1.07, 1.05, 1.0), smoothstep(0.62, 0.9, 1.0 - streak) * 0.35 * steep * mid);
+    // Grain, and broad soft patches so a cliff reads as one painted face, not tiles.
     rc *= 0.93 + 0.14 * dwNoise3(wp * 0.55) * fine;
+    rc *= 0.92 + 0.16 * dwNoise3(wp * vec3(0.04, 0.09, 0.04));
     // Upward-facing rock catches moss in its cracks.
     float mossUp = smoothstep(0.6, 0.9, wn.y) * smoothstep(0.45, 0.7, dwNoise3(wp * 0.15));
     rc = mix(rc, DW_MOSS_LIGHT * 1.6, mossUp * 0.5);
@@ -233,9 +263,35 @@ vec3 dwTerrainPaint(vec3 col, vec3 wp, vec3 wn, float dist) {
     float h = dwHash12(cellId * 1.7 + 3.1);
     vec3 st = col * (0.84 + 0.24 * h) * mix(vec3(1.0), vec3(1.05, 1.0, 0.9), step(0.62, h));
     st *= 0.93 + 0.1 * dwNoise2(wp.xz * 1.3) * fine;
+    // The Roost's wind-rose: a compass star laid in darker and ochre stones, picked per stone.
+    vec2 rc = (cellId + 0.5) * 1.6 - DW_ROSE.xy;
+    float rr = length(rc);
+    if (rr < DW_ROSE.z) {
+      float ra = atan(rc.y, rc.x);
+      float k = ra / 0.7853982;
+      float pt = abs(fract(k + 0.5) - 0.5) * 2.0;
+      float cardinal = 1.0 - step(0.5, abs(fract(floor(k + 0.5) * 0.5) - 0.0));
+      float len = mix(DW_ROSE.z * 0.55, DW_ROSE.z * 0.82, cardinal);
+      float star = step(rr, mix(len, 1.4, pow(pt, 1.6)));
+      float halfShade = step(0.0, fract(k + 0.5) - 0.5);
+      vec3 dark = col * vec3(0.42, 0.45, 0.55);
+      vec3 ochre = col * vec3(1.3, 1.0, 0.58);
+      st = mix(st, mix(dark, ochre, halfShade * (1.0 - cardinal * 0.5)), star);
+      float ring = step(DW_ROSE.z * 0.84, rr) * step(rr, DW_ROSE.z);
+      st = mix(st, mix(dark, ochre, step(0.5, fract(ra * 2.546))), ring);
+      st = mix(st, col * vec3(1.25, 1.05, 0.55), step(rr, 1.1));
+    }
+    // Worn lighter toward the middle of the courtyard, darker and mossier toward its edge.
+    float fromRose = length(wp.xz - DW_ROSE.xy);
+    float rim = smoothstep(18.0, 44.0, fromRose);
+    st *= 1.04 - 0.1 * rim;
+    // Puddles: a few hollows hold rainwater (more of them, darker, when it rains).
+    float pud = dwNoise2(wp.xz * 0.11 + 31.0);
+    float wet = smoothstep(0.78 - 0.1 * uWetness, 0.86 - 0.1 * uWetness, pud) * mid;
+    st = mix(st, st * vec3(0.6, 0.68, 0.78), wet * 0.75);
     float ew = max(0.05, pxXZ / 1.6 * 2.0);
-    float mortar = (1.0 - smoothstep(ew, ew + 0.07, edge)) * mid;
-    st = mix(st, DW_MORTAR + col * 0.25, mortar * 0.8);
+    float mortar = (1.0 - smoothstep(ew, ew + 0.07 + 0.05 * rim, edge)) * mid;
+    st = mix(st, mix(DW_MORTAR + col * 0.25, DW_MOSS_LIGHT * 1.4, rim * 0.6), mortar * 0.8);
     // At the paving's edge whole stones drop out, so it frays stone by stone into the turf.
     float keep = step(dwHash12(cellId * 0.37 + 11.0) * 0.8 + 0.1, paveW);
     col = mix(col, st, keep);

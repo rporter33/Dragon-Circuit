@@ -17,7 +17,8 @@
 import type { IslandShape } from '../islandShape';
 import { MeshBuilder, SLICE, type MeshData, type Ring } from './MeshBuilder';
 import { IslandPainter, Region } from './islandPaint';
-import { strataRecess } from './strata';
+import { gullyAt, gullyDepth, gullyFade, strataRecess } from './strata';
+import { smoothstep } from '../../core/math';
 
 export interface IslandLodSpec {
   level: number;
@@ -66,6 +67,11 @@ export interface IslandMeshResult {
   rimRing: Ring;
   footRing: Ring;
   topVertexCount: number;
+  /**
+   * Index count of the top, brow and cliff band; the underside follows. A renderer can draw
+   * only one part when the island's own rock hides the other (see World).
+   */
+  splitIndex: number;
 }
 
 /** Per-LOD spacing, shrunk for small islands so islets still get a proper shape. */
@@ -122,7 +128,7 @@ export function undersideRings(spec: IslandLodSpec, shape: IslandShape): { s: nu
     const u = k / SAMPLES;
     const s = 1 - u * u; // dense near s = 1
     const x = s * R;
-    const y = D * Math.pow(Math.max(0, 1 - s * s), 0.6);
+    const y = D * Math.pow(Math.max(0, 1 - s * s), shape.coneExponent);
     len += Math.hypot(x - px, y - py);
     px = x;
     py = y;
@@ -144,7 +150,8 @@ export function undersideRings(spec: IslandLodSpec, shape: IslandShape): { s: nu
     const s = ss[k] + (ss[k + 1] - ss[k]) * t;
     // Steepness of the profile here: 1 = vertical wall, 0 = flat ceiling.
     const s2 = Math.max(0, s - 0.002);
-    const dy = D * (Math.pow(Math.max(0, 1 - s2 * s2), 0.6) - Math.pow(Math.max(0, 1 - s * s), 0.6));
+    const e = shape.coneExponent;
+    const dy = D * (Math.pow(Math.max(0, 1 - s2 * s2), e) - Math.pow(Math.max(0, 1 - s * s), e));
     const dx = (s - s2) * R;
     const steep = Math.abs(dy) / Math.max(1e-6, Math.hypot(dx, dy));
     rings.push({ s, steep });
@@ -247,7 +254,10 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
     const ol = outline.get(N);
     const rimY = new Float64Array(N);
     for (let i = 0; i < N; i++) rimY[i] = b.y(rimRing.start + i);
-    const footY = -d.lip;
+    // The foot follows the analytic underside rim (ragged on filler islands, tilted with them).
+    const footYs = new Float64Array(N);
+    for (let i = 0; i < N; i++) footYs[i] = shape.rimBottomAt((i / N) * Math.PI * 2) - cy;
+    const footAt = (i: number) => footYs[i];
     /** Adds a full-resolution ring at radial offset dr(i, y) from the outline and height y(i). */
     const ring = (yAt: (i: number) => number, dr: (i: number, y: number) => number, r: Region) => {
       const start = b.vertexCount;
@@ -261,25 +271,32 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
       b.stitch(prev, rr);
       prev = rr;
     };
-    /** Strata recess of the cliff face at ring vertex i, local height y. */
+    // Erosion gullies and buttresses running down the cliff (recessed only, so always inside
+    // the collision rim): they break the band into a natural face instead of a smooth barrel.
+    const gDepth = gullyDepth(d.radius);
+    const gully = new Float64Array(N);
+    for (let i = 0; i < N; i++) gully[i] = gullyAt(ol[i * 3 + 1], ol[i * 3 + 2], ol[i * 3], d.seed) * gDepth;
+    /** Strata recess plus gullies of the cliff face at ring vertex i, local height y. */
     const ledge = (i: number, y: number) => {
-      if (!spec.ledges) return 0.45;
+      // Gullies start just under the lip and deepen over the first few meters.
+      const g = gully[i] * smoothstep(LIP_DROP, LIP_DROP + 3, rimY[i] - y);
+      if (!spec.ledges) return 0.45 + g * 0.8;
       const r = ol[i * 3];
-      return 0.1 + strataRecess(cx + ol[i * 3 + 1] * r, y + cy, cz + ol[i * 3 + 2] * r);
+      return 0.1 + Math.max(strataRecess(cx + ol[i * 3 + 1] * r, y + cy, cz + ol[i * 3 + 2] * r), g);
     };
     ring((i) => rimY[i] - BROW_DROP, () => BROW_OUT, Region.Brow);
     const detailed = spec.cliffSpacing > 0;
     if (detailed) ring((i) => rimY[i] - LIP_DROP, () => -LIP_IN, Region.Lip);
     // Cliff face from just under the lip down to the foot (which is the underside's rim ring).
     let meanH = 0;
-    for (let i = 0; i < N; i++) meanH += rimY[i] - footY;
+    for (let i = 0; i < N; i++) meanH += rimY[i] - footYs[i];
     meanH /= N;
     const top0 = detailed ? CLIFF_START : BROW_DROP;
     const K = detailed ? Math.max(2, Math.round((meanH - CLIFF_START) / spec.cliffSpacing)) : 1;
     for (let k = 1; k <= K; k++) {
       const f = k / K;
       ring(
-        (i) => (k === K ? footY : rimY[i] - top0 + (footY - rimY[i] + top0) * f),
+        (i) => (k === K ? footAt(i) : rimY[i] - top0 + (footAt(i) - rimY[i] + top0) * f),
         (i, y) => -ledge(i, y),
         Region.Cliff,
       );
@@ -287,11 +304,11 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
     }
   }
   const footRing = prev;
+  const splitIndex = b.indexCount;
   yield;
 
   // --- Underside --------------------------------------------------------------------------------
   const rings = undersideRings(spec, shape);
-  const rimBottom = cy - d.lip;
   let count = N;
   for (const { s, steep } of rings) {
     const n = Math.min(count, Math.max(6, ceil4((2 * Math.PI * s * Rmax) / spec.underSpacing)));
@@ -305,10 +322,12 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
       const x = cx + cs * R;
       const z = cz + sn * R;
       const yb = shape.bottomHeight(x, z);
-      const depth = rimBottom - yb;
+      const depth = shape.rimBottomAt((i / n) * Math.PI * 2) - yb;
       const y = yb;
-      // Strata ledges on the steep upper underside, fading out where it flattens into a ceiling.
-      let inset = (spec.ledges ? 0.1 + strataRecess(x, y, z) : 0.45) * steep * steep;
+      // Strata ledges (and the cliff's gullies, fading out) on the steep upper underside, fading
+      // out where it flattens into a ceiling.
+      const g = gullyAt(cs, sn, ol[i * 3], d.seed) * gullyDepth(d.radius) * gullyFade(depth, d.depth);
+      let inset = (spec.ledges ? 0.1 + Math.max(strataRecess(x, y, z), g) : 0.45 + g * 0.8) * steep * steep;
       if (inset < 0.01) inset = 0;
       const rr = Math.max(0, R - inset);
       // Where the crags make the bottom bulge outward, insetting could poke below the analytic
@@ -325,7 +344,7 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
   // Bottom tip.
   const tipY = shape.bottomHeight(cx, cz);
   const tip = b.vertex(0, tipY - cy, 0);
-  mark(tip, Region.Under, rimBottom - tipY);
+  mark(tip, Region.Under, cy - d.lip - tipY);
   b.stitch(prev, { start: tip, count: 1 });
 
   // --- Paint ------------------------------------------------------------------------------------
@@ -335,7 +354,7 @@ export function* buildIslandMesh(shape: IslandShape, lodSpec: IslandLodSpec): Ge
     painter.paint(b, i, region[i] as Region, aux[i], normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
     if (i % (SLICE / 4) === SLICE / 4 - 1) yield;
   }
-  return { data: b.finish(normals), rimRing, footRing, topVertexCount };
+  return { data: b.finish(normals), rimRing, footRing, topVertexCount, splitIndex };
 }
 
 /** Drives a builder generator to completion synchronously. */

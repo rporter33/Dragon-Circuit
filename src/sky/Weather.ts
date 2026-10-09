@@ -9,9 +9,13 @@ import type { GameEventBus } from '../core/events';
 import type { QualityProfile } from '../render/quality';
 import type { WorldLayout } from '../world/layout';
 import { clamp01, damp } from '../core/math';
+
+/** Thermal lift (m/s) at the focus that counts as "in a thermal", and the level to leave it. */
+export const THERMAL_ENTER = 2;
+export const THERMAL_EXIT = 1;
 import { globalUniforms } from '../render/uniforms';
 import { WeatherClock, type WeatherParams } from './weatherModel';
-import { WindField } from './windField';
+import { WindField, boundaryApproach01 } from './windField';
 import { Rain } from './Rain';
 import { LightningBolt } from './Lightning';
 
@@ -34,6 +38,12 @@ export class Weather implements WeatherSystem {
   readonly flashPosition = new Vector3();
   /** Reduced motion tones lightning flashes down (the sky sets it from settings). */
   gentleFlashes = false;
+  /** Rising air at the focus from thermals and ridges (m/s), lightly smoothed. */
+  lift = 0;
+  /** 0..1 how close the focus is to the storm at the world's edge. */
+  boundary = 0;
+  /** The thermal the focus is riding (layout index), or -1. */
+  thermalId = -1;
 
   private events: GameEventBus;
   private rainFx: Rain;
@@ -121,6 +131,7 @@ export class Weather implements WeatherSystem {
     u.uGust.value = this.gustLevel;
     u.uWetness.value = this.clock.wetness;
 
+    this.updateLift(dt, focus);
     this.updateCamera(dt, camera);
     this.updateLightning(dt, camera);
     // Drops pick up the ambient light and read a little brighter than the air behind them.
@@ -145,6 +156,22 @@ export class Weather implements WeatherSystem {
     if (!ch) return;
     this.clock.changed = null;
     this.events.emit('weatherChange', { from: ch.from, to: ch.to });
+  }
+
+  /** Lift at the focus for the HUD/audio, thermal enter/exit events, and the boundary cue. */
+  private updateLift(dt: number, focus: Vector3): void {
+    const thermal = this.field.thermalAt(focus);
+    const ridge = this.field.ridgeAt(focus);
+    this.lift = dt > 0 ? damp(this.lift, thermal + ridge, 6, dt) : thermal + ridge;
+    this.boundary = boundaryApproach01(Math.hypot(focus.x, focus.z), this.layout.boundaryRadius);
+    if (this.thermalId < 0 && thermal > THERMAL_ENTER) {
+      this.thermalId = nearestThermal(this.layout, focus);
+      this.events.emit('thermalEnter', { id: this.thermalId, lift: thermal, position: focus.clone() });
+    } else if (this.thermalId >= 0 && thermal < THERMAL_EXIT) {
+      const id = this.thermalId;
+      this.thermalId = -1;
+      this.events.emit('thermalExit', { id });
+    }
   }
 
   private updateCamera(dt: number, camera: PerspectiveCamera): void {
@@ -173,4 +200,18 @@ export class Weather implements WeatherSystem {
     this.bolt.update(dt);
     this.flash = this.bolt.flash;
   }
+}
+
+/** Index of the thermal whose column is horizontally nearest p. */
+function nearestThermal(layout: WorldLayout, p: Vector3): number {
+  let best = -1;
+  let bestD = Infinity;
+  layout.thermals.forEach((t, i) => {
+    const d = Math.hypot(p.x - t.x, p.z - t.z) - t.radius;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  return best;
 }

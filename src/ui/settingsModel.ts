@@ -5,7 +5,7 @@ import type { QualityLevel, Settings } from '../core/types';
 import type { QualityProfile } from '../render/quality';
 import { percent } from './format';
 
-type KeysOfType<T, V> = { [K in keyof T]: T[K] extends V ? K : never }[keyof T];
+type KeysOfType<T, V> = { [K in keyof T]-?: NonNullable<T[K]> extends V ? K : never }[keyof T];
 
 export interface ChoiceRow<K extends keyof Settings = keyof Settings> {
   kind: 'choice';

@@ -9,6 +9,8 @@ import type { Terrain } from '../../terrain';
 import { displace, under, xf } from '../geom';
 import { PALETTE, box, column, jitter, lantern, pick, rand, resetJitter, stoneBlock, v, variants, type SiteBuilders } from './kit';
 import type { SiteOutputs } from './Roost';
+import { colBox, colCyl } from '../colliderKit';
+import { Matrix4 } from 'three';
 
 export type RuinKind = 'arch' | 'wall' | 'shrine' | 'cairns' | 'sundial' | 'stones';
 
@@ -79,7 +81,8 @@ export function planRuins(terrain: Terrain, out: SiteOutputs): RuinSite[] {
   return sites;
 }
 
-function cairn(s: SiteBuilders, x: number, y: number, z: number, h: number, seed: number): void {
+/** A stack of rounded stones; returns the height of its top above y. */
+function cairn(s: SiteBuilders, x: number, y: number, z: number, h: number, seed: number): number {
   const rnd = mulberry32(seed);
   let yy = y;
   let r = 0.75;
@@ -92,15 +95,16 @@ function cairn(s: SiteBuilders, x: number, y: number, z: number, h: number, seed
     yy += sy * 1.55;
     r *= 0.8;
   }
+  return yy - y;
 }
 
 function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: number): void {
   const F = xf(site.x, site.y, site.z, 0, site.yaw, 0);
   const b = s.solid;
-  const col = (lx: number, lz: number, r: number) => {
-    const w = new Vector3(lx, 0, lz).applyMatrix4(F);
-    out.colliders.push({ x: w.x, z: w.z, radius: r, y0: site.y - 1, y1: site.y + 4 });
-  };
+  const C = out.colliders;
+  const stone = { surface: 'stone' as const };
+  /** A rough block as a box (the visual adds ±6% jitter and a slight tilt). */
+  const blockCol = (x: number, y: number, z: number, w: number, h: number, d: number) => colBox(C, F, x, y, z, w * 1.04, h * 1.04, d * 1.04, 0, stone);
   switch (site.kind) {
     case 'arch': {
       column(b, F, -2.2, -0.3, 0, 0.45, 4.6, PALETTE.stoneWarm, 0);
@@ -108,8 +112,11 @@ function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: numbe
       box(b, F, -1.4, 4.65, 0, 2.6, 0.6, 1.0, PALETTE.stoneWarm, { rz: -0.12 });
       stoneBlock(b, F, 1.2, 0.25, 1.4, 1.6, 0.6, 0.9, idx * 7, PALETTE.stoneWarm);
       stoneBlock(b, F, 2.8, 0.2, -1.1, 0.9, 0.5, 0.7, idx * 7 + 1, PALETTE.stoneWarm);
-      col(-2.2, 0, 0.7);
-      col(2.2, 0, 0.7);
+      colCyl(C, F, -2.2, -1, 0, 0.65, 0.7 + 4.6 + 0.3, stone);
+      colCyl(C, F, 2.2, -1, 0, 0.65, 0.7 + 3.4 * 0.7 + 0.35, stone);
+      colBox(C, F, -1.4, 4.65, 0, 2.7, 0.95, 1.0, 0, stone);
+      blockCol(1.2, 0.25, 1.4, 1.6, 0.6, 0.9);
+      blockCol(2.8, 0.2, -1.1, 0.9, 0.5, 0.7);
       break;
     }
     case 'wall': {
@@ -120,42 +127,62 @@ function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: numbe
           if (i === 2 && c === 2) continue;
           stoneBlock(b, F, -3 + i * 1.2 + (c % 2) * 0.3, 0.35 + c * 0.75, 0, 1.15, 0.72, 0.8, idx * 31 + i * 5 + c);
         }
-        if (i < 4) col(-3 + i * 1.2, 0, 0.7);
+        // One box per column of blocks, as high as its courses (the window gap is open).
+        const n = i === 2 ? 2 : h;
+        const top = 0.35 + (n - 0.5) * 0.75;
+        colBox(C, F, -3 + i * 1.2 + 0.15, (top - 0.4) / 2, 0, 1.5, top + 0.4, 0.85, 0, stone);
       }
       for (let i = 1; i < 4; i++) {
         const h = 4 - i;
         for (let c = 0; c < h; c++) stoneBlock(b, F, -3, 0.35 + c * 0.75, i * 1.2, 0.8, 0.72, 1.15, idx * 37 + i * 5 + c);
+        const top = 0.35 + (h - 0.5) * 0.75;
+        colBox(C, F, -3, (top - 0.4) / 2, i * 1.2, 0.85, top + 0.4, 1.2, 0, stone);
       }
-      for (let i = 0; i < 5; i++) stoneBlock(b, F, (rand() - 0.2) * 4, 0.2, 1 + rand() * 3, 0.9, 0.5, 0.7, idx * 41 + i);
+      for (let i = 0; i < 5; i++) {
+        const rx = (rand() - 0.2) * 4;
+        const rz = 1 + rand() * 3;
+        stoneBlock(b, F, rx, 0.2, rz, 0.9, 0.5, 0.7, idx * 41 + i);
+        blockCol(rx, 0.2, rz, 0.9, 0.5, 0.7);
+      }
       break;
     }
     case 'shrine': {
       // A plinth, a small stone canopy on four posts, an offering lantern that glows at night.
       box(b, F, 0, 0.2, 0, 3.4, 0.5, 3.4, PALETTE.stone);
       box(b, F, 0, 0.55, 0, 2.8, 0.25, 2.8, PALETTE.stoneWarm);
+      colBox(C, F, 0, 0.0, 0, 3.4, 0.9, 3.4, 0, stone);
+      colBox(C, F, 0, 0.34, 0, 2.8, 0.68, 2.8, 0, stone);
       for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
         const broken = sx === 1 && sz === 1 && idx % 2 === 0;
         box(b, F, sx * 1.15, broken ? 1.1 : 1.9, sz * 1.15, 0.38, broken ? 1.0 : 2.6, 0.38, PALETTE.stoneWarm);
+        colBox(C, F, sx * 1.15, broken ? 1.1 : 1.9, sz * 1.15, 0.42, broken ? 1.0 : 2.6, 0.42, 0, stone);
       }
       if (idx % 2 === 1) {
         box(b, F, 0, 3.35, 0, 3.2, 0.35, 3.2, PALETTE.stone);
         box(b, F, 0, 3.75, 0, 2.2, 0.45, 2.2, PALETTE.stoneWarm);
         box(b, F, 0, 4.15, 0, 1.0, 0.35, 1.0, PALETTE.stone);
+        colBox(C, F, 0, 3.35, 0, 3.2, 0.35, 3.2, 0, stone);
+        colBox(C, F, 0, 3.75, 0, 2.2, 0.45, 2.2, 0, stone);
+        colBox(C, F, 0, 4.15, 0, 1.0, 0.35, 1.0, 0, stone);
       } else {
         box(b, F, -0.7, 3.3, -0.4, 2.0, 0.3, 2.4, PALETTE.stone, { rz: 0.18 });
         stoneBlock(b, F, 1.6, 0.3, 1.9, 1.3, 0.4, 1.0, idx * 11, PALETTE.stone);
+        colBox(C, F, -0.7, 3.3, -0.4, 2.0, 0.65, 2.4, 0, stone);
+        blockCol(1.6, 0.3, 1.9, 1.3, 0.4, 1.0);
       }
       // A weathered figure: a stack of rounded stones under the canopy.
-      cairn(s, site.x, site.y + 0.65, site.z, 3, idx * 97);
+      const fig = cairn(s, site.x, site.y + 0.65, site.z, 3, idx * 97);
+      colCyl(C, F, 0, 0.6, 0, 0.75, fig + 0.05, stone);
       s.solid.add(new CylinderGeometry(0.35, 0.25, 0.25, 10), under(F, xf(0.9, 0.82, 0.9)), { color: jitter(PALETTE.brass) });
       lantern(s, F, -0.9, 1.05, 0.9, 0.55, 0.62);
-      col(0, 0, 1.9);
       break;
     }
     case 'cairns': {
-      cairn(s, site.x, site.y - 0.15, site.z, 4 + (idx % 3), idx * 53);
-      cairn(s, site.x + 1.6, site.y - 0.15, site.z + 0.7, 2, idx * 59);
-      col(0, 0, 0.9);
+      const h1 = cairn(s, site.x, site.y - 0.15, site.z, 4 + (idx % 3), idx * 53);
+      const h2 = cairn(s, site.x + 1.6, site.y - 0.15, site.z + 0.7, 2, idx * 59);
+      const I = new Matrix4();
+      colCyl(C, I, site.x, site.y - 1, site.z, 0.8, h1 + 0.85, stone);
+      colCyl(C, I, site.x + 1.6, site.y - 1, site.z + 0.7, 0.8, h2 + 0.85, stone);
       break;
     }
     case 'sundial': {
@@ -167,7 +194,9 @@ function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: numbe
         const a = (k / 12) * Math.PI * 2;
         box(b, F, Math.sin(a) * 1.25, 1.11, Math.cos(a) * 1.25, 0.06, 0.04, 0.25, BRONZE, { ry: a });
       }
-      col(0, 0, 1.6);
+      colBox(C, F, 0, 0, 0, 4.2, 0.6, 4.2, 0, stone);
+      colCyl(C, F, 0, 0, 0, 1.6, 1.1, stone);
+      colBox(C, F, 0, 1.55, 0.2, 0.2, 0.9, 0.9, 0, stone);
       break;
     }
     case 'stones': {
@@ -184,6 +213,9 @@ function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: numbe
         const m = fallen
           ? under(F, xf(x * 1.08, 0.55, z * 1.08, Math.PI / 2 - 0.1, a + 0.4, 0, 1.5, h, 0.8))
           : under(F, xf(x, h * 0.5 - 0.6, z, (rand() - 0.5) * 0.12, a, (rand() - 0.5) * 0.12, 1.5, h, 0.8));
+        // Standing: an upright slab. Fallen: lying along its yaw, a little higher at one end.
+        if (fallen) colBox(C, F, x * 1.08, 0.5, z * 1.08, 1.6, 1.3, h * 1.02, a + 0.4, stone);
+        else colBox(C, F, x, h * 0.5 - 0.6, z, 1.65, h + 0.1, 0.95, a, stone);
         const base = jitter('#8c857b', 0.05);
         const lichen = new Color('#b9b48a');
         s.solid.add(g, m, {
@@ -194,9 +226,9 @@ function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: numbe
             o.lerp(jitter(PALETTE.moss), Math.min(0.8, Math.max(0, nn.y - 0.3) * 0.9 + Math.max(0, 1.2 - (p.y - site.y)) * 0.4));
           },
         });
-        if (!fallen) col(x, z, 1.0);
       }
       stoneBlock(b, F, 0, 0.4, 0, 3.2, 0.8, 1.8, idx * 3, PALETTE.stoneDark, 0.6);
+      blockCol(0, 0.4, 0, 3.2, 0.8, 1.8);
       lantern(s, F, 0.9, 1.2, 0.3, 0.6, 0.8);
       break;
     }
