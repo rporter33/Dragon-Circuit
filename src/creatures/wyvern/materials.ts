@@ -26,7 +26,7 @@ import {
 import type { WyvernLook } from '../../core/types';
 import { PAINTERLY_RIM_GLSL, applyPainterly, toonRamp } from '../../render/painterly';
 import { creatureUniforms, globalUniforms } from '../../render/uniforms';
-import { CREATURE_LIGHT_BLOCK, CREATURE_LIGHT_PARS } from './shading/light';
+import { CREATURE_LIGHT_BLOCK, CREATURE_LIGHT_PARS, CREATURE_TOON_PARS, RELIEF_APPLY, RELIEF_PARS } from './shading/light';
 
 export const PATTERN_IDS: Record<string, number> = {
   plain: 0,
@@ -216,26 +216,30 @@ ${NOISE_GLSL}
 // Scales: the nearest scale centre in a jittered grid (feature points kept to the middle half
 // of each cell, so a 2x2x2 search finds it: 8 lookups instead of 27). xyz: offset from the
 // fragment to that centre; w: how far inside the scale (0 at the crevice to the next one).
-vec4 dwScaleCell(vec3 p) {
+vec4 dwScaleCell(vec3 p, out vec3 r2) {
   vec3 i = floor(p - 0.5);
   vec3 f = p - i;
   float d1 = 8.0;
   float d2 = 8.0;
   vec3 r1 = vec3(0.0);
+  r2 = vec3(1.0);
   for (int z = 0; z <= 1; z++)
   for (int y = 0; y <= 1; y++)
   for (int x = 0; x <= 1; x++) {
     vec3 g = vec3(float(x), float(y), float(z));
     vec3 r = g + 0.25 + 0.5 * dwHash33(i + g) - f;
     float d = dot(r, r);
-    if (d < d1) { d2 = d1; d1 = d; r1 = r; }
-    else if (d < d2) { d2 = d; }
+    if (d < d1) { d2 = d1; r2 = r1; d1 = d; r1 = r; }
+    else if (d < d2) { d2 = d; r2 = r; }
   }
   return vec4(r1, sqrt(d2) - sqrt(d1));
 }
 
-// Relief of the keeled scales (about -0.7..0.9), for the bump once the normal is known.
-float dwScaleH = 0.0;
+// Derivative of smoothstep(a, b, x) with respect to x.
+float dwDss(float a, float b, float x) {
+  float t = clamp((x - a) / (b - a), 0.0, 1.0);
+  return 6.0 * t * (1.0 - t) / (b - a);
+}
 
 // Returns albedo; writes the emissive part and a "gold" mask for the glint.
 vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
@@ -254,6 +258,10 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   // (plain painterly hide there). On the body tube: along it (rows ~13 cm) and around it (40
   // rows, so smaller on the neck and in rings down the tail); elsewhere a granular 3D cell.
   vec2 tq = vec2(vUv2.x / (0.13 * uBodyScale), (vMat.w - 2.0) * 20.0);
+  dwTq = tq;
+  dwReliefTq = vec2(0.0);
+  dwReliefBp = vec3(0.0);
+  dwThin = 0.0;
   vec2 tw = fwidth(tq);
   float tubeFade = 1.0 - smoothstep(0.16, 0.42, length(tw));
   vec3 sq = bp * vec3(11.0, 11.0, 8.0);
@@ -356,20 +364,43 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
         float w = tubeFade * (1.0 - smoothstep(0.2, 0.55, belly));
         float shade = (1.0 - 0.24 * max(gap, 0.6 * side)) * mix(0.9, 1.06, rear) + 0.14 * keel;
         col *= mix(1.0, shade, w);
-        dwScaleH = w * (0.6 * keel + 0.4 * rear - 0.8 * max(gap, 0.5 * side));
+        // Relief (shading/light.ts RELIEF_APPLY): the analytic gradient of a smooth height:
+        // each scale rises toward its free edge, keeled down the middle, dropping into the
+        // crevice at the edge and the seam between rows. u across the row, v along it.
+        float ar = 0.08 + 2.0 * aa;
+        float ri = smoothstep(-ar, ar, d);
+        float rdi = dwDss(-ar, ar, d);
+        float ke = keelW * exp(-f.x * f.x / 0.0121);
+        float kv = smoothstep(0.1, 0.6, f.y);
+        float rk = ke * kv;
+        float top = 0.45 * f.y + 0.6 * rk + 0.2;
+        float dDu = -1.86 * sqrt(abs(2.0 * f.x)) * sign(f.x);
+        float sw = 0.08 + 1.5 * tw.y;
+        float hv = ri * (0.45 + 0.6 * ke * dwDss(0.1, 0.6, f.y)) - top * rdi;
+        float hu = ri * 0.6 * rk * (-2.0 * f.x / 0.0121) + top * rdi * dDu - 0.3 * dwDss(0.5 - sw, 0.5, abs(f.x)) * sign(f.x);
+        float wr = w * (1.0 - smoothstep(0.08, 0.2, length(tw)));
+        dwReliefTq = wr * vec2(hv, hu);
       }
     } else if (region == 0 && scaleFade > 0.001) {
       // Head and limbs: small granular scales, softer.
-      vec4 cv = dwScaleCell(sq);
+      vec3 r2;
+      vec4 cv = dwScaleCell(sq, r2);
       float w = scaleFade * (1.0 - smoothstep(0.2, 0.6, belly));
       float gap = 1.0 - smoothstep(0.0, 0.1, cv.w);
       col *= mix(1.0, (1.0 - 0.16 * gap) * mix(0.95, 1.03, smoothstep(-0.35, 0.35, cv.z)), w);
-      dwScaleH = w * (0.3 * smoothstep(-0.35, 0.35, cv.z) - 0.5 * gap);
+      // Relief: domed scales sloping back (z) into crevices between cells; analytic gradient in
+      // the cell lattice, carried to body space.
+      vec3 dw = cv.xyz / max(length(cv.xyz), 1e-4) - r2 / max(length(r2), 1e-4);
+      vec3 gq = vec3(0.0, 0.0, -0.3 * dwDss(-0.35, 0.35, cv.z)) + 0.5 * dwDss(0.0, 0.2, cv.w) * dw;
+      float wr = w * (1.0 - smoothstep(0.08, 0.2, length(fwidth(sq))));
+      dwReliefBp = wr * gq * vec3(11.0, 11.0, 8.0) / uBodyScale;
     }
     // Belly: a soft painterly boundary and faint transverse scutes. The pale ventral side takes
     // little rim (it faces down and away; a bright rim there read as a glowing tube).
     float bm = smoothstep(0.32, 0.68, belly + 0.18 * (n1 - 0.5));
     dwRimScale *= mix(1.0, 0.3, smoothstep(0.3, 0.7, belly));
+    // Thin flesh for the subsurface terminator: the throat and the end of the tail.
+    dwThin = max(0.9 * smoothstep(0.3, 0.7, belly) * smoothstep(1.1, 1.6, bp.z), 0.7 * smoothstep(-4.2, -5.2, bp.z));
     // Ventral scutes: broad transverse plates (~38 cm on a 3.3 m torso), each a face rising to
     // its free rear edge and a dark groove where the next one tucks under. Lines widen with their
     // on-screen size and fade to the plates' mean value, so they never alias or drift in value.
@@ -471,25 +502,6 @@ function matteOut(region: string): string {
 #endif`;
 }
 
-/**
- * Relief of the scales: tilt the normal by the screen-space gradient of their height (three's
- * derivative bump-map formula, without a texture): a few millimetres of keel and crevice.
- */
-const SCALE_BUMP_GLSL = /* glsl */ `
-{
-  vec3 sp = -vViewPosition;
-  vec3 dpx = dFdx(sp);
-  vec3 dpy = dFdy(sp);
-  float hx = dFdx(dwScaleH) * 0.012;
-  float hy = dFdy(dwScaleH) * 0.012;
-  vec3 r1 = cross(dpy, normal);
-  vec3 r2 = cross(normal, dpx);
-  float det = dot(dpx, r1);
-  vec3 grad = sign(det) * (hx * r1 + hy * r2);
-  normal = normalize(abs(det) * normal - grad);
-}
-`;
-
 const MEMBRANE_PARS_FRAG = /* glsl */ `
 uniform vec3 uPrimary;
 uniform vec3 uSecondary;
@@ -542,7 +554,8 @@ vec3 dwMembraneAlbedo(out float trans) {
     return c;
   }
   if (region == 2) {
-    // Fin / sail webbing with rays.
+    // Fin / sail webbing with rays (thin skin: a warm terminator where light wraps into it).
+    dwThin = 0.6;
     float ray = 1.0 - smoothstep(0.0, 0.12, abs(fract(vUv2.y) - 0.5) * 2.0 - 0.85);
     vec3 c = uMembrane * (0.9 + 0.12 * n);
     c = mix(c, mix(uSecondary, uMembrane, 0.3) * 0.8, ray * 0.6);
@@ -606,7 +619,9 @@ vRegion = aMat.x;
 function patchShared(shader: WebGLProgramParametersWithUniforms, u: WyvernUniforms): void {
   Object.assign(shader.uniforms, u, creatureUniforms, { uTime: globalUniforms.uTime, uNight: globalUniforms.uNight });
   shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_PARS);
-  shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\n' + CREATURE_LIGHT_PARS);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\n' + CREATURE_LIGHT_PARS)
+    .replace('#include <lights_toon_pars_fragment>', CREATURE_TOON_PARS + RELIEF_PARS);
 }
 
 /**
@@ -621,7 +636,7 @@ function creatureLight(frag: string): string {
 
 /** Opaque toon body with region colors and patterns. */
 export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
-  const m = new MeshToonMaterial({ gradientMap: toonRamp(), side: FrontSide });
+  const m = new MeshToonMaterial({ side: FrontSide });
   applyPainterly(m, {
     rim: 1.1,
     onBeforeCompile: (shader) => {
@@ -630,7 +645,7 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
       shader.fragmentShader = creatureLight(shader.fragmentShader)
         .replace('void main() {', BODY_PARS_FRAG + '\nvoid main() {')
         .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + matteOut('vRegion + 1.0'))
-        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + SCALE_BUMP_GLSL)
+        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + RELIEF_APPLY)
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
@@ -662,7 +677,7 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
 
 /** Double-sided membrane with the backlit glow. */
 export function createMembraneMaterial(u: WyvernUniforms): MeshToonMaterial {
-  const m = new MeshToonMaterial({ gradientMap: toonRamp(), side: DoubleSide, shadowSide: DoubleSide });
+  const m = new MeshToonMaterial({ side: DoubleSide, shadowSide: DoubleSide });
   applyPainterly(m, {
     rim: 0.6,
     onBeforeCompile: (shader) => {

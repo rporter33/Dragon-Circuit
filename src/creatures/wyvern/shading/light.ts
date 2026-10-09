@@ -106,3 +106,115 @@ export function shoulder(lum: number, threshold: number): number {
   return knee + room * (1 - Math.exp((-(lum - knee) * CREATURE_LIGHT.kneeSlope) / room));
 }
 
+/**
+ * The toon ramp: replaces three's lights_toon_pars_fragment in the creature materials. An
+ * analytic ramp (no gradientMap fetch) with more steps across the lit half, so forms turn:
+ * shadow 0.28, a terminator step, then 0.62 / 0.80 / 0.92 / 1.0. Each step is a smoothstep as
+ * wide as 1.5 pixels of the ramp coordinate (never under 0.015): band edges stay soft lines
+ * instead of breaking into dotted stairs on cylinders.
+ */
+export const RAMP = {
+  shadow: 0.28,
+  /** [edge in dotNL*0.5+0.5, step up] */
+  steps: [
+    [0.47, 0.2],
+    [0.56, 0.14],
+    [0.66, 0.18],
+    [0.76, 0.12],
+    [0.86, 0.08],
+  ] as [number, number][],
+};
+
+/** The ramp value at ramp coordinate x (no anti-aliasing), for tests. */
+export function toonRampValue(x: number): number {
+  let v = RAMP.shadow;
+  for (const [e, s] of RAMP.steps) if (x >= e) v += s;
+  return v;
+}
+
+const rampGlsl = () => RAMP.steps.map(([e, s]) => `${f(s)} * smoothstep(${f(e)} - w, ${f(e)} + w, x)`).join(' + ');
+
+export const CREATURE_TOON_PARS = /* glsl */ `
+varying vec3 vViewPosition;
+uniform vec3 uSkyZenith;
+struct ToonMaterial {
+  vec3 diffuseColor;
+};
+// 0..1 thin flesh (throat, frill, tail end) set by the albedo: light wraps into it warm and red.
+float dwThin = 0.0;
+float dwToonRamp(float x) {
+  float w = max(0.015, 1.5 * fwidth(x));
+  return ${f(RAMP.shadow)} + ${rampGlsl()};
+}
+void RE_Direct_Toon(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight) {
+  float dotNL = dot(geometryNormal, directLight.direction);
+  vec3 irradiance = directLight.color * dwToonRamp(dotNL * 0.5 + 0.5);
+  // Subsurface terminator: a warm red band where the light wraps into thin skin.
+  float t = (dotNL - 0.05) / 0.16;
+  irradiance += directLight.color * vec3(1.0, 0.42, 0.28) * (0.22 * dwThin * exp(-t * t));
+  reflectedLight.directDiffuse += irradiance * BRDF_Lambert(material.diffuseColor);
+}
+void RE_IndirectDiffuse_Toon(const in vec3 irradiance, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight) {
+  // The sky's fill is cooler on the side away from the sun, and weaker looking into the sun
+  // (that energy goes to the rim: contre-jour reads as a silhouette with a hot edge).
+  vec3 dwSunV = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+  float dwShade = 1.0 - smoothstep(-0.2, 0.35, dot(geometryNormal, dwSunV));
+  vec3 dwSky = clamp(uSkyZenith / max(dot(uSkyZenith, ${LUMA}), 1e-3), 0.0, 2.5);
+  vec3 dwCool = mix(vec3(1.0), dwSky, 0.25 * dwShade);
+  float dwToward = smoothstep(0.2, 0.7, dot(normalize(vDwWorldPos - cameraPosition), uSunDir));
+  reflectedLight.indirectDiffuse += irradiance * dwCool * (1.0 - 0.3 * dwToward) * BRDF_Lambert(material.diffuseColor);
+}
+#define RE_Direct RE_Direct_Toon
+#define RE_IndirectDiffuse RE_IndirectDiffuse_Toon
+`;
+
+/**
+ * Micro-relief as a detail-light factor on the albedo, never through the toon ramp (a bumped
+ * normal flips neighbouring pixels across band edges: 2x2 stipple and dotted terminators). The
+ * albedo pass leaves the analytic height gradient of the scales in dwReliefTq (per unit of the
+ * scale-row coordinates dwTq) and dwReliefBp (per metre of bind-pose body space); the chain rule
+ * through the smooth screen derivatives of those coordinates gives the height change per pixel,
+ * three's derivative-bump formula gives the tilted normal, and its turn toward the sun scales
+ * the albedo. Spliced after normal_fragment_maps, outside any branch (derivatives).
+ */
+export const RELIEF_PARS = /* glsl */ `
+vec2 dwTq = vec2(0.0);
+vec2 dwReliefTq = vec2(0.0);
+vec3 dwReliefBp = vec3(0.0);
+`;
+
+export const RELIEF_APPLY = /* glsl */ `
+{
+  vec3 dwSp = -vViewPosition;
+  vec3 dwDpx = dFdx(dwSp);
+  vec3 dwDpy = dFdy(dwSp);
+  float dwHx = 0.012 * (dot(dwReliefTq, dFdx(dwTq)) + dot(dwReliefBp, dFdx(vBodyPos)));
+  float dwHy = 0.012 * (dot(dwReliefTq, dFdy(dwTq)) + dot(dwReliefBp, dFdy(vBodyPos)));
+  vec3 dwR1 = cross(dwDpy, normal);
+  vec3 dwR2 = cross(normal, dwDpx);
+  float dwDet = dot(dwDpx, dwR1);
+  vec3 dwGrad = sign(dwDet) * (dwHx * dwR1 + dwHy * dwR2);
+  vec3 dwNb = normalize(abs(dwDet) * normal - dwGrad);
+  vec3 dwDn = dwNb - normal;
+  vec3 dwSunR = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+  vec3 dwUpR = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+  float dwLitR = smoothstep(-0.15, 0.4, dot(normal, dwSunR));
+  float dwDetail = 1.0 + 1.2 * dot(dwDn, dwSunR) * dwLitR + 0.35 * dot(dwDn, dwUpR);
+  diffuseColor.rgb *= clamp(dwDetail, 0.72, 1.28);
+}
+`;
+
+/**
+ * The camera rig's kick and rim for the rider's toon material (rider/model.ts), so mount and
+ * rider are lit as one subject. Spliced before opaque_fragment, after the painterly patch.
+ */
+export const RIDER_RIG_LIGHT = /* glsl */ `
+{
+  vec3 dwVv = normalize(vViewPosition);
+  float dwNV = clamp(dot(normal, dwVv), 0.0, 1.0);
+  float dwAlb = dot(diffuseColor.rgb, ${LUMA});
+  vec3 dwHue = diffuseColor.rgb / max(0.3, dwAlb) * 0.35;
+  outgoingLight += diffuseColor.rgb * uKickColor * (uKickI * smoothstep(-0.1, 0.6, dot(normal, uKickDir)));
+  outgoingLight += uRimColor * dwHue * (uRimI * (1.0 - dwNV) * (1.0 - dwNV) * max(0.0, dot(normal, uRimDir)));
+}
+`;

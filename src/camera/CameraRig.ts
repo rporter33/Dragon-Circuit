@@ -24,6 +24,7 @@ import { FallRig, FlightRig, OrbitRig } from './followRigs';
 import { PhotoRig, StableRig, TitleRig, type StableFocus } from './showRigs';
 import { createShot, type CameraPose, type CameraShot, type Rig, type RigContext } from './rigTypes';
 import { emptyFrame } from '../input/Input';
+import { CreatureLightRig } from './creatureLight';
 
 export type RigKind = 'flight' | 'mounted' | 'foot' | 'falling' | 'title' | 'stable' | 'photo';
 
@@ -131,6 +132,8 @@ export class CameraRig implements CameraSystem {
   /** Fade cut state: 'out' holds the old shot while darkening, 'in' brightens on the new one. */
   private cutPhase: 'none' | 'out' | 'in' = 'none';
   private cutAmount = 0;
+  /** The kick and rim lights only the wyverns and the rider receive, set per shot. */
+  private creatureLight = new CreatureLightRig();
 
   constructor(camera: PerspectiveCamera, terrain: CameraTerrain, settings: () => Settings, events?: GameEventBus) {
     this.camera = camera;
@@ -198,6 +201,7 @@ export class CameraRig implements CameraSystem {
       this.camera.lookAt(this.override.target);
       this.applyProjection(s.fov, 0);
       this.updateYaw();
+      this.creatureLight.update(dt, null, this.camera);
       return;
     }
 
@@ -235,6 +239,7 @@ export class CameraRig implements CameraSystem {
 
     this.composeOut(kind, player);
     this.applyToCamera(dt, s, player, kind);
+    this.creatureLight.update(dt, kind, this.camera);
 
     const wp = player.wyvernPose.position;
     this.lastWyvern.copy(wp);
