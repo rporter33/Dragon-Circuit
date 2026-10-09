@@ -190,6 +190,7 @@ uniform float uContour;
 varying vec3 vBodyPos;
 varying vec4 vMat;
 varying vec2 vUv2;
+flat varying float vRegion;
 ${NOISE_GLSL}
 
 // Scales: the nearest scale centre in a jittered grid (feature points kept to the middle half
@@ -215,13 +216,17 @@ vec4 dwScaleCell(vec3 p) {
 
 // Relief of the keeled scales (about -0.7..0.9), for the bump once the normal is known.
 float dwScaleH = 0.0;
+// How much of the painterly rim light a region takes: full on hide, little on the saddle's
+// leather, cloth and gold, whose thin edges otherwise flare like a light source in daylight.
+float dwRimScale = 1.0;
 
 // Returns albedo; writes the emissive part and a "gold" mask for the glint.
 vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   emit = vec3(0.0);
   gold = 0.0;
   dwScaleH = 0.0;
-  int region = int(vMat.x + 0.5);
+  int region = int(vRegion + 0.5);
+  dwRimScale = region == 5 ? 0.15 : (region >= 4 && region <= 7) || region == 11 ? 0.3 : region == 2 ? 0.5 : 1.0;
   vec3 bp = vBodyPos / uBodyScale;
   float n1 = dwVnoise(bp * 2.3);
   float n2 = dwVnoise(bp * 6.1 + 3.1);
@@ -459,11 +464,12 @@ uniform float uContour;
 varying vec3 vBodyPos;
 varying vec4 vMat;
 varying vec2 vUv2;
+flat varying float vRegion;
 ${NOISE_GLSL}
 
 // Albedo of membranes; also returns how much light passes through (0..1).
 vec3 dwMembraneAlbedo(out float trans) {
-  int region = int(vMat.x + 0.5);
+  int region = int(vRegion + 0.5);
   float thin = vMat.y;
   float edge = vMat.z;
   float n = dwVnoise(vBodyPos * 3.0 / uBodyScale);
@@ -519,6 +525,9 @@ attribute vec2 aUv2;
 varying vec3 vBodyPos;
 varying vec4 vMat;
 varying vec2 vUv2;
+// The region id must not be interpolated: across a triangle joining two regions (leather and
+// cloth, 4 and 6) it would pass through the ids between (5, gold) and paint a glinting seam.
+flat varying float vRegion;
 uniform float uFlutter;
 uniform float uFlutterRate;
 uniform float uRipple;
@@ -531,12 +540,14 @@ const VERT_BEGIN = /* glsl */ `
 vBodyPos = position;
 vMat = aMat;
 vUv2 = aUv2;
+vRegion = aMat.x;
 `;
 
 const MEMBRANE_VERT_BEGIN = /* glsl */ `
 vBodyPos = position;
 vMat = aMat;
 vUv2 = aUv2;
+vRegion = aMat.x;
 {
   // Trailing-edge flutter (speed) plus a slow wind ripple for sails and fans.
   float ph = uTime * uFlutterRate - aUv2.x * 9.0 + aUv2.y * 5.0;
@@ -571,6 +582,8 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
         .replace('void main() {', BODY_PARS_FRAG + '\nvoid main() {')
         .replace('#include <opaque_fragment>', CONTOUR_GLSL + '\n#include <opaque_fragment>')
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + SCALE_BUMP_GLSL)
+        // Per-region rim (see dwRimScale); a no-op if the painterly rim's wording ever changes.
+        .replace('uRimStrength * uDwRim', 'uRimStrength * uDwRim * dwRimScale')
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>

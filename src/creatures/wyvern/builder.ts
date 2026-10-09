@@ -88,6 +88,7 @@ export class Skin {
 }
 
 const _pick = [0, 0, 0, 0];
+const _bp = new Vector3();
 
 export interface VertexMat {
   region: number;
@@ -106,6 +107,8 @@ export class GeoBuilder {
   private index: [number[], number[]] = [[], []];
   private partStart = 0;
   private partIndexStart = 0;
+  /** Boundary vertices made while splitting this part's mixed-region triangles (edge|region). */
+  private splitCache = new Map<string, number>();
   /** 0 = body, 1 = membrane. */
   group: 0 | 1 = 0;
 
@@ -119,6 +122,7 @@ export class GeoBuilder {
     c.mat = this.mat.slice();
     c.uv = this.uv.slice();
     c.index = [this.index[0].slice(), this.index[1].slice()];
+    c.group = this.group;
     return c;
   }
 
@@ -135,6 +139,7 @@ export class GeoBuilder {
     this.group = group;
     this.partStart = this.vertexCount;
     this.partIndexStart = this.index[group].length;
+    this.splitCache.clear();
   }
 
   vertex(p: Vector3, skin: Skin, m: VertexMat, u = 0, w = 0): number {
@@ -146,8 +151,68 @@ export class GeoBuilder {
     return this.vertexCount - 1;
   }
 
+  /**
+   * A triangle. One whose corners lie in two regions is split along the boundary (half-way
+   * along its two crossing edges) so every emitted triangle is a single region: interpolated
+   * region ids would otherwise pass through the ids between (leather 4 and cloth 6 make a seam
+   * of gold, 5), and per-triangle (flat) ids would make a sawtooth.
+   */
   tri(a: number, b: number, c: number): void {
-    this.index[this.group].push(a, b, c);
+    const M = this.mat;
+    const ra = M[a * 4];
+    const rb = M[b * 4];
+    const rc = M[c * 4];
+    if ((ra === rb && rb === rc) || (ra !== rb && rb !== rc && ra !== rc)) {
+      this.index[this.group].push(a, b, c);
+      return;
+    }
+    // Rotate (keeping the winding) so the odd corner comes first: (o, p, q), p and q alike.
+    let o = a;
+    let p = b;
+    let q = c;
+    if (rb !== ra && rb !== rc) {
+      o = b;
+      p = c;
+      q = a;
+    } else if (rc !== ra && rc !== rb) {
+      o = c;
+      p = a;
+      q = b;
+    }
+    const ro = M[o * 4];
+    const rp = M[p * 4];
+    const op = this.boundaryVertex(o, p, ro);
+    const oq = this.boundaryVertex(o, q, ro);
+    const po = this.boundaryVertex(o, p, rp);
+    const qo = this.boundaryVertex(o, q, rp);
+    const idx = this.index[this.group];
+    idx.push(o, op, oq);
+    idx.push(po, p, q, po, q, qo);
+  }
+
+  /** The vertex half-way along edge a-b, in region `region` (shared by the triangles beside it). */
+  private boundaryVertex(a: number, b: number, region: number): number {
+    const key = `${Math.min(a, b)}|${Math.max(a, b)}|${region}`;
+    const hit = this.splitCache.get(key);
+    if (hit !== undefined) return hit;
+    const P = this.pos;
+    _bp.set((P[a * 3] + P[b * 3]) / 2, (P[a * 3 + 1] + P[b * 3 + 1]) / 2, (P[a * 3 + 2] + P[b * 3 + 2]) / 2);
+    const skin = new Skin();
+    for (let k = 0; k < 4; k++) {
+      skin.add(this.skinIdx[a * 4 + k], this.skinW[a * 4 + k] * 0.5);
+      skin.add(this.skinIdx[b * 4 + k], this.skinW[b * 4 + k] * 0.5);
+    }
+    const M = this.mat;
+    const U = this.uv;
+    const i = this.vertex(
+      _bp,
+      skin,
+      { region, belly: (M[a * 4 + 1] + M[b * 4 + 1]) / 2, dorsal: (M[a * 4 + 2] + M[b * 4 + 2]) / 2, flutter: (M[a * 4 + 3] + M[b * 4 + 3]) / 2 },
+      (U[a * 2] + U[b * 2]) / 2,
+      (U[a * 2 + 1] + U[b * 2 + 1]) / 2,
+    );
+    this.splitCache.set(key, i);
+    return i;
   }
 
   quad(a: number, b: number, c: number, d: number): void {
