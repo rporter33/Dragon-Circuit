@@ -11,7 +11,8 @@ import type { QualityProfile } from '../../render/quality';
 import type { WyvernRenderable } from '../../game/contracts';
 import type { TerrainQuery } from '../../core/types';
 import { rigFor, type RigDef } from './rig';
-import { buildWyvernGeometry, type WyvernMeshInfo } from './geometry';
+import { aoJob, applyAO, buildWyvernGeometry, type WyvernMeshInfo } from './geometry';
+import { cachedAO, requestAO } from './ao';
 import { armScale, foldRest, type FoldRest } from './parts/wings';
 import type { TackHold } from './parts/saddle';
 import {
@@ -285,6 +286,15 @@ export class Wyvern implements WyvernRenderable {
     this.info = buildWyvernGeometry(rig, look);
     this.foldHold = flattenFoldRest(rig, foldRest(rig));
     this.shapeKey = shapeKeyOf(look);
+    // The baked ambient occlusion replaces the analytic fallback when it lands (cached per shape).
+    const info = this.info;
+    const aoKey = `${this.shapeKey}|${info.lod}`;
+    const baked = cachedAO(aoKey);
+    if (baked) applyAO(info, baked);
+    else
+      requestAO(aoKey, aoJob(info))?.then((ao) => {
+        if (this.info === info) applyAO(info, ao);
+      });
 
     // Bones: identity rest rotations, positions relative to the parent.
     const bones: Bone[] = rig.bones.map((d) => {
