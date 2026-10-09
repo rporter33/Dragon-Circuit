@@ -264,7 +264,6 @@ float dwDss(float a, float b, float x) {
 vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   emit = vec3(0.0);
   gold = 0.0;
-  dwScaleH = 0.0;
   int region = int(vRegion + 0.5);
   // How much of the rim a region takes (dwRimScale, shading/light.ts): full on the hide, little
   // on the saddle's leather, cloth and gold (thin edges flare like a light source), the eye and

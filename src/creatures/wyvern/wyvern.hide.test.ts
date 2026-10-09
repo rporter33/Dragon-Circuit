@@ -18,7 +18,7 @@ import {
   createWyvernUniforms,
   luminance,
 } from './materials';
-import { CREATURE_LIGHT, CREATURE_LIGHT_BLOCK, shoulder } from './shading/light';
+import { CREATURE_LIGHT, CREATURE_LIGHT_BLOCK, CREATURE_TOON_PARS, RAMP, RELIEF_APPLY, shoulder, toonRampValue } from './shading/light';
 import { gliding, look } from './wyvern.testkit';
 
 /** Run a material's onBeforeCompile on three's toon source, as the renderer would. */
@@ -197,5 +197,34 @@ describe('pale palettes are capped', () => {
     const g = BREED_DEFAULT_COLORS.galewing;
     expect(luminance(hex(g.primary))).toBeLessThan(0.15);
     expect(luminance(hex(g.secondary))).toBeLessThan(luminance(hex(g.primary)));
+  });
+});
+
+describe('creature toon ramp and relief', () => {
+  it('turns the lit half through four values over a 0.28 shadow (0.48 / 0.62 / 0.8 / 0.92 / 1.0)', () => {
+    expect(toonRampValue(0.3)).toBeCloseTo(RAMP.shadow, 9);
+    expect(RAMP.shadow).toBeCloseTo(0.28, 9);
+    const lit = [0.5, 0.6, 0.7, 0.8, 0.9].map(toonRampValue);
+    for (const [v, want] of lit.map((v, i) => [v, [0.48, 0.62, 0.8, 0.92, 1.0][i]])) expect(v).toBeCloseTo(want, 6);
+    // Monotonic, and every step edge inside the lit half of the ramp coordinate.
+    for (let i = 1; i < RAMP.steps.length; i++) expect(RAMP.steps[i][0]).toBeGreaterThan(RAMP.steps[i - 1][0]);
+    expect(RAMP.steps[0][0]).toBeGreaterThan(0.45);
+  });
+
+  it('is analytic and anti-aliased: no gradient-map fetch, steps as wide as 1.5 pixels', () => {
+    for (const m of [createBodyMaterial(createWyvernUniforms()), createMembraneMaterial(createWyvernUniforms())]) {
+      expect((m as unknown as { gradientMap: unknown }).gradientMap).toBeNull();
+      const s = compiled(m);
+      expect(s.fragmentShader).toContain(CREATURE_TOON_PARS);
+      expect(s.fragmentShader).not.toContain('getGradientIrradiance');
+    }
+    expect(CREATURE_TOON_PARS).toMatch(/max\(0\.015, 1\.5 \* fwidth\(x\)\)/);
+  });
+
+  it('applies the scale relief to the albedo only, never to the normal the ramp sees', () => {
+    const s = compiled(createBodyMaterial(createWyvernUniforms())).fragmentShader;
+    expect(s).toContain(RELIEF_APPLY);
+    expect(RELIEF_APPLY).toContain('diffuseColor.rgb *=');
+    expect(RELIEF_APPLY).not.toMatch(/\bnormal\s*=/);
   });
 });
