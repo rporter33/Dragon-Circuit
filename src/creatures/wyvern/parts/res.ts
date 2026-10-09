@@ -70,7 +70,7 @@ export const RES: Record<Lod, Res> = {
     spikeSides: 1,
     spikeSteps: 1,
     teeth: [9, 8],
-    toothSides: 5,
+    toothSides: 4,
     toothSegs: 4,
     tongue: true,
     lids: true,

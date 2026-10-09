@@ -61,6 +61,11 @@ export interface RigIndex {
    * and pleat the folded wing against the flank. Rest (bind) = no change. Driven by stream C.
    */
   fold: [number, number];
+  /**
+   * Throat (gular) bone: a child of the jaw on the throat floor, carrying the throat skin
+   * behind the jaw's rami, for gular pumping and panting. Rest (bind) = no change.
+   */
+  gular: number;
 }
 
 /** A point on the body tube's centerline with its cross-section. */
@@ -435,7 +440,8 @@ export function buildRig(breed: BreedId): RigDef {
   for (let i = NECK_BONES - 1; i >= 1; i--) {
     const t = 1 - i / NECK_BONES;
     const r = neckR(t);
-    keys.push({ p: nk(i).clone(), hw: r * 0.95, hu: r, hl: r * 1.12, sq: 2 });
+    // A loose throat (gular) pouch one segment behind the jaw.
+    keys.push({ p: nk(i).clone(), hw: r * 0.95, hu: r, hl: r * 1.12 * (i === NECK_BONES - 1 ? 1.35 : 1), sq: 2 });
   }
   keys.push({ p: nk(0).clone().add(new Vector3(0, -0.08 * hh, -0.02 * T)), hw: S.neckBaseRadius * 1.18, hu: S.neckBaseRadius * 1.05, hl: S.neckBaseRadius * 1.6, sq: 2.1 });
   const neckBaseKey = keys.length - 1;
@@ -479,6 +485,7 @@ export function buildRig(breed: BreedId): RigDef {
   // Fold helpers: appended after every other bone so existing indices stay put.
   const foldC = innerPanelCentroid(P, shoulder, elbow, wrist, knuckle, fingerTips[2], plan, T);
   const fold: [number, number] = [add('foldL', chest, mirror(foldC, 0)), add('foldR', chest, mirror(foldC, 1))];
+  const gular = add('gular', jaw, headPos.clone().add(new Vector3(0, -0.8 * S.headHalfHeight, 0.1 * L)));
 
   // Seat: behind the shoulder girdle, over the ribcage near the center of mass — where a horse
   // saddle sits behind the withers. Not over the wing roots: the flight muscles anchor there and
@@ -495,7 +502,7 @@ export function buildRig(breed: BreedId): RigDef {
   return {
     props: P,
     bones,
-    idx: { root, spine, chest, breath, pelvis, neck, head, jaw, tongue: [tongue0, tongue1], fans, tail, wings, legs, fold },
+    idx: { root, spine, chest, breath, pelvis, neck, head, jaw, tongue: [tongue0, tongue1], fans, tail, wings, legs, fold, gular },
     plan,
     elbow,
     wrist,

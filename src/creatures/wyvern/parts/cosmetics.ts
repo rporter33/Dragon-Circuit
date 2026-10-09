@@ -5,7 +5,7 @@
 import { Vector3 } from 'three';
 import { clamp, lerp, smoothstep } from '../../../core/math';
 import type { WyvernLook } from '../../../core/types';
-import { GeoBuilder, MREGION, REGION, Skin } from '../builder';
+import { GeoBuilder, MREGION, REGION, Skin, tube } from '../builder';
 import type { RigDef } from '../rig';
 import { bodyChain } from './body';
 import type { HeadInfo } from './head';
@@ -138,7 +138,21 @@ export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
           base.clone().add(new Vector3(0.2 * sx * L, 0.22 * L, -0.92 * L)),
           steps(res, 12) + (res.lod === 2 ? 1 : 0),
         );
-        spike(b, pts, 0.12 * L * bulk, skin, horn, nsides(res, 9), new Vector3(sx, 0, 0), 1, 0.8);
+        const r0 = 0.12 * L * bulk;
+        spike(b, pts, r0, skin, horn, nsides(res, 9), new Vector3(sx, 0, 0), 1, 0.8);
+        // A bony boss rooting the horn in the skull: a cone collar half sunk in, wider than the
+        // horn (the horn itself does not move).
+        if (res.lod < 2) {
+          const d = pts[1].clone().sub(pts[0]).normalize();
+          tube(b, {
+            points: [pts[0].clone().addScaledVector(d, -0.05 * L), pts[0].clone().addScaledVector(d, -0.01 * L), pts[0].clone().addScaledVector(d, 0.03 * L)],
+            radii: [1.4 * r0, 1.32 * r0, 1.02 * r0],
+            segments: nsides(res, 9),
+            hint: new Vector3(sx, 0, 0),
+            skin: () => skin,
+            mat: () => ({ region: REGION.horn, dorsal: 0 }),
+          });
+        }
         // A smaller second pair below.
         const b2 = at(0.88 * sx, 0.45, 0.06);
         spike(

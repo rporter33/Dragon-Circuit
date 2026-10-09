@@ -58,6 +58,8 @@ export function buildBody(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): void {
   const sPecs = plan.sAtZ(0.24 * T);
   const sigS = 0.06 * T;
   const hum = [idx.wings[0].humerus, idx.wings[1].humerus];
+  const sThroat0 = k[m.neckTop];
+  const sThroat1 = k[m.neckTop + 1];
   const rings: number[][] = [];
   b.begin(0);
   for (let si = 0; si < stations.length; si++) {
@@ -80,7 +82,10 @@ export function buildBody(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): void {
       const gP = Math.exp(-(((s - sPecs) / (1.3 * sigS)) ** 2) - ((at - 2.2) / 0.42) ** 2);
       if (gW > 1e-3 || gP > 1e-3) p.addScaledVector(n, 0.12 * hh * gW + 0.1 * hwT * gP);
       const wHum = 0.3 * gW + 0.4 * gP;
-      const skin = wHum > 1e-3 ? new Skin().mix(chain.skin(s), 1 - wHum).add(hum[side], wHum) : chain.skin(s);
+      let skin = wHum > 1e-3 ? new Skin().mix(chain.skin(s), 1 - wHum).add(hum[side], wHum) : chain.skin(s);
+      // The throat floor under and behind the jaw rides the gular bone (throat pumping).
+      const wG = 0.5 * (1 - smoothstep(sThroat0, sThroat1, s)) * smoothstep(-0.2, -0.8, c);
+      if (wG > 1e-3) skin = new Skin().mix(skin, 1 - wG).add(idx.gular, wG);
       // Angle around the tube for the scale rows (aMat.w = 2 + θ/π, θ in (−π, π], 0 on the spine;
       // the body material reads it, membranes use the channel for flutter instead).
       const around = 2 + (th > Math.PI ? th - Math.PI * 2 : th) / Math.PI;

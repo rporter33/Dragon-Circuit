@@ -1,14 +1,17 @@
-// The head: a lofted skull with brow ridges and a tapering snout, a separate lower jaw (so the
-// mouth can open on the jaw bone), eyes, nostrils and a few small teeth.
+// The head: a lofted reptile skull and a separate lower jaw (so the mouth can open on the jaw
+// bone). The skull carries the planes a lizard or crocodilian head reads by: the eye set in a
+// socket under a brow ledge and framed by lid rims, the bulging jaw muscle behind it, an ear
+// opening, nostrils on raised bosses, and a row of recurved teeth of uneven size. A forked
+// tongue lies on the jaw floor. Zones for the hide shader go in aExtra.z (lip row, eye ring,
+// nostril, ear); detail too small to read beyond close range is gated by the LOD profile.
 //
 // Head space: origin at the head bone pivot (end of the neck), +Z along the snout.
 
 import { Vector3 } from 'three';
 import { smoothstep } from '../../../core/math';
-import { GeoBuilder, REGION, Skin } from '../builder';
+import { GeoBuilder, REGION, Skin, ZONE, ellipsoid, tube } from '../builder';
 import { TONGUE, type RigDef } from '../rig';
-import { ellipsoid } from '../builder';
-import { keyed, spike, spow } from './shape';
+import { bezier3, keyed, spike, spow } from './shape';
 import { RES, type Res } from './res';
 
 export interface HeadInfo {
@@ -22,8 +25,26 @@ export interface HeadInfo {
   cheek: Vector3;
 }
 
+/** Eye position on the skull: station t and girth angle (0 = top, + = left). */
+const EYE_T = 0.4;
+const EYE_TH = 1.05;
+/** How deep the eyeball sits: its centre this many eye radii inside the skull surface. */
+const EYE_SINK = 0.5;
+
+/** Teeth per side, by position along the jaw: size factors (3rd and 4th enlarged). */
+const UPPER_SIZE = [0.9, 1.05, 1.6, 1.6, 1.0, 0.95, 1.1, 0.85, 0.8];
+const LOWER_SIZE = [0.95, 1.0, 1.1, 1.6, 0.9, 1.05, 0.85, 0.8];
+/** Which teeth the mid LOD keeps (5 upper, 4 lower: the enlarged ones and an even spread). */
+const UPPER_FEW = [0, 2, 3, 5, 7];
+const LOWER_FEW = [1, 3, 5, 6];
+
+const zone = (z: number) => [0, 0, z, 0] as const;
+/** Segments along each lid rim arc. */
+const LID_SEGS = 12;
+
 export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadInfo {
   const AROUND = res.headAround;
+  const STATIONS = res.headStations;
   const S = rig.props.shape;
   const H = rig.bones[rig.idx.head].pos;
   const L = S.headLength;
@@ -83,40 +104,92 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
     );
   const mouthY = (t: number) => Hh * keyed([[0, -0.1], [0.3, -0.38], [1, -0.48]], t);
   const zAt = (t: number) => zBack + (zTip - zBack) * t;
+  const tAtZ = (z: number) => (z - zBack) / (zTip - zBack);
 
-  // Brow ridge and cheek bulges, as outward offsets around the ring.
+  /** The plain skull surface (no bumps). */
+  const ringBase = (t: number, th: number, out: Vector3) => {
+    const c = Math.cos(th);
+    const s = Math.sin(th);
+    const sq = 2 / 2.35;
+    const y = mouthY(t) + spow(c, sq) * (c >= 0 ? top(t) : bottom(t));
+    const x = spow(s, sq) * width(t);
+    return out.set(H.x + x, H.y + y, H.z + zAt(t));
+  };
+
+  // --- Eye placement (on the plain skull, so the brow can overhang it) -------------------------
+  const rEye = rig.eyeRadius;
+  const eyeSurf = ringBase(EYE_T, EYE_TH, new Vector3());
+  const eyeIn = ringBase(EYE_T, EYE_TH - 0.3, new Vector3());
+  // Outward axis: mostly sideways, a little forward and up.
+  const eyeAxis = new Vector3(1, 0.22, 0.42).normalize();
+  const eyeCenter = eyeSurf.clone().addScaledVector(eyeAxis, -EYE_SINK * rEye);
+  eyeCenter.y = Math.min(eyeCenter.y, eyeIn.y - 0.15 * rEye);
+
+  // --- Surface anatomy: outward offsets around the ring -----------------------------------------
   const angDist = (a: number, b: number) => {
     let d = Math.abs(a - b) % (Math.PI * 2);
     if (d > Math.PI) d = Math.PI * 2 - d;
     return d;
   };
-  const bump = (t: number, th: number) => {
-    const brow = 0.24 * Hh * Math.exp(-(((t - 0.37) / 0.07) ** 2)) * Math.max(Math.exp(-((angDist(th, 0.78) / 0.32) ** 2)), Math.exp(-((angDist(th, -0.78) / 0.32) ** 2)));
-    const cheek = 0.14 * Wd * Math.exp(-(((t - 0.2) / 0.1) ** 2)) * Math.max(Math.exp(-((angDist(th, 1.85) / 0.45) ** 2)), Math.exp(-((angDist(th, -1.85) / 0.45) ** 2)));
-    return brow + cheek;
+  /** Gaussian in girth angle about ±center (both sides). */
+  const both = (th: number, center: number, w: number) =>
+    Math.max(Math.exp(-((angDist(th, center) / w) ** 2)), Math.exp(-((angDist(th, -center) / w) ** 2)));
+  // The brow ledge's crest runs just above the eye's top edge (its angular radius on the skull)
+  // and juts out past the eyeball, so the eye sits under it in a socket.
+  const browTh = EYE_TH - 1.3 * (rEye / Math.max(0.05, width(EYE_T)));
+  const eyeOuterX = eyeCenter.x - H.x + eyeAxis.x * rEye;
+  const _e = new Vector3();
+  const _a = new Vector3();
+  /** 0 inside the eye opening (close to the eye's axis), 1 clear of it. */
+  const socket = (p: Vector3) => {
+    _e.set(Math.abs(p.x - H.x) + H.x, p.y, p.z).sub(eyeCenter);
+    const along = _e.dot(eyeAxis);
+    const perp = _a.copy(_e).addScaledVector(eyeAxis, -along).length();
+    return along < -0.2 * rEye ? 1 : smoothstep(0.68 * rEye, 0.92 * rEye, perp);
   };
-
-  const ringPoint = (t: number, th: number, out: Vector3) => {
+  interface Bumps {
+    /** Lateral (x, outward) and vertical offsets. */
+    out: number;
+    up: number;
+    nostril: number;
+    ear: number;
+  }
+  const bumps = (t: number, th: number, base: Vector3, o: Bumps): Bumps => {
     const c = Math.cos(th);
     const s = Math.sin(th);
-    const sq = 2 / 2.35;
-    const w = width(t);
-    const y = mouthY(t) + spow(c, sq) * (c >= 0 ? top(t) : bottom(t));
-    const x = spow(s, sq) * w;
-    out.set(H.x + x, H.y + y, H.z + zAt(t));
-    const bb = bump(t, th);
-    if (bb > 0) {
-      const ny = c >= 0 ? c : c * 0.3;
-      out.x += s * bb;
-      out.y += ny * bb;
-    }
+    const open = socket(base);
+    // Brow ledge over the eye: at least 0.34 half-heights, and always out past the eyeball.
+    // (A flat-topped profile, so the crest reaches its height between ring vertices too.)
+    const gb = Math.min(1, 1.6 * Math.exp(-(((t - EYE_T) / 0.085) ** 2)) * both(th, browTh, 0.2)) * open;
+    const brow = gb * Math.max(0.34 * Hh, (eyeOuterX + 0.1 * rEye - Math.abs(base.x - H.x)) / Math.max(0.3, Math.abs(s)));
+    // Jaw muscle bulging behind and below the eye.
+    const cheek = 0.22 * Wd * Math.exp(-(((t - 0.18) / 0.1) ** 2)) * both(th, 2.05, 0.45) * open;
+    // Ear opening: a shallow oval pit behind the jaw muscle (super-Gaussian: a defined rim).
+    // (Never smaller than the ring spacing, so the mesh always samples it.)
+    const eu = (t - 0.06) / Math.max(0.05 / 1.2, 0.8 / STATIONS);
+    const ev = angDist(Math.abs(th), 1.55) / Math.max((0.035 * L) / Math.max(0.05, width(0.06)), (0.8 * Math.PI * 2) / AROUND);
+    const ear = Math.exp(-((eu * eu + ev * ev) ** 2));
+    // Nostril bosses on the snout.
+    const nostril = Math.exp(-(((t - 0.9) / 0.045) ** 2)) * both(th, 0.45, 0.22);
+    const boss = 0.08 * Hh * nostril;
+    o.out = s * (brow + cheek + boss * 0.7) - Math.sign(s) * 0.03 * L * ear;
+    o.up = c * 0.2 * brow + (c >= 0 ? c : c * 0.3) * cheek * 0.3 + c * boss * 0.7;
+    o.nostril = nostril;
+    o.ear = ear;
+    return o;
+  };
+  const _bump: Bumps = { out: 0, up: 0, nostril: 0, ear: 0 };
+  const ringPoint = (t: number, th: number, out: Vector3) => {
+    ringBase(t, th, out);
+    const o = bumps(t, th, out, _bump);
+    out.x += o.out;
+    out.y += o.up;
     return out;
   };
 
   // --- Skull ------------------------------------------------------------------------------------
   const p = new Vector3();
   b.begin(0);
-  const STATIONS = res.headStations;
   const rings: number[][] = [];
   for (let i = 0; i <= STATIONS; i++) {
     const t = i / STATIONS;
@@ -125,7 +198,19 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
       const th = (a / AROUND) * Math.PI * 2;
       const c = Math.cos(th);
       ringPoint(t, th, p);
+      const o = _bump;
       const palate = c < -0.5 && t > 0.3;
+      _e.set(Math.abs(p.x - H.x) + H.x, p.y, p.z);
+      const z =
+        o.nostril > 0.35
+          ? ZONE.nostril
+          : o.ear > 0.3
+            ? ZONE.ear
+            : _e.distanceTo(eyeCenter) < 1.75 * rEye
+              ? ZONE.eyeRing
+              : !palate && t > 0.28 && c < -0.2
+                ? ZONE.lip
+                : 0;
       ring.push(
         b.vertex(
           p,
@@ -134,6 +219,7 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
             region: palate ? REGION.mouth : REGION.skin,
             belly: t < 0.34 ? smoothstep(-0.2, -0.75, c) * (1 - smoothstep(0.24, 0.34, t)) : 0,
             dorsal: smoothstep(0.3, 0.95, c),
+            extra: z ? zone(z) : undefined,
           },
           -0.6 + t * L,
           Math.sin(th),
@@ -161,6 +247,7 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
   b.end();
 
   // --- Lower jaw ----------------------------------------------------------------------------------
+  // The throat floor behind the jaw's rami is partly carried by the gular bone (throat pumping).
   b.begin(0);
   const J = rig.bones[rig.idx.jaw].pos;
   const JST = res.jawStations;
@@ -168,10 +255,11 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
   const jz0 = J.z - H.z - 0.06 * L;
   const jz1 = 0.965 * L;
   const jrings: number[][] = [];
+  const gular = rig.idx.gular;
   for (let i = 0; i <= JST; i++) {
     const tj = i / JST;
     const z = jz0 + (jz1 - jz0) * tj;
-    const tu = (z - zBack) / (zTip - zBack);
+    const tu = tAtZ(z);
     const wj = width(tu) * 0.9 * (1 - 0.15 * smoothstep(0.85, 1, tj));
     const yTop = mouthY(tu) + 0.05 * Hh;
     const depth = Hh * keyed([[0, 0.7], [0.3, 0.55], [0.8, 0.4], [0.95, 0.28], [1, 0.1]], tj);
@@ -182,8 +270,16 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
       const s = Math.sin(th);
       const y = yTop + (c >= 0 ? spow(c, 0.8) * 0.05 * Hh : spow(c, 0.85) * depth);
       p.set(H.x + spow(s, 0.85) * wj, H.y + y, H.z + z);
+      const wg = 0.5 * (1 - smoothstep(0.05, 0.4, tj)) * smoothstep(-0.2, -0.8, c);
+      const lip = c > 0.0 && c <= 0.45 && tj > 0.12;
       ring.push(
-        b.vertex(p, jawSkin, { region: c > 0.45 ? REGION.mouth : REGION.skin, belly: smoothstep(0.35, -0.35, c), dorsal: 0 }, z, s),
+        b.vertex(
+          p,
+          wg > 1e-3 ? new Skin().add(rig.idx.jaw, 1 - wg).add(gular, wg) : jawSkin,
+          { region: c > 0.45 ? REGION.mouth : REGION.skin, belly: smoothstep(0.35, -0.35, c), dorsal: 0, extra: lip ? zone(ZONE.lip) : undefined },
+          z,
+          s,
+        ),
       );
     }
     jrings.push(ring);
@@ -196,7 +292,7 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
       b.quad(A[i], B[i], B[j], A[j]);
     }
   }
-  const jb = b.vertex(p.set(H.x, H.y + mouthY(0.1) - 0.25 * Hh, H.z + jz0 - 0.03 * L), jawSkin, { region: REGION.skin, belly: 1 });
+  const jb = b.vertex(p.set(H.x, H.y + mouthY(0.1) - 0.25 * Hh, H.z + jz0 - 0.03 * L), new Skin().add(rig.idx.jaw, 0.5).add(gular, 0.5), { region: REGION.skin, belly: 1 });
   const jt = b.vertex(p.set(H.x, H.y + mouthY(1) - 0.08 * Hh, H.z + jz1 + 0.02 * L), jawSkin, { region: REGION.skin, belly: 1 });
   for (let i = 0; i < JAR; i++) {
     const j = (i + 1) % JAR;
@@ -205,16 +301,7 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
   }
   b.end();
 
-  // --- Eyes ---------------------------------------------------------------------------------------
-  const rEye = rig.eyeRadius;
-  const te = 0.4;
-  const the = 1.05;
-  const eyeSurf = ringPoint(te, the, new Vector3());
-  const eyeIn = ringPoint(te, the - 0.3, new Vector3());
-  // Outward axis: mostly sideways, a little forward and up.
-  const eyeAxis = new Vector3(1, 0.22, 0.42).normalize();
-  const eyeCenter = eyeSurf.clone().addScaledVector(eyeAxis, -0.32 * rEye);
-  eyeCenter.y = Math.min(eyeCenter.y, eyeIn.y - 0.15 * rEye);
+  // --- Eyes, lid rims and nostrils ------------------------------------------------------------
   for (const side of [1, -1]) {
     const c = new Vector3(eyeCenter.x * side, eyeCenter.y, eyeCenter.z);
     const ax = new Vector3(eyeAxis.x * side, eyeAxis.y, eyeAxis.z);
@@ -223,42 +310,99 @@ export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadIn
     b.begin(0);
     ellipsoid(b, c, ax, ay, az, [rEye, rEye * 0.92, rEye * 1.08], () => headSkin, () => ({ region: REGION.eye }), res.eye[0], res.eye[1]);
     b.end();
-    // Nostril.
+    if (res.lids) {
+      // Scaly upper and lower lid rims where the eyeball leaves the socket: two arcs on the
+      // ball's surface, meeting at the corners (the lower lid is the mobile one in lizards).
+      const rc = c.clone().addScaledVector(ax, 0.42 * rEye);
+      const R = 0.95 * rEye;
+      for (const [a0, a1, r] of [
+        [-0.25, Math.PI + 0.25, 0.13],
+        [Math.PI - 0.25, 2 * Math.PI + 0.25, 0.11],
+      ] as const) {
+        const pts: Vector3[] = [];
+        for (let k = 0; k <= LID_SEGS; k++) {
+          const f = a0 + ((a1 - a0) * k) / LID_SEGS;
+          pts.push(rc.clone().addScaledVector(az, Math.cos(f) * R * side).addScaledVector(ay, Math.sin(f) * R * 0.92));
+        }
+        b.begin(0);
+        tube(b, {
+          points: pts,
+          radii: pts.map((_, k) => r * rEye * (0.55 + 0.45 * Math.sin((Math.PI * k) / LID_SEGS))),
+          segments: 4,
+          hint: ax,
+          skin: () => headSkin,
+          mat: () => ({ region: REGION.skin, dorsal: 0.4, extra: zone(ZONE.eyeRing) }),
+        });
+        b.end();
+      }
+    }
     if (res.lod === 2) continue;
-    const nose = ringPoint(0.95, 0.5 * side, new Vector3());
-    const nAx = new Vector3(0.6 * side, 0.5, 0.6).normalize();
-    const nAy = new Vector3(0, 1, 0).addScaledVector(nAx, -nAx.y).normalize();
-    const nAz = new Vector3().crossVectors(nAx, nAy).normalize();
+    // Nostril: a monitor-like slit on top of the boss, angled up and back.
+    const nose = ringPoint(0.905, 0.45 * side, new Vector3());
+    const nAx = new Vector3(0.62 * side, 0.62, 0.2).normalize();
+    const nAz = new Vector3(0.12 * side, 0.3, 1).normalize();
+    nAz.addScaledVector(nAx, -nAz.dot(nAx)).normalize();
+    const nAy = new Vector3().crossVectors(nAz, nAx).normalize();
+    const big = res.nostrils;
     b.begin(0);
-    ellipsoid(b, nose.addScaledVector(nAx, -0.012 * L), nAx, nAy, nAz, [0.012 * L, 0.02 * L, 0.03 * L], () => headSkin, () => ({ region: REGION.mouth }), 4, 8);
+    ellipsoid(
+      b,
+      nose.addScaledVector(nAx, -0.01 * L),
+      nAx,
+      nAy,
+      nAz,
+      big ? [0.03 * L, 0.02 * L, 0.065 * L] : [0.015 * L, 0.02 * L, 0.04 * L],
+      () => headSkin,
+      () => ({ region: REGION.mouth, extra: zone(ZONE.nostril) }),
+      big ? 4 : 3,
+      big ? 8 : 5,
+    );
     b.end();
   }
 
   // --- Teeth --------------------------------------------------------------------------------------
-  const toothLen = 0.055 * L;
-  for (const side of [1, -1]) {
-    if (!res.teeth[0]) break;
-    b.begin(0);
-    for (let i = 0; i < 5; i++) {
-      const t = 0.5 + i * 0.105;
-      const z = zAt(t);
-      const w = width(t) * 0.86;
-      const base = new Vector3(H.x + w * side, H.y + mouthY(t) - 0.02 * Hh, H.z + z);
-      const len = toothLen * (i === 3 ? 1.5 : 1) * (1 - 0.1 * i);
-      const tip = base.clone().add(new Vector3(0.12 * len * side, -len, 0.15 * len));
-      spike(b, res.toothSegs > 1 ? [base, base.clone().lerp(tip, 0.5), tip] : [base, tip], 0.02 * L, headSkin, { region: REGION.claw }, res.toothSides);
+  // Recurved and of uneven size, the upper and lower rows interlocking (offset by half a
+  // spacing). The ironback has blunt crocodilian pegs, its enlarged 4th lower tooth standing
+  // outside the upper lip.
+  const peg = !!S.plates;
+  const toothLen = (peg ? 0.042 : 0.052) * L;
+  const nUp = res.teeth[0];
+  const nLo = res.teeth[1];
+  const upperIds = nUp >= UPPER_SIZE.length ? UPPER_SIZE.map((_, i) => i) : UPPER_FEW.slice(0, nUp);
+  const lowerIds = nLo >= LOWER_SIZE.length ? LOWER_SIZE.map((_, i) => i) : LOWER_FEW.slice(0, nLo);
+  const spacing = 0.65 / 8;
+  const toothPath = (base: Vector3, dir: number, len: number, side: number, out: number) => {
+    // dir: -1 = upper (points down), +1 = lower (points up). Recurve: the tip hooks back.
+    const hook = (peg ? 0.08 : 0.22) * len;
+    const tip = base.clone().add(new Vector3(out * len * side, dir * len, -hook));
+    if (res.toothSegs < 2) return [base, tip];
+    const mid = base.clone().add(new Vector3(out * 0.5 * len * side, dir * 0.6 * len, 0.06 * len));
+    return bezier3(base, mid, tip, res.toothSegs);
+  };
+  if (nUp > 0) {
+    for (const side of [1, -1]) {
+      b.begin(0);
+      for (const i of upperIds) {
+        const t = 0.3 + i * spacing;
+        const size = UPPER_SIZE[i];
+        const base = new Vector3(H.x + width(t) * 0.87 * side, H.y + mouthY(t) - 0.01 * Hh, H.z + zAt(t));
+        const len = toothLen * size;
+        spike(b, toothPath(base, -1, len, side, 0.1), (peg ? 0.019 : 0.015) * L * Math.sqrt(size), headSkin, { region: REGION.tooth }, res.toothSides, new Vector3(0, 0, 1), 1, peg ? 0.6 : 1);
+      }
+      b.end();
+      b.begin(0);
+      for (const i of lowerIds) {
+        const z = zAt(0.3 + (i + 0.5) * spacing);
+        const tu = tAtZ(z);
+        const croc = peg && i === 3;
+        const size = LOWER_SIZE[i] * (croc ? 1.4 : 1);
+        // The ironback's 4th lower tooth sits in a notch outside the upper jaw.
+        const base = new Vector3(H.x + width(tu) * (croc ? 0.93 : 0.78) * side, H.y + mouthY(tu) + 0.03 * Hh, H.z + z);
+        const len = toothLen * 0.85 * size * (croc ? 1.25 : 1);
+        spike(b, toothPath(base, 1, len, side, croc ? 0.18 : 0.04), (peg ? 0.018 : 0.014) * L * Math.sqrt(size), jawSkin, { region: REGION.tooth }, res.toothSides, new Vector3(0, 0, 1), 1, peg ? 0.6 : 1);
+      }
+      b.end();
     }
-    for (let i = 0; i < 4; i++) {
-      const tj = 0.5 + i * 0.13;
-      const z = jz0 + (jz1 - jz0) * tj;
-      const tu = (z - zBack) / (zTip - zBack);
-      const w = width(tu) * 0.78;
-      const base = new Vector3(H.x + w * side, H.y + mouthY(tu) + 0.02 * Hh, H.z + z);
-      const len = toothLen * 0.75 * (i === 3 ? 1.25 : 1);
-      const tip = base.clone().add(new Vector3(0.05 * len * side, len, 0.1 * len));
-      spike(b, res.toothSegs > 1 ? [base, base.clone().lerp(tip, 0.5), tip] : [base, tip], 0.018 * L, jawSkin, { region: REGION.claw }, res.toothSides);
-    }
-    b.end();
   }
 
   if (!res.tongue) return headInfo();
