@@ -33,6 +33,7 @@ export interface WyvernOptions {
 const _m = new Matrix4();
 const _v = new Vector3();
 const _mInv = new Matrix4();
+const _acc = new Float64Array(16);
 const X_AXIS = new Vector3(1, 0, 0);
 /** The forearm's radius about half way down (× the arm scale; parts/wings.ts). */
 const FOREARM_STEP_R = 0.16;
@@ -63,7 +64,8 @@ export class Wyvern implements WyvernRenderable {
   /** Graphics quality (LOD caps and shading detail follow it once the LOD chain lands). */
   private quality: QualityLevel = 'high';
   private tipOffset = new Vector3();
-  private foldRest!: FoldRest;
+  /** The fold helpers' rest blend, flattened for the per-frame hold (see holdFoldHelpers). */
+  private foldHold = { start: new Int32Array(3), bone: new Int32Array(0), weight: new Float64Array(0), offset: new Float64Array(0) };
   /** The forearm steps (WyvernSocket stepL/R) in each forearm bone's space. */
   private stepOffset: [Vector3, Vector3] = [new Vector3(), new Vector3()];
   private mouthOffset = new Vector3();
@@ -211,28 +213,29 @@ export class Wyvern implements WyvernRenderable {
    * to the chest, so anything re-deriving world matrices later keeps the hold).
    */
   private holdFoldHelpers(): void {
-    const rig = this.rig;
     const B = this.bones;
-    _mInv.copy(B[rig.idx.chest].matrixWorld).invert();
+    const F = this.foldHold;
+    _mInv.copy(B[this.rig.idx.chest].matrixWorld).invert();
+    const acc = _acc;
     for (let side = 0; side < 2; side++) {
-      const fold = B[rig.idx.fold[side]];
-      const pivot = rig.bones[rig.idx.fold[side]].pos;
-      const out = _m.elements;
-      out.fill(0);
-      const rest = this.foldRest[side];
-      for (let i = 0; i < rest.length; i++) {
-        const { bone, weight } = rest[i];
+      acc.fill(0);
+      for (let i = F.start[side]; i < F.start[side + 1]; i++) {
         // This bone's skinning matrix carried to the helper's bind pivot: M · T(pivot − bone).
-        _v.subVectors(pivot, rig.bones[bone].pos);
-        const e = B[bone].matrixWorld.elements;
-        for (let k = 0; k < 12; k++) out[k] += e[k] * weight;
-        out[12] += (e[0] * _v.x + e[4] * _v.y + e[8] * _v.z + e[12]) * weight;
-        out[13] += (e[1] * _v.x + e[5] * _v.y + e[9] * _v.z + e[13]) * weight;
-        out[14] += (e[2] * _v.x + e[6] * _v.y + e[10] * _v.z + e[14]) * weight;
-        out[15] += e[15] * weight;
+        const e = B[F.bone[i]].matrixWorld.elements;
+        const w = F.weight[i];
+        const ox = F.offset[i * 3];
+        const oy = F.offset[i * 3 + 1];
+        const oz = F.offset[i * 3 + 2];
+        for (let k = 0; k < 12; k++) acc[k] += e[k] * w;
+        acc[12] += (e[0] * ox + e[4] * oy + e[8] * oz + e[12]) * w;
+        acc[13] += (e[1] * ox + e[5] * oy + e[9] * oz + e[13]) * w;
+        acc[14] += (e[2] * ox + e[6] * oy + e[10] * oz + e[14]) * w;
+        acc[15] += e[15] * w;
       }
-      fold.matrixWorld.copy(_m);
-      fold.matrix.multiplyMatrices(_mInv, _m);
+      const fold = B[this.rig.idx.fold[side]];
+      const mw = fold.matrixWorld.elements;
+      for (let k = 0; k < 16; k++) mw[k] = acc[k];
+      fold.matrix.multiplyMatrices(_mInv, fold.matrixWorld);
     }
   }
 
@@ -259,7 +262,7 @@ export class Wyvern implements WyvernRenderable {
     if (breedChanged) this.rig = rigFor(look.breed);
     const rig = this.rig;
     this.info = buildWyvernGeometry(rig, look);
-    this.foldRest = foldRest(rig);
+    this.foldHold = flattenFoldRest(rig, foldRest(rig));
     this.shapeKey = shapeKeyOf(look);
 
     // Bones: identity rest rotations, positions relative to the parent.
@@ -334,3 +337,24 @@ function shapeKeyOf(look: WyvernLook): string {
   return `${look.breed}|${look.horns}|${look.frill}|${look.tail}|${look.saddle}`;
 }
 
+/** FoldRest as flat typed arrays: per side a run of (bone, weight, offset to the helper's pivot). */
+function flattenFoldRest(rig: RigDef, rest: FoldRest) {
+  const n = rest[0].length + rest[1].length;
+  const out = { start: new Int32Array(3), bone: new Int32Array(n), weight: new Float64Array(n), offset: new Float64Array(n * 3) };
+  let i = 0;
+  for (let side = 0; side < 2; side++) {
+    out.start[side] = i;
+    const pivot = rig.bones[rig.idx.fold[side]].pos;
+    for (const { bone, weight } of rest[side]) {
+      out.bone[i] = bone;
+      out.weight[i] = weight;
+      _v.subVectors(pivot, rig.bones[bone].pos);
+      out.offset[i * 3] = _v.x;
+      out.offset[i * 3 + 1] = _v.y;
+      out.offset[i * 3 + 2] = _v.z;
+      i++;
+    }
+  }
+  out.start[2] = i;
+  return out;
+}
