@@ -230,3 +230,41 @@ describe('flying the field', () => {
     expect(glide(0)).toBeLessThan(-5);
   });
 });
+
+describe('small-scale turbulence (FLT-07)', () => {
+  /** Peak and spread of the vertical air at one height across a stretch of sky, for a weather. */
+  function vertical(windSpeed: number, gust: number) {
+    const f = new WindField(testLayout());
+    f.state.wind.set(windSpeed, 0, 0);
+    f.state.gust = gust;
+    const out = new Vector3();
+    const p = new Vector3();
+    let peak = 0;
+    let maxStep = 0;
+    let prev = 0;
+    for (let i = 0; i < 800; i++) {
+      // Fly 3.2 km at 4 m spacing (a wing's span or two), inside the boundary and away from the
+      // island and the thermal.
+      p.set(-1500, 520, -1600 + i * 4);
+      f.state.time = i * 0.1;
+      f.windAt(p, out);
+      peak = Math.max(peak, Math.abs(out.y));
+      if (i > 0) maxStep = Math.max(maxStep, Math.abs(out.y - prev));
+      prev = out.y;
+    }
+    return { peak, maxStep };
+  }
+
+  it('bumps a breezy day and stays gentle in clear air', () => {
+    const breezy = vertical(9.5, 0.7);
+    const clear = vertical(4, 0.22);
+    // Large-scale gust (~1.1 m/s) plus the 35 m octave (~1.7 m/s at peak).
+    expect(breezy.peak).toBeGreaterThan(1.5);
+    expect(breezy.peak).toBeLessThan(4);
+    expect(clear.peak).toBeLessThan(0.9);
+    // Small scale: neighbouring samples 4 m apart differ noticeably in breezy air...
+    expect(breezy.maxStep).toBeGreaterThan(0.08);
+    // ...but the field stays smooth (no jitter).
+    expect(breezy.maxStep).toBeLessThan(1.5);
+  });
+});

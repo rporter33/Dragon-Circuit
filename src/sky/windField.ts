@@ -64,6 +64,13 @@ export function boundaryApproach01(r: number, boundaryRadius: number): number {
 }
 
 const GUST_SCALE = 1 / 230;
+/**
+ * Small-scale vertical turbulence (FLT-07): a 35 m octave advected with the gusts, so a big
+ * wyvern's wings meet different air and it rocks and bumps on breezy days (~1.7 m/s peak at 9.5
+ * m/s wind and gust 0.7) while clear air (4 m/s, gust 0.22) stays nearly smooth (~0.2 m/s).
+ */
+const TURB_SCALE = 1 / 35;
+const TURB_GAIN = 0.25;
 const CELL = 400;
 
 interface RidgeIsland {
@@ -122,7 +129,8 @@ export class WindField {
   windAt(p: Vector3, out: Vector3): Vector3 {
     const s = this.state;
     const w = s.wind;
-    const speed = Math.hypot(w.x, w.z);
+    // sqrt rather than Math.hypot (which allocates in V8): this runs at 120 Hz per sample point.
+    const speed = Math.sqrt(w.x * w.x + w.z * w.z);
     out.set(w.x, 0, w.z);
 
     // Gusts: noise advected with the air so a gust front sweeps across the sky, not in place.
@@ -141,6 +149,9 @@ export class WindField {
       out.x += dx * along - dz * lateral;
       out.z += dz * along + dx * lateral;
       out.y += n3 * s.gust * (0.6 + speed * 0.1);
+      const tx = (p.x - s.drift.x) * TURB_SCALE;
+      const tz = (p.z - s.drift.z) * TURB_SCALE;
+      out.y += this.noise(tx + 71.3, p.y * TURB_SCALE + s.time * 0.3, tz - 44.9) * TURB_GAIN * s.gust * speed;
     }
 
     out.y += this.thermalAt(p) + this.ridgeAt(p, speed);
@@ -151,7 +162,9 @@ export class WindField {
   /** Vertical speed from thermals at p (m/s). */
   thermalAt(p: Vector3): number {
     let up = 0;
-    for (const t of this.thermals) {
+    const thermals = this.thermals;
+    for (let i = 0; i < thermals.length; i++) {
+      const t = thermals[i];
       const dx = p.x - t.x;
       const dz = p.z - t.z;
       const reach = t.radius * THERMAL_EDGE;
@@ -171,14 +184,15 @@ export class WindField {
    * Vertical speed from wind deflected by island cliffs (m/s): positive on the windward side,
    * a gentle sink on the lee. `speed` defaults to the prevailing wind speed.
    */
-  ridgeAt(p: Vector3, speed = Math.hypot(this.state.wind.x, this.state.wind.z)): number {
+  ridgeAt(p: Vector3, speed = Math.sqrt(this.state.wind.x * this.state.wind.x + this.state.wind.z * this.state.wind.z)): number {
     if (speed < 0.01) return 0;
     const list = this.grid.get(key(Math.floor(p.x / CELL), Math.floor(p.z / CELL))) ?? this.empty;
     if (list.length === 0) return 0;
     const wx = this.state.wind.x / speed;
     const wz = this.state.wind.z / speed;
     let lift = 0;
-    for (const isl of list) {
+    for (let i = 0; i < list.length; i++) {
+      const isl = list[i];
       if (p.y < isl.bottom || p.y > isl.ceiling) continue;
       const d = isl.def;
       const dx = p.x - d.x;
@@ -205,7 +219,7 @@ export class WindField {
    * vertical buffeting that grows with it.
    */
   addBoundary(p: Vector3, out: Vector3): Vector3 {
-    const r = Math.hypot(p.x, p.z);
+    const r = Math.sqrt(p.x * p.x + p.z * p.z);
     const b = this.layout.boundaryRadius;
     if (r < b - BOUNDARY_RAMP_IN || r < 1e-3) return out;
     const amount = boundaryPush01(r, b);
