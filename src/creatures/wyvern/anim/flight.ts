@@ -2,20 +2,23 @@
 //
 //   flightTrunk       heave (the downstroke lifts the chest and saddle, the recovery lets them
 //                     sink), the chest pitching with the beat, the lean into a roll, the flare's
-//                     pitch, and the per-frame wing prelude (turn asymmetry, air load)
+//                     pitch, the stick's leads (the head into a turn, the tail's rudder) and the
+//                     per-frame wing prelude (the roll's initiation, turn asymmetry, air load)
 //   flightWingPose    one wing's flight pose as joint channels: glide, tuck and flare blended,
 //                     the heavy flap cycle (the outer wing of a turn takes the bigger stroke), g-load
-//                     and turn adjustments, stall buffet, the fingers bending under the air load
+//                     and turn adjustments, the roll-in (the inner wing flexes, the outer reaches),
+//                     stall buffet, the fingers bending under the air load
 //   flightLegWeights  legs tucked at speed, dangling when slow and swinging with the body's
 //                     fore-aft acceleration, reaching for the ground on approach, pushing off
 //   flightUniforms    trailing-edge flutter, ripple and the membrane billow per wing
 //
 // Outputs for other layers through AnimFrame: heave, chestLift, lean, spineAir/chestAir/pelvisAir,
-// spreadAir, legTuck/legReach/legPush/legSwing, and the cross-stream leads lookLead, tailSteer and
-// hover (0 until the turn and hover work lands). Methods take no number arguments (see frame.ts).
+// spreadAir, legTuck/legReach/legPush/legSwing, and the cross-stream leads lookLead and tailSteer
+// (B3) and hover (0 until B7). Methods take no number arguments (see frame.ts).
 
 import { Vector3 } from 'three';
 import { DEG, TAU, clamp, clamp01, smoothstep } from '../../../core/math';
+import { BREEDS } from '../../../flight/breeds';
 import { SIDE_SIGN } from '../rig';
 import { Bouncy, Spring, noise1 } from '../ik';
 import {
@@ -41,6 +44,22 @@ import { FWD, type AnimFrame } from './frame';
 
 const _v = new Vector3();
 
+/**
+ * The roll stick's follower (a critically damped spring, rad/s): the stick's lead over it, the
+ * roll's initiation, holds for a moment and dies away into the sustained turn over 0.4 s.
+ */
+const ROLL_OMEGA = 6;
+/**
+ * The inner wing's flex at full roll stick: elbow forward, wrist back (degrees; the recovery
+ * stroke's M-fold is 34/46 at its deepest, which shortens the span by a tenth).
+ */
+const INNER_FORE = 42;
+const INNER_HAND = 58;
+/** The tail's rudder at full yaw (rad per segment), and its spring (overshoots about 0.25 s). */
+const RUDDER = 0.12;
+const RUDDER_OMEGA = 12;
+const RUDDER_ZETA = 0.45;
+
 export class FlightLayer {
   private readonly a: WyvernAnimator;
   private readonly f: AnimFrame;
@@ -59,8 +78,24 @@ export class FlightLayer {
   /** adjustPose's inputs for the wing being posed (a record: no doubles through call arguments). */
   private readonly adj = wingAdjust();
   private readonly legSwing = new Bouncy(5, 0.35);
+  /** The breed's top roll rate (rad/s) and yaw authority (rad/s²): a ghost's stick is estimated against them. */
+  private readonly maxRollRate: number;
+  private readonly yawAuthority: number;
+  /**
+   * The stick this frame (pose.control, or estimated from the body's motion for a ghost) and the
+   * roll stick's slow follower (ROLL_OMEGA): stick − follower is the roll's initiation, which
+   * dies away under a held stick and swings the other way on the roll-out.
+   */
+  private ctlRoll = 0;
+  private ctlYaw = 0;
+  private readonly rollSlow = new Spring(ROLL_OMEGA);
+  /** The previous frame's smoothed body rates (for a ghost's angular acceleration). */
+  private readonly prevOm = new Vector3();
+  /** The tail's rudder: follows the stick and overshoots briefly on the roll-out. */
+  private readonly rudder = new Bouncy(RUDDER_OMEGA, RUDDER_ZETA);
   // This frame's wing prelude (flightTrunk → flightWingPose).
   private asymBase = 0;
+  private rollInit = 0;
   private glideLoad = 0;
   private beatLoad = 0;
 
@@ -73,6 +108,49 @@ export class FlightLayer {
     this.clockS = Math.sin(Math.PI * D);
     this.clockK = ((0.5 - D) * Math.PI) / this.clockS / TAU;
     this.clockC = 0.5 * D;
+    this.maxRollRate = BREEDS[a.rig.props.breed].maxRollRate;
+    this.yawAuthority = BREEDS[a.rig.props.breed].yawAuthority;
+  }
+
+  /**
+   * The stick: the player's (pose.control), or for a ghost (no control recorded) an estimate from
+   * the body's motion: the roll stick commands a roll rate, so the rate plus a lead of its
+   * acceleration over the breed's top rate; the rudder from the yaw acceleration alone over the
+   * breed's yaw authority (a coordinated turn's steady yaw rate is not rudder). Then the roll's
+   * initiation and the rudder.
+   */
+  private controls(): void {
+    const f = this.f;
+    const ctl = f.pose.control;
+    const om = f.om;
+    const dt = f.dt;
+    if (ctl) {
+      this.ctlRoll = clamp(ctl.roll, -1, 1);
+      this.ctlYaw = clamp(ctl.yaw, -1, 1);
+    } else if (dt > 1e-5) {
+      // Body frame: +z rolls right, +y yaws left.
+      const az = f.teleport ? 0 : (om.z - this.prevOm.z) / dt;
+      const ay = f.teleport ? 0 : (om.y - this.prevOm.y) / dt;
+      this.ctlRoll = clamp((om.z + 0.25 * az) / this.maxRollRate, -1, 1);
+      this.ctlYaw = clamp(-ay / this.yawAuthority, -1, 1);
+    }
+    this.prevOm.copy(om);
+    const air = f.airW;
+    if (f.teleport) {
+      this.rollSlow.reset(this.ctlRoll);
+      this.rudder.reset(0);
+    }
+    // (dt 0 is a no-op: the follower and the rudder spring only move with time.)
+    const slow = dt > 0 ? this.rollSlow.step(this.ctlRoll, dt) : this.rollSlow.value;
+    this.rollInit = (this.ctlRoll - slow) * air * f.spreadAir;
+    // The head turns into the turn first (the rope shortened on that side), then the body banks:
+    // the life layer adds lookLead to the look yaw (+ = toward the body's left, like lookYaw).
+    f.lookLead = -(0.5 * this.ctlYaw + 0.35 * this.ctlRoll) * air;
+    // The tail rudder (+ = toward the body's left): a right yaw swings the tail's tip right (a
+    // rudder pushed right yaws the nose right), a little with the roll too, so a roll-out lets it
+    // swing through center and back (the spring's overshoot, about a quarter second).
+    const steer = -RUDDER * clamp(this.ctlYaw + 0.4 * this.ctlRoll, -1, 1) * air;
+    f.tailSteer = dt > 0 ? this.rudder.step(steer, dt) : this.rudder.value;
   }
 
   /** Heave, chest lift and lean, the flare's trunk pitch, and this frame's wing prelude. */
@@ -96,7 +174,7 @@ export class FlightLayer {
     // The wings drive the chest: it pitches up on the downstroke and leads the roll into a turn.
     const chestLift = -flap * airW * (0.05 + 0.03 * heft) * Math.sin((sp - 0.02) * TAU);
     f.chestLift = chestLift;
-    f.lean = clamp(f.bank * 0.1 + om.z * 0.06, -0.14, 0.14) * airW;
+    f.lean = clamp(f.bank * 0.1 + om.z * 0.1, -0.22, 0.22) * airW;
     f.spineAir = chestLift - flare * 0.06 * airW;
     f.chestAir = chestLift * 0.6 - flare * 0.04;
     f.pelvisAir = flare * 0.05 * airW - tuck * 0.02;
@@ -109,9 +187,9 @@ export class FlightLayer {
     // and bend the fingers, the recovery stroke lets them go slack.
     this.glideLoad = 0.3 * clamp(f.gLoad, 0, 3) * spreadAir;
     this.beatLoad = flap * strokeLoad(phase, this.style) * (1 + 0.25 * heft);
-    // Cross-stream leads (B3, B7): none yet.
-    f.lookLead = 0;
-    f.tailSteer = 0;
+    // The stick: the roll's initiation, the head's lead and the tail's rudder (B3).
+    this.controls();
+    // Hover (B7): none yet.
     f.hover = 0;
   }
 
@@ -150,6 +228,27 @@ export class FlightLayer {
     adj.buffetTw = bt;
     adj.spread = f.spreadAir;
     adjustPose(out, adj);
+    // Rolling in (B3): the stick asks first and the wings answer before the body has banked.
+    // The inner wing half-folds (elbow forward, wrist back, hand and tips down), shortening its
+    // span; the outer one reaches forward and up with its leading edge raised. It dies away into
+    // the sustained turn's asymmetry (adjustPose) over 0.4 s, and swings the other way on the
+    // roll-out.
+    const init = this.rollInit * sgn;
+    if (init > 0) {
+      out[W.humTw] -= 10 * init * DEG;
+      out[W.humEl] += 6 * init * DEG;
+      out[W.humSw] -= 6 * init * DEG;
+    } else if (init < 0) {
+      // The inner wing flexes at the elbow and wrist (deeper than the recovery's M-fold, for a
+      // moment): its span shortens by a sixth while the outer one stays fully spread.
+      const m = -init;
+      out[W.foreSw] -= INNER_FORE * m * DEG;
+      out[W.handSw] += INNER_HAND * m * DEG;
+      out[W.handEl] -= 8 * m * DEG;
+      out[W.f0bEl] -= 6 * m * DEG;
+      out[W.f1bEl] -= 6 * m * DEG;
+      out[W.f2bEl] -= 6 * m * DEG;
+    }
     const loadT = airW * (this.glideLoad + this.beatLoad) * (1 + 0.35 * clamp(asym, -1, 1));
     const load = this.loadSpring[side].step(loadT, f.dt);
     this.wingLoad[side] = load;

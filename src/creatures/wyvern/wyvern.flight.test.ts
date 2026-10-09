@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
 import type { BreedId } from '../../core/types';
+import { DEG } from '../../core/math';
 import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { strokeForce } from '../../flight/FlightModel';
 import { createWyvernPose } from '../../player/poses';
@@ -366,5 +367,169 @@ describe('the beat’s shared clock', () => {
       expect(flapPose(0.15 * st.down - st.lead, 0, new Float32Array(26), st)[W.humTw], b).toBeGreaterThan(0.25);
     }
     expect(FLAP_STYLES.galewing.fold).toBeLessThan(FLAP_STYLES.harrier.fold);
+  });
+});
+
+/** The animator's per-frame record (the cross-stream signals the flight layer writes). */
+const frameOf = (w: Wyvern) => (w as unknown as { animator: { frame: { lookLead: number; tailSteer: number; lean: number } } }).animator.frame;
+
+/**
+ * A roll to the right from a level glide, as the flight model flies it: the stick goes over at
+ * t = 0 and the body's roll rate spins up toward the breed's top rate over about a third of a
+ * second (FlightModel.measureRoll), banking to `bankTo` and holding it. Calls `sample` every frame
+ * from the step on with the time since the step. `stick` false: a ghost (no control recorded).
+ */
+function rollRight(breed: BreedId, sample: (t: number, w: Wyvern) => void, opts: { stick?: boolean; bankTo?: number; seconds?: number } = {}) {
+  const { stick = true, bankTo = 0.6, seconds = 2 } = opts;
+  const w = new Wyvern(look(breed));
+  const p = gliding();
+  if (stick) p.control = { pitch: 0, roll: 0, yaw: 0 };
+  else delete p.control;
+  const maxRate = BREEDS[breed].maxRollRate;
+  let bank = 0;
+  let rate = 0;
+  const dt = 1 / 60;
+  for (let i = 0; i < 60; i++) {
+    p.position.z += 24 * dt;
+    p.lookTarget.z += 24 * dt;
+    w.update(dt, p);
+  }
+  for (let i = 0; i <= seconds / dt; i++) {
+    const t = i * dt;
+    const holding = bank < bankTo;
+    if (p.control) p.control.roll = holding ? 1 : 0;
+    // The body chases the commanded rate (spin-up ~0.3 s), then stops at the bank.
+    rate += ((holding ? maxRate : 0) - rate) * (1 - Math.exp(-dt / 0.12));
+    bank = Math.min(bankTo, bank + rate * dt);
+    p.orientation.setFromAxisAngle(new Vector3(0, 0, 1), bank);
+    p.angularVelocity.set(0, 0, rate);
+    p.position.z += 24 * dt;
+    p.lookTarget.z += 24 * dt;
+    w.update(dt, p);
+    sample(t, w);
+  }
+  w.dispose();
+}
+
+/** Span of each wing, shoulder joint to wingtip (m): [left (outer in a right turn), right (inner)]. */
+function reaches(w: Wyvern): [number, number] {
+  w.getWingtips(_p, _q);
+  const bones = w.skinnedMesh!.skeleton.bones;
+  const sl = bones.find((b) => b.name === 'humerusL')!.getWorldPosition(new Vector3());
+  const sr = bones.find((b) => b.name === 'humerusR')!.getWorldPosition(new Vector3());
+  return [_p.distanceTo(sl), _q.distanceTo(sr)];
+}
+
+describe('turns that lead (B3: the head turns first, the wings answer the stick, then the body banks)', { timeout: 60000 }, () => {
+  it('rolls in with the inner wing flexed: its span 15% shorter than the outer’s on the harrier (10% on every breed), easing into the held turn', () => {
+    for (const b of BREED_ORDER) {
+      let rollIn = Infinity;
+      let held = 0;
+      rollRight(b, (t, w) => {
+        const [outer, inner] = reaches(w);
+        if (t > 0.05 && t < 0.3) rollIn = Math.min(rollIn, inner / outer);
+        if (t > 1.9) held = inner / outer;
+      });
+      expect(rollIn, b).toBeLessThanOrEqual(b === 'harrier' ? 0.85 : 0.9);
+      // The initiation dies away once the bank is held: the wings even out again.
+      expect(held, b).toBeGreaterThan(rollIn + 0.05);
+    }
+  });
+
+  it('turns the head into the turn before the body has turned (lookLead), for the player and for a ghost', () => {
+    for (const stick of [true, false]) {
+      let lead0 = 0;
+      let leadHeld = NaN;
+      rollRight(
+        'harrier',
+        (t, w) => {
+          const f = frameOf(w);
+          // + = toward the body's left: a right turn leads to the right (negative).
+          if (t < 0.12) lead0 = Math.min(lead0, f.lookLead);
+          if (t > 1.9) leadHeld = f.lookLead;
+        },
+        { stick },
+      );
+      expect(lead0, `stick ${stick}`).toBeLessThan(-0.15);
+      // Once the bank is held and the stick centered, the lead is gone.
+      expect(Math.abs(leadHeld), `stick ${stick}`).toBeLessThan(0.05);
+    }
+  });
+
+  it('leans the chest into the roll further than before (up to 0.22 rad)', () => {
+    let lean = 0;
+    rollRight('harrier', (_t, w) => (lean = Math.max(lean, frameOf(w).lean)), { bankTo: 1.1 });
+    expect(lean).toBeGreaterThan(0.14);
+    expect(lean).toBeLessThanOrEqual(0.22 + 1e-9);
+  });
+
+  it('steers with the tail: a right yaw swings the tail right, and it swings through and back on the release', () => {
+    const w = new Wyvern(look('harrier'));
+    const p = gliding();
+    p.control = { pitch: 0, roll: 0, yaw: 0 };
+    const dt = 1 / 60;
+    const run = (secs: number, yaw: number, each?: (s: number) => void) => {
+      for (let i = 0; i < secs / dt; i++) {
+        p.control!.yaw = yaw;
+        p.position.z += 24 * dt;
+        p.lookTarget.z += 24 * dt;
+        w.update(dt, p);
+        each?.(frameOf(w).tailSteer);
+      }
+    };
+    run(1, 0);
+    run(1, 1);
+    const held = frameOf(w).tailSteer;
+    expect(held).toBeLessThan(-0.1);
+    expect(held).toBeGreaterThan(-0.14);
+    let over = -Infinity;
+    run(0.5, 0, (s) => (over = Math.max(over, s)));
+    // Through center and back: a short overshoot to the other side.
+    expect(over).toBeGreaterThan(0.01);
+    run(1.5, 0);
+    expect(Math.abs(frameOf(w).tailSteer)).toBeLessThan(0.005);
+    w.dispose();
+  });
+
+  it('bows the tips of a pulling wing about 18° at 3 g, the outer wing more than the inner', () => {
+    const tips = (gLoadTurn: boolean) => {
+      const w = new Wyvern(look('harrier'));
+      const p = gliding();
+      p.control = { pitch: 0, roll: 0, yaw: 0 };
+      // A steady banked turn pulling 3 g as the animator reads it (1 + V·pitch rate/g plus a little
+      // for the bank): 70° of bank, the nose pitching up (−x) at 0.74 rad/s.
+      if (gLoadTurn) {
+        p.orientation.setFromAxisAngle(new Vector3(0, 0, 1), 1.23);
+        p.angularVelocity.set(-0.74, 0, 0);
+      }
+      for (let i = 0; i < 180; i++) {
+        p.position.z += 24 / 60;
+        p.lookTarget.z += 24 / 60;
+        w.update(1 / 60, p);
+      }
+      // The wingtip finger's bend: elevation of its distal segment over its proximal one (body frame).
+      const bones = w.skinnedMesh!.skeleton.bones;
+      const inv = p.orientation.clone().invert();
+      const at = (name: string) => bones.find((x) => x.name === name)!.getWorldPosition(new Vector3()).applyQuaternion(inv);
+      const tipsW = [new Vector3(), new Vector3()];
+      w.getWingtips(tipsW[0], tipsW[1]);
+      const bend = (side: 'L' | 'R', tip: Vector3) => {
+        const a = at(`finger0a${side}`);
+        const b = at(`finger0b${side}`);
+        const t = tip.clone().applyQuaternion(inv);
+        const el = (v: Vector3) => Math.asin(v.y / v.length()) / DEG;
+        return el(t.sub(b)) - el(b.sub(a));
+      };
+      const r = { l: bend('L', tipsW[0]), r: bend('R', tipsW[1]) };
+      w.dispose();
+      return r;
+    };
+    const level = tips(false);
+    const pull = tips(true);
+    const bowL = pull.l - level.l;
+    const bowR = pull.r - level.r;
+    expect(bowL).toBeGreaterThan(10);
+    expect(bowL).toBeLessThan(26);
+    expect(bowR).toBeLessThan(bowL);
   });
 });

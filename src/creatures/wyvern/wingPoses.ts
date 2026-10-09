@@ -469,7 +469,8 @@ export function wingAdjust(): WingAdjust {
 
 /**
  * Per-frame adjustments on top of a blended pose:
- *  - g-load bends the outer wing up (dihedral grows, tips flex),
+ *  - g-load bends the wings up (dihedral grows, tips flex), the outer wing of a turn most (it
+ *    carries the most lift): about 18° of tip bow at 3 g with the air load (loadPose),
  *  - roll/turn asymmetry: the rising (outer) wing reaches forward with more angle of attack,
  *    the inner wing sweeps a little and unloads,
  *  - stall buffet: noisy shudder in elevation and twist.
@@ -480,10 +481,12 @@ export function adjustPose(out: WingPose, adj: Readonly<WingAdjust>): void {
   const buffetTw = adj.buffetTw;
   const spreadAmt = adj.spread;
   const g = clamp(adj.gLoad - 1, -1.5, 4) * spreadAmt;
-  out[W.humEl] += g * 1.6 * DEG;
+  out[W.humEl] += g * 3 * DEG;
   out[W.foreEl] += g * 1.2 * DEG;
   out[W.handEl] += g * 1.0 * DEG;
-  for (let f = 0; f < 3; f++) out[W.f0bEl + f * 2] += g * (3.2 - 0.6 * f) * DEG;
+  // The tips bow 6°/g on the outer wing, 0.7 of that on the inner one.
+  const tipBow = g * (1 - 0.3 * clamp(-asym * 2, 0, 1)) * DEG;
+  for (let f = 0; f < 3; f++) out[W.f0bEl + f * 2] += tipBow * (6 - 1.1 * f);
   const a = clamp(asym, -1, 1) * spreadAmt;
   out[W.humTw] += -7 * a * DEG;
   out[W.humSw] += (a > 0 ? -5 * a : -9 * a) * DEG;
