@@ -11,7 +11,7 @@
 // boundaries' bones, so the membrane folds like a fan when the fingers close.
 
 import { Vector3 } from 'three';
-import { GeoBuilder, MREGION, REGION, Skin } from '../builder';
+import { GeoBuilder, MREGION, REGION, Skin, ellipsoid, tube } from '../builder';
 import { SIDE_SIGN, innerTrailRoot, type RigDef } from '../rig';
 import { bodyChain } from './body';
 import { SkinChain } from './chain';
@@ -124,11 +124,12 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
     push(el.clone(), 0.17 * k);
     for (let i = 1; i <= foreRings; i++) push(el.clone().lerp(wr, i / (foreRings + 1)), (0.17 - (0.024 * i) / (foreRings + 1)) * k);
     const iWr = pts.length;
-    push(wr.clone(), 0.1 * k);
-    if (res.lod < 2) push(wr.clone().lerp(kn, 0.5), 0.075 * k);
+    // A load-bearing wrist and a stout hand: the wrist is a front foot.
+    push(wr.clone(), 0.15 * k);
+    if (res.lod < 2) push(wr.clone().lerp(kn, 0.5), 0.11 * k);
     const iKn = pts.length;
-    push(kn.clone(), 0.085 * k);
-    push(kn.clone().add(new Vector3(0.05 * sx, 0, 0)), 0.06 * k);
+    push(kn.clone(), 0.1 * k);
+    push(kn.clone().add(new Vector3(0.05 * sx, 0, 0)), 0.07 * k);
     const chain = new SkinChain([
       { bone: rig.idx.chest, s0: -0.4, s1: sAt[iSh] },
       { bone: wi.humerus, s0: sAt[iSh], s1: sAt[iEl] },
@@ -200,18 +201,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
       b.end();
     }
 
-    // --- Thumb claws at the wrist (the "hands" it walks on) -------------------------------------
-    const clawSkin = Skin.of(wi.claw);
-    for (let c = 0; c < (res.claws ? 2 : 0); c++) {
-      const d = new Vector3((0.25 + 0.3 * c) * sx, -0.2 - 0.25 * c, 1).normalize();
-      const base = wr.clone().add(new Vector3(0.02 * sx, -0.02, 0.06 * k));
-      const len = (c === 0 ? 0.36 : 0.24) * k;
-      const c1 = base.clone().addScaledVector(d, len * 0.6).add(new Vector3(0, 0.06 * k, 0));
-      const c2 = base.clone().addScaledVector(d, len).add(new Vector3(0, -0.1 * k, 0));
-      b.begin(0);
-      spike(b, bezier3(base, c1, c2, steps(res, 4)), (c === 0 ? 0.06 : 0.045) * k, clawSkin, { region: REGION.claw }, sides(res, 6), new Vector3(0, 1, 0), 0.8);
-      b.end();
-    }
+    // --- The hand it walks on: a sole pad and three clawed digits at the wrist -------------------
+    if (res.lod < 2) buildHand(b, rig, res, side, wr, k);
 
     // --- Membranes --------------------------------------------------------------------------------
     const fingerSkin = (f: number, t: number, out: Skin, weight: number) => {
@@ -440,3 +431,79 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
   foldRestCache.set(rig, rest);
   return { membraneArea: area / 2 };
 }
+
+/**
+ * The wing-walker's hand (one side): a pale sole pad under the wrist and three short digits
+ * fanned forward (pterosaur-like), each jointed at a knuckle and ending in a recurved claw, all
+ * riding the claw bone. In the bind (flight) pose the digits point forward along the leading
+ * edge; standing, the animator plants the wrist WRIST_CLEARANCE * standHeight above the ground
+ * with the claw bone pitched down by GROUND_PITCH, and the digits are bent so their claws meet
+ * the ground there.
+ */
+function buildHand(b: GeoBuilder, rig: RigDef, res: Res, side: number, wr: Vector3, k: number): void {
+  const sx = SIDE_SIGN[side];
+  const skin = Skin.of(rig.idx.wings[side].claw);
+  const sh = rig.props.standHeight;
+  const ground = WRIST_CLEARANCE * sh;
+  // Sole pad: soft and pale, a touch sunk into the ground when standing.
+  const pr: [number, number, number] = [0.2 * k, 0.12 * k, 0.24 * k];
+  const padC = wr.clone().add(new Vector3(0.02 * k * sx, -ground + 0.1 * k, 0.04 * k));
+  b.begin(0);
+  ellipsoid(
+    b,
+    padC,
+    new Vector3(1, 0, 0),
+    new Vector3(0, 1, 0),
+    new Vector3(0, 0, 1),
+    pr,
+    () => skin,
+    (_p, nl) => ({ region: REGION.skin, belly: 0.6 + 0.3 * Math.max(0, -nl.y) }),
+    res.lod === 0 ? 5 : 3,
+    res.lod === 0 ? 8 : 5,
+  );
+  b.end();
+  const tilt = Math.tan(GROUND_PITCH);
+  for (let d = 0; d < 3; d++) {
+    const az = (d - 1) * 0.35 * sx;
+    const len = HAND_DIGITS[d] * k;
+    const r0 = 0.06 * k;
+    const fwd = new Vector3(Math.sin(az), 0, Math.cos(az));
+    const base = wr.clone().add(new Vector3(0.03 * k * sx, -0.03 * k, 0.08 * k)).addScaledVector(fwd, 0.06 * k);
+    // Proximal phalanx level with the claw bone; the distal one bends down so that, pitched by
+    // GROUND_PITCH when standing, the claw tip reaches the ground.
+    const L1 = 0.55 * len;
+    const L2 = 0.45 * len;
+    const drop = ground - 0.03 * k - L1 * Math.sin(GROUND_PITCH);
+    const a2 = Math.min(0.75, Math.max(0.08, Math.asin(Math.min(1, Math.max(0, drop / (L2 + 0.05 * k)))) - GROUND_PITCH));
+    const knuckle = base.clone().addScaledVector(fwd, L1);
+    const d2 = fwd.clone().multiplyScalar(Math.cos(a2)).add(new Vector3(0, -Math.sin(a2), 0));
+    const tip = knuckle.clone().addScaledVector(d2, L2);
+    b.begin(0);
+    if (res.joints) {
+      tube(b, {
+        points: [base, base.clone().lerp(knuckle, 0.5), knuckle, knuckle.clone().lerp(tip, 0.5), tip],
+        radii: [r0, r0 * 0.88, r0 * 1.02, r0 * 0.72, r0 * 0.5],
+        segments: 5,
+        hint: new Vector3(0, 1, 0),
+        skin: () => skin,
+        mat: () => ({ region: REGION.skin, dorsal: 0.5 }),
+        capEnd: true,
+      });
+    } else {
+      spike(b, [base, knuckle, tip], r0, skin, { region: REGION.skin, dorsal: 0.5 }, 4, new Vector3(0, 1, 0), 1, 0.5);
+    }
+    // Recurved claw: out of the digit, hooking down into the ground.
+    const c0 = tip.clone().addScaledVector(d2, -0.02 * k);
+    const c1 = c0.clone().addScaledVector(d2, 0.09 * k).add(new Vector3(0, 0.02 * k, 0));
+    const c2 = c0.clone().addScaledVector(fwd, 0.13 * k).add(new Vector3(0, -0.1 * k - tilt * 0.13 * k, 0));
+    spike(b, bezier3(c0, c1, c2, res.lod === 0 ? 3 : 1), 0.05 * k, skin, { region: REGION.claw }, res.lod === 0 ? 5 : 3, new Vector3(0, 1, 0), 0.8);
+    b.end();
+  }
+}
+
+/** The animator plants the wrist this far (× standHeight) above the ground (applyWingIK). */
+const WRIST_CLEARANCE = 0.07;
+/** ...with the claw bone's forward axis pitched down by this much (radians, atan 0.25). */
+const GROUND_PITCH = Math.atan(0.25);
+/** Hand digit lengths (× the arm scale k): inner, middle, outer. */
+const HAND_DIGITS = [0.3, 0.34, 0.28];
