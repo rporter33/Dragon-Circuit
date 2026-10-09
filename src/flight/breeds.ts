@@ -6,13 +6,18 @@
 //     to change direction and need strong flaps to climb.
 //
 // Measured with src/flight/telemetry.ts (still air, 120 Hz) — FlightModel.test.ts and
-// breeds.test.ts hold them. Stall = 1 g stall speed / where a slow hauled-back stall breaks.
+// breeds.test.ts hold them. A held pull no longer breaks the stall (soft protection): stall is
+// the 1 g stall speed. Climb is a held-flap climb; stamina is seconds of full flapping (×1.4 when
+// Rested), and an empty meter still gives weak beats.
 //
-//              cruise  stall      best glide  tucked dive  roll rate  roll in/out  climb    stamina
-//   harrier    24 m/s  14.5/14.8  8.9 : 1     81 m/s       1.76 r/s   0.34/0.34 s  5.0 m/s  9 s
-//   skimmer    23      13.6/13.9  7.3         74           2.53       0.33/0.33    4.2      6.5
-//   galewing   22      13.3/13.1  12.3        75           1.01       0.62/0.57    3.3      11
-//   ironback   27      16.4/16.6  8.0         89           1.16       0.48/0.48    3.2      8
+//              cruise  stall  best glide  tucked dive  roll rate  roll in/out  climb    stamina  beat
+//   harrier    24 m/s  14.5   8.9 : 1     89 m/s       1.76 r/s   0.34/0.19 s  5.0 m/s  13.5 s   1.45 Hz
+//   skimmer    22      13.3   7.8         82           2.53       0.33/0.17    5.5      10       2.1
+//   galewing   22      13.3   12.3        83           1.01       0.62/0.31    3.4      16.5     0.95
+//   ironback   27      16.4   8.3         98           1.16       0.48/0.28    3.4      12       1.0
+//
+// Big breeds beat slowly, and each downstroke is a bigger surge (thrust ÷ rate per kg: galewing
+// 16.9, ironback 16.3, harrier 15.2, skimmer 12.2 N·s/kg).
 //
 // The 0..1 display ratings below are read off that table: speed (dive + top flapping speed),
 // agility (roll rate), glide (best glide ratio), power (sustained climb), stamina (seconds).
@@ -57,7 +62,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     id: 'skimmer',
     name: 'Skimmer',
     tagline: 'Light and twitchy',
-    description: 'Small, quick-winged and nervous. Turns on a coin, but tires fast and bleeds speed in a glide.',
+    description: 'Small, quick-winged and nervous. Turns on a coin and sprints on rapid wingbeats, but tires fast and bleeds speed in a glide.',
     mass: 470,
     wingArea: 30,
     wingspan: 11.2,
@@ -78,7 +83,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     maxRollRate: 2.6,
     groundSpeed: 11,
     standHeight: 2.1,
-    ratings: { speed: 0.45, agility: 0.95, glide: 0.45, power: 0.7, stamina: 0.55 },
+    ratings: { speed: 0.55, agility: 0.95, glide: 0.45, power: 0.9, stamina: 0.55 },
   },
   galewing: {
     id: 'galewing',
