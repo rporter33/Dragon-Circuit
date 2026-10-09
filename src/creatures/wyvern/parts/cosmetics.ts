@@ -354,10 +354,11 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         const st = plan.station(s);
         dorsal(rig, s, -0.06, p, up);
         const along = (s - sStart) / (sEnd - sStart);
-        const h = (0.22 + 0.16 * Math.sin(Math.PI * clamp(along * 1.4, 0, 1))) * scale * (1 - 0.6 * smoothstep(0.7, 1, along));
+        // A bold dorsal row (x1.4): a silhouette feature along the neck and back, not dots.
+        const h = 1.4 * (0.22 + 0.16 * Math.sin(Math.PI * clamp(along * 1.4, 0, 1))) * scale * (1 - 0.6 * smoothstep(0.7, 1, along));
         const tip = p.clone().addScaledVector(up, h).addScaledVector(st.tangent, h * 0.55);
         const mid = p.clone().addScaledVector(up, h * 0.55).addScaledVector(st.tangent, h * 0.12);
-        spike(b, res.lod === 0 ? [p.clone(), mid, tip] : [p.clone(), tip], 0.07 * scale * (1 - 0.4 * along), chain.skin(s), { region: REGION.horn }, nsides(res, 5), st.tangent, 0.45);
+        spike(b, res.lod === 0 ? [p.clone(), mid, tip] : [p.clone(), tip], 1.4 * 0.07 * scale * (1 - 0.4 * along), chain.skin(s), { region: REGION.horn }, nsides(res, 5), st.tangent, 0.45);
       }
       b.end();
       void head;

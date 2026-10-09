@@ -185,7 +185,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingI
       const N = res.fingerRings;
       const fpts: Vector3[] = [];
       for (let i = 0; i <= N; i++) fpts.push(kn.clone().lerp(tips[f], i / N));
-      const r0 = (0.065 - 0.008 * f) * k;
+      // Stout finger struts, so the bone fan reads against the membrane from behind.
+      const r0 = 1.3 * (0.065 - 0.008 * f) * k;
       b.begin(0);
       spike(
         b,
