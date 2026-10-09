@@ -237,9 +237,17 @@ function buildSite(s: SiteBuilders, site: RuinSite, out: SiteOutputs, idx: numbe
 
 const BRONZE = '#8a6a35';
 
-export function buildRuins(s: SiteBuilders, sites: RuinSite[], out: SiteOutputs): void {
+/**
+ * Build every ruin into one set of merged builders. `solidEnds`, when given, receives the solid
+ * builder's index count after each site (sites come island by island, so each island's solid
+ * triangles are one contiguous range: see Structures' per-island shadow casters).
+ */
+export function buildRuins(s: SiteBuilders, sites: RuinSite[], out: SiteOutputs, solidEnds?: number[]): void {
   resetJitter(0x2b1);
-  sites.forEach((site, i) => buildSite(s, site, out, i));
+  sites.forEach((site, i) => {
+    buildSite(s, site, out, i);
+    solidEnds?.push(s.solid.indices.length);
+  });
 }
 
 export { v };

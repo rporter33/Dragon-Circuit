@@ -145,6 +145,12 @@ export class Fireflies {
    * `night` 0..1. `budget` = how many fireflies may be re-homed this frame (each costs one
    * terrain lookup).
    */
+  /** Step the clock back by `by` seconds (see Fx: done while the screen is faded out). */
+  wrapTime(by: number): void {
+    this.now -= by;
+    this.mat.uniforms.uNow.value = this.now;
+  }
+
   update(dt: number, cam: { x: number; y: number; z: number }, night: number, budget = 14): void {
     this.now += dt;
     const fade = Math.max(0, Math.min(1, (night - 0.3) / 0.4));

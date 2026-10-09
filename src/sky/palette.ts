@@ -48,6 +48,11 @@ export interface SkyPalette {
   bloom: number;
   bloomThreshold: number;
   rim: number;
+  /**
+   * Saturation boost for muted colors (grade uVibrance): a painterly lift for daylight greens,
+   * blues and stone. Off from sunset to dawn, where it pushes pinks and violets to magenta.
+   */
+  vibrance: number;
 }
 
 type ColorKey = {
@@ -63,7 +68,7 @@ export const COLOR_KEYS: ColorKey[] = [
 ];
 export const NUMBER_KEYS: NumberKey[] = [
   'glow', 'belt', 'stars', 'keyI', 'hemiI', 'fogDensity', 'fogFalloff', 'exposure', 'saturation',
-  'contrast', 'bloom', 'bloomThreshold', 'rim',
+  'contrast', 'bloom', 'bloomThreshold', 'rim', 'vibrance',
 ];
 
 /** Authoring form: colors as sRGB hex. */
@@ -80,7 +85,7 @@ const NIGHT: PaletteSpec = {
   fog: '#1a2c56', fogSun: '#2e4680', fogDensity: 0.00024, fogFalloff: 0.0021,
   cloudLit: '#7686b6', cloudShade: '#141d40',
   exposure: 1.08, saturation: 0.94, contrast: 1.06, lift: '#03081c', gain: '#d6e2ff',
-  bloom: 0.55, bloomThreshold: 0.72, rim: 0.75,
+  bloom: 0.55, bloomThreshold: 0.72, rim: 0.75, vibrance: 0,
 };
 
 const PREDAWN: PaletteSpec = {
@@ -90,7 +95,7 @@ const PREDAWN: PaletteSpec = {
   fog: '#3c4479', fogSun: '#7e6292', fogDensity: 0.00027, fogFalloff: 0.0021,
   cloudLit: '#a8a8da', cloudShade: '#343a6c',
   exposure: 1.5, saturation: 0.98, contrast: 1.04, lift: '#0a0822', gain: '#e2dcff',
-  bloom: 0.5, bloomThreshold: 0.75, rim: 0.65,
+  bloom: 0.5, bloomThreshold: 0.75, rim: 0.65, vibrance: 0,
 };
 
 const DAWN: PaletteSpec = {
@@ -100,7 +105,7 @@ const DAWN: PaletteSpec = {
   fog: '#caa2b6', fogSun: '#ffbe86', fogDensity: 0.0003, fogFalloff: 0.0021,
   cloudLit: '#ffd0b0', cloudShade: '#7e78aa',
   exposure: 1.12, saturation: 1.1, contrast: 1.04, lift: '#160a28', gain: '#fff0e4',
-  bloom: 0.42, bloomThreshold: 0.82, rim: 0.85,
+  bloom: 0.42, bloomThreshold: 0.82, rim: 0.85, vibrance: 0.04,
 };
 
 const MORNING_GOLD: PaletteSpec = {
@@ -110,7 +115,7 @@ const MORNING_GOLD: PaletteSpec = {
   fog: '#c4c4d6', fogSun: '#ffd4a2', fogDensity: 0.00026, fogFalloff: 0.0022,
   cloudLit: '#fff0dc', cloudShade: '#8e9cc6',
   exposure: 1.04, saturation: 1.1, contrast: 1.05, lift: '#0a0818', gain: '#fff6ec',
-  bloom: 0.34, bloomThreshold: 0.85, rim: 0.65,
+  bloom: 0.34, bloomThreshold: 0.85, rim: 0.65, vibrance: 0.14,
 };
 
 const MORNING: PaletteSpec = {
@@ -120,7 +125,7 @@ const MORNING: PaletteSpec = {
   fog: '#a6c2e6', fogSun: '#f2e2c8', fogDensity: 0.00018, fogFalloff: 0.0022,
   cloudLit: '#fffaf2', cloudShade: '#88a2d0',
   exposure: 1.0, saturation: 1.14, contrast: 1.07, lift: '#02040c', gain: '#fffcf6',
-  bloom: 0.28, bloomThreshold: 0.88, rim: 0.5,
+  bloom: 0.28, bloomThreshold: 0.88, rim: 0.5, vibrance: 0.22,
 };
 
 const NOON: PaletteSpec = {
@@ -130,7 +135,7 @@ const NOON: PaletteSpec = {
   fog: '#9cbde6', fogSun: '#e4eef4', fogDensity: 0.00016, fogFalloff: 0.0022,
   cloudLit: '#ffffff', cloudShade: '#86a2d2',
   exposure: 1.0, saturation: 1.15, contrast: 1.08, lift: '#00030a', gain: '#ffffff',
-  bloom: 0.25, bloomThreshold: 0.9, rim: 0.42,
+  bloom: 0.25, bloomThreshold: 0.9, rim: 0.42, vibrance: 0.25,
 };
 
 const AFTERNOON: PaletteSpec = {
@@ -140,7 +145,7 @@ const AFTERNOON: PaletteSpec = {
   fog: '#a2c0e4', fogSun: '#f4deb8', fogDensity: 0.00018, fogFalloff: 0.0022,
   cloudLit: '#fff8ea', cloudShade: '#88a2ce',
   exposure: 1.0, saturation: 1.15, contrast: 1.08, lift: '#02030a', gain: '#fffaf0',
-  bloom: 0.28, bloomThreshold: 0.88, rim: 0.5,
+  bloom: 0.28, bloomThreshold: 0.88, rim: 0.5, vibrance: 0.22,
 };
 
 const GOLDEN: PaletteSpec = {
@@ -150,7 +155,7 @@ const GOLDEN: PaletteSpec = {
   fog: '#d4b49c', fogSun: '#ffba68', fogDensity: 0.00027, fogFalloff: 0.0022,
   cloudLit: '#ffd8a0', cloudShade: '#8c88b2',
   exposure: 1.05, saturation: 1.16, contrast: 1.06, lift: '#180a24', gain: '#fff0dc',
-  bloom: 0.45, bloomThreshold: 0.82, rim: 0.9,
+  bloom: 0.45, bloomThreshold: 0.82, rim: 0.9, vibrance: 0.1,
 };
 
 const SUNSET: PaletteSpec = {
@@ -160,7 +165,7 @@ const SUNSET: PaletteSpec = {
   fog: '#c88c8e', fogSun: '#ff9250', fogDensity: 0.0003, fogFalloff: 0.0022,
   cloudLit: '#ffb27a', cloudShade: '#6e689a',
   exposure: 1.1, saturation: 1.18, contrast: 1.05, lift: '#1c0a28', gain: '#ffe8d4',
-  bloom: 0.5, bloomThreshold: 0.78, rim: 0.95,
+  bloom: 0.5, bloomThreshold: 0.78, rim: 0.95, vibrance: 0.02,
 };
 
 const SUNDOWN: PaletteSpec = {
@@ -170,7 +175,7 @@ const SUNDOWN: PaletteSpec = {
   fog: '#a0789a', fogSun: '#f08062', fogDensity: 0.0003, fogFalloff: 0.0022,
   cloudLit: '#f2a294', cloudShade: '#5a5892',
   exposure: 1.3, saturation: 1.12, contrast: 1.04, lift: '#180a2c', gain: '#f8e4e8',
-  bloom: 0.5, bloomThreshold: 0.75, rim: 0.8,
+  bloom: 0.5, bloomThreshold: 0.75, rim: 0.8, vibrance: 0,
 };
 
 const DUSK: PaletteSpec = {
@@ -180,7 +185,7 @@ const DUSK: PaletteSpec = {
   fog: '#4c5890', fogSun: '#b47888', fogDensity: 0.00028, fogFalloff: 0.0021,
   cloudLit: '#a8aedc', cloudShade: '#303c70',
   exposure: 1.45, saturation: 1.0, contrast: 1.05, lift: '#0a0c2a', gain: '#e8e8ff',
-  bloom: 0.52, bloomThreshold: 0.74, rim: 0.78,
+  bloom: 0.52, bloomThreshold: 0.74, rim: 0.78, vibrance: 0,
 };
 
 const LATE_DUSK: PaletteSpec = {
@@ -190,7 +195,7 @@ const LATE_DUSK: PaletteSpec = {
   fog: '#26346c', fogSun: '#3e467c', fogDensity: 0.00026, fogFalloff: 0.0021,
   cloudLit: '#7e8cc2', cloudShade: '#1c264e',
   exposure: 1.36, saturation: 0.96, contrast: 1.05, lift: '#060a22', gain: '#dfe6ff',
-  bloom: 0.55, bloomThreshold: 0.72, rim: 0.72,
+  bloom: 0.55, bloomThreshold: 0.72, rim: 0.72, vibrance: 0,
 };
 
 /** Keyframes by time of day. Must be sorted, start at 0 and end at 1 with matching looks. */
@@ -313,6 +318,8 @@ export function applyWeather(p: SkyPalette, w: PaletteWeather): SkyPalette {
   p.belt *= 1 - o;
   p.stars *= 1 - o;
   p.saturation *= 1 - 0.3 * o;
+  // A grey lid has no vivid colors to lift: vibrance would only tint the grey.
+  p.vibrance *= 1 - 0.8 * o;
   p.contrast = 1 + (p.contrast - 1) * (1 - 0.6 * o) - 0.02 * o;
   p.rim *= 1 - 0.45 * o;
   p.bloom *= 1 - 0.3 * o;
@@ -332,6 +339,7 @@ export function applyWeather(p: SkyPalette, w: PaletteWeather): SkyPalette {
     p.stars *= 1 - m;
     p.contrast *= 1 - 0.08 * m;
     p.saturation *= 1 - 0.12 * m;
+    p.vibrance *= 1 - 0.6 * m;
     p.lift.lerp(tmp.copy(p.fog).multiplyScalar(0.06), m * 0.5);
   }
 

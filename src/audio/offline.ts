@@ -6,9 +6,9 @@ import type { SurfaceKind } from '../core/types';
 import { levels } from './dsp';
 import { AudioEngine } from './engine';
 import { AmbienceLayer, StallLayer, WindLayer } from './layers';
-import { emptyAmbienceMix, emptyWindMix, windMix, type AmbienceMix } from './mix';
+import { ambienceMix, emptyAmbienceMix, emptyWindMix, windMix, type AmbienceMix } from './mix';
 import { MusicPlayer } from './music';
-import { finishArpeggio, medalChord, ringNote, unlockJingle } from './notes';
+import { finishArpeggio, medalChord, ringNote, thermalNotes, unlockJingle } from './notes';
 import * as V from './voices';
 
 export interface SceneReport {
@@ -132,6 +132,27 @@ const SCENES: Record<string, { seconds: number; minRmsDb: number; build: Builder
       music.renderSpan(0, 9, 0.5, 1);
     },
   },
+  thermal: {
+    seconds: 3,
+    minRmsDb: -50,
+    build: (e) => {
+      V.thermalChime(e, e.strip(e.sfx, 0.9, 0, 0.6), 0.1, thermalNotes(), 1);
+    },
+  },
+  edgeStorm: {
+    seconds: 4,
+    minRmsDb: -40,
+    build: (e, s) => {
+      const amb = new AmbienceLayer(e, 0);
+      const w = new WindLayer(e, 0);
+      const wm = windMix({ airspeed: 30, tuck: 0, flare: 0, gLoad: 1, grounded: false, ambientWind: 14 }, emptyWindMix());
+      const m = ambienceMix({ night: 0, timeOfDay: 0.5, rain: 0, nearGround: 0, boundary: 1 }, emptyAmbienceMix());
+      steer(s, 0.05, (t) => {
+        amb.apply(m, 0, 0, t, 0.05);
+        w.apply(wm, 1, t);
+      });
+    },
+  },
   collect: {
     seconds: 7,
     minRmsDb: -45,
@@ -188,7 +209,7 @@ const SCENES: Record<string, { seconds: number; minRmsDb: number; build: Builder
       const w = new WindLayer(e, 0);
       const m = windMix({ airspeed: 90, tuck: 1, flare: 0, gLoad: 3, grounded: false, ambientWind: 12 }, emptyWindMix());
       const a = new AmbienceLayer(e, 0);
-      const am: AmbienceMix = { air: 0.08, crickets: 0.05, birds: 0, rainHiss: 0.14, thunder: 0 };
+      const am: AmbienceMix = { air: 0.08, crickets: 0.05, birds: 0, rainHiss: 0.14, thunder: 0, storm: 0.13 };
       steer(s, 0.05, (t) => {
         w.apply(m, 1.3, t);
         a.apply(am, 1, 0, t, 0.05, 0.3);

@@ -2,7 +2,8 @@
 // ruins, shrines and cairns. Each site is merged into a handful of meshes by material (solid,
 // glowing, cloth, chimes, light pools) so a whole site costs ~5 draw calls.
 
-import { Group, Mesh, Sphere, Vector3, type BufferGeometry, type Material, type PerspectiveCamera } from 'three';
+import { Box3, BufferGeometry, Group, Mesh, Sphere, Vector3, type Material, type PerspectiveCamera } from 'three';
+import { makeShadowOnly, shadowOnlyMaterial } from '../../../render/shadowOnly';
 import type { QualityProfile } from '../../../render/quality';
 import { ExclusionSet } from '../exclusions';
 import type { Terrain } from '../../terrain';
@@ -57,6 +58,9 @@ export class Structures {
   readonly ventari: VentariSiteAnchor[];
   private sites: Site[] = [];
   private farDist: number;
+  /** Per-island shadow casters for the merged ruins (see buildRuinShadows). */
+  private ruinShadows: Mesh[] = [];
+  private shadows: boolean;
 
   /**
    * The Roost is built immediately (it's where the game starts). Distant sites register their
@@ -67,6 +71,7 @@ export class Structures {
   constructor(terrain: Terrain, out: SiteOutputs, defer: (task: () => void) => void = (t) => t(), quality?: QualityProfile) {
     this.group.name = 'dressing:structures';
     this.farDist = FAR_DIST[quality?.level ?? 'high'];
+    this.shadows = quality?.shadows ?? true;
     const plan = roostPlan(terrain.layout, terrain);
     if (plan) {
       const s = siteBuilders();
@@ -102,8 +107,10 @@ export class Structures {
     this.ventari = planVentariSites(terrain, out.exclusions, this.ruins);
     defer(() => {
       const rs = siteBuilders();
-      buildRuins(rs, this.ruins, out);
-      this.addSite('ruins', rs);
+      const ends: number[] = [];
+      buildRuins(rs, this.ruins, out, ends);
+      const site = this.addSite('ruins', rs);
+      this.buildRuinShadows(site, ends);
     });
   }
 
@@ -120,6 +127,50 @@ export class Structures {
 
   setQuality(q: QualityProfile): void {
     this.farDist = FAR_DIST[q.level];
+    this.shadows = q.shadows;
+    for (const m of this.ruinShadows) m.castShadow = q.shadows;
+  }
+
+  /**
+   * The ruins are one merged mesh spread over the whole archipelago, so its bounds always reach
+   * the shadow box and the shadow pass drew every ruin (21k triangles) wherever the player was.
+   * Cast them instead from one shadow-only mesh per island that shares the merged buffers (each
+   * draws its island's contiguous index range), so the shadow camera culls the far ones.
+   */
+  private buildRuinShadows(site: Site, solidEnds: number[]): void {
+    const solid = site.near.children.find((c) => c.name === 'ruins-solid') as Mesh | undefined;
+    if (!solid) return;
+    const src = solid.geometry;
+    const index = src.getIndex();
+    const pos = src.getAttribute('position');
+    if (!index || !pos) return;
+    solid.castShadow = false;
+    const box = new Box3();
+    const v = new Vector3();
+    let start = 0;
+    for (let i = 0; i < this.ruins.length; i++) {
+      const end = solidEnds[i];
+      // An island's sites are consecutive: close the range at its last site.
+      if (i + 1 < this.ruins.length && this.ruins[i + 1].islandId === this.ruins[i].islandId) continue;
+      if (end > start) {
+        const geo = new BufferGeometry();
+        geo.setAttribute('position', pos);
+        geo.setIndex(index);
+        geo.setDrawRange(start, end - start);
+        box.makeEmpty();
+        for (let k = start; k < end; k++) box.expandByPoint(v.fromBufferAttribute(pos, index.getX(k)));
+        geo.boundingBox = box.clone();
+        geo.boundingSphere = box.getBoundingSphere(new Sphere());
+        const m = makeShadowOnly(new Mesh(geo, shadowOnlyMaterial()));
+        m.name = `ruins-shadow-${this.ruins[i].islandId}`;
+        m.castShadow = this.shadows;
+        m.receiveShadow = false;
+        m.matrixAutoUpdate = false;
+        this.group.add(m);
+        this.ruinShadows.push(m);
+      }
+      start = end;
+    }
   }
 
   private addFar(site: Site, name: string, s: SiteBuilders): void {

@@ -3,6 +3,7 @@ import { Vector3 } from 'three';
 import { LAYOUT } from './layout';
 import { Terrain } from './terrain';
 import { RIM_DROP } from './islandShape';
+import type { GroundHit } from '../core/types';
 
 const terrain = new Terrain(LAYOUT);
 
@@ -110,5 +111,39 @@ describe('terrain queries', () => {
         expect(terrain.islandAt(p.x, p.z)).not.toBeNull();
       }
     }
+  });
+});
+
+describe('groundAt with an out parameter', () => {
+  it('writes the same hit into `out` and allocates nothing', () => {
+    const t = new Terrain(LAYOUT);
+    const out = { y: 0, normal: new Vector3(), islandId: 0, surface: 'grass' as const } as GroundHit;
+    for (const [x, z] of [[0, 0], [30, -40], [120, 60], [560, 420], [9000, 9000]]) {
+      const a = t.groundAt(x, z, 1e6);
+      const b = t.groundAt(x, z, 1e6, out);
+      if (!a) {
+        expect(b).toBeNull();
+        continue;
+      }
+      expect(b).toBe(out);
+      expect(out.y).toBe(a.y);
+      expect(out.islandId).toBe(a.islandId);
+      expect(out.surface).toBe(a.surface);
+      expect(out.normal.toArray()).toEqual(a.normal.toArray());
+    }
+  });
+
+  it('reports structure tops and spire tops like before', () => {
+    const t = new Terrain(LAYOUT);
+    const g = t.groundAt(0, 0, 1e6)!;
+    t.colliders.add({ kind: 'box', x: 0, y: g.y + 6, z: 0, hx: 4, hy: 1, hz: 4, yaw: 0, surface: 'stone' });
+    const roof = t.groundAt(0, 0, g.y + 7.1)!;
+    expect(roof.y).toBeCloseTo(g.y + 7);
+    expect(roof.surface).toBe('stone');
+    expect(roof.normal.toArray()).toEqual([0, 1, 0]);
+    const sp = t.spires[0].def;
+    const top = t.groundAt(sp.x, sp.z, sp.topY + 1)!;
+    expect(top.y).toBe(sp.topY);
+    expect(top.islandId).toBe(-1 - sp.id);
   });
 });

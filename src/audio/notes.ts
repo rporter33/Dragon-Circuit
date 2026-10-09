@@ -67,6 +67,17 @@ export function medalChord(medal: MedalKind, root = RING_ROOT - 12): number[] {
   }
 }
 
+/**
+ * Entering rising air: a soft fifth that climbs (G5 then D6 over the ring root), in the same
+ * major pentatonic as the ring chimes, so it never clashes with the score.
+ */
+export function thermalNotes(root = RING_ROOT): [number, number] {
+  return [root + 7, root + 14];
+}
+
+/** At most one thermal chime per this many seconds (circling in and out of a column). */
+export const THERMAL_CHIME_GAP = 5;
+
 /** A short pentatonic flourish for unlocking a cosmetic. */
 export function unlockJingle(root = RING_ROOT - 12): number[] {
   return [0, 4, 7, 9, 12, 16].map((s) => root + s);

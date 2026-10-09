@@ -111,7 +111,9 @@ describe('sphere tracing past distant structures', () => {
 });
 
 describe('cost', () => {
-  it('stays cheap with thousands of colliders (only nearby shapes are tested)', () => {
+  // Work counts, not wall time: the index must only ever touch the shapes near a query, however
+  // many the world holds. (Timing alone was flaky on loaded machines; one loose bound remains.)
+  it('touches only nearby shapes with thousands of colliders', () => {
     const t = new Terrain(LAYOUT);
     // A forest's worth of trunks + canopies + buildings scattered over the islands.
     let k = 0;
@@ -126,11 +128,21 @@ describe('cost', () => {
         t.colliders.add({ kind: 'sphere', x, y: y + 11, z, radius: 4, soft: true });
       }
     }
-    expect(t.colliders.size).toBeGreaterThan(10000);
+    const size = t.colliders.size;
+    expect(size).toBeGreaterThan(10000);
     const g = t.groundAt(0, 0, 1e6)!;
     const p = new Vector3();
     const push = new Vector3();
     const nn = new Vector3();
+    const work = t.colliders.work;
+    const reset = () => {
+      work.queries = 0;
+      work.candidates = 0;
+      work.exact = 0;
+    };
+
+    // Sphere collisions over the Roost's forest (the flight model's per-step query).
+    reset();
     const N = 20000;
     let t0 = performance.now();
     for (let i = 0; i < N; i++) {
@@ -138,6 +150,12 @@ describe('cost', () => {
       t.collideSphere(p, 2.4, push, nn);
     }
     const perCollide = ((performance.now() - t0) * 1000) / N;
+    expect(work.queries).toBe(N);
+    const collideCandidates = work.candidates / N;
+    const collideExact = work.exact / N;
+
+    // Camera rays (sphere tracing: many distance queries per ray).
+    reset();
     t0 = performance.now();
     const M = 300;
     for (let i = 0; i < M; i++) {
@@ -145,9 +163,22 @@ describe('cost', () => {
       t.raycast(p, nn.set(0.3, -0.5, 0.8).normalize(), 40);
     }
     const perRay = ((performance.now() - t0) * 1000) / M;
-    console.log(`[colliders] ${t.colliders.size} colliders: collideSphere ${perCollide.toFixed(1)} µs, camera raycast ${perRay.toFixed(1)} µs`);
-    // Budget: a frame makes ~8 sphere queries (120 Hz body + wingtips) and 1–2 camera rays.
-    expect(perCollide).toBeLessThan(400); // generous: shared CI/dev machines are noisy
-    expect(perRay).toBeLessThan(6000);
+    const distCandidates = work.candidates / work.queries;
+    const distExact = work.exact / work.queries;
+    const distPerRay = work.queries / M;
+    console.log(
+      `[colliders] ${size} colliders: collideSphere ${collideCandidates.toFixed(1)} candidates / ${collideExact.toFixed(2)} exact tests (${perCollide.toFixed(1)} µs); ` +
+        `raycast ${distPerRay.toFixed(1)} distance queries × ${distCandidates.toFixed(1)} candidates / ${distExact.toFixed(1)} exact (${perRay.toFixed(1)} µs)`,
+    );
+    // A query sees the few dozen shapes in its grid cells, never a meaningful share of the world.
+    // Measured: ~2 candidates and ~0.3 exact tests per sphere; ~16 distance queries per ray at
+    // ~2 candidates and ~1 exact test each. The bounds leave ~10x headroom.
+    expect(collideCandidates).toBeLessThan(20);
+    expect(collideExact).toBeLessThan(3);
+    expect(distCandidates).toBeLessThan(25);
+    expect(distExact).toBeLessThan(10);
+    expect(distPerRay).toBeLessThan(40);
+    // Loose sanity bound only (a full scan of every collider would be ~100x slower).
+    expect(perCollide).toBeLessThan(2000);
   });
 });

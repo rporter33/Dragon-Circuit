@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { finishArpeggio, inScale, MAJOR_PENT, medalChord, midiToHz, MINOR_PENT, ringNote, RING_ROOT, scaleNote, unlockJingle } from './notes';
+import { finishArpeggio, inScale, MAJOR_PENT, medalChord, midiToHz, MINOR_PENT, ringNote, RING_ROOT, scaleNote, thermalNotes, unlockJingle } from './notes';
 
 describe('notes', () => {
   it('converts MIDI to Hz', () => {
@@ -52,5 +52,12 @@ describe('notes', () => {
     expect(span('gold')).toBeGreaterThan(span('bronze'));
     expect(medalChord('gold').length).toBeGreaterThan(medalChord('bronze').length);
     expect(unlockJingle().length).toBeGreaterThan(3);
+  });
+
+  it('the thermal chime rises a fifth inside the ring chimes\' pentatonic', () => {
+    const [a, b] = thermalNotes();
+    expect(b - a).toBe(7);
+    expect(inScale(a, RING_ROOT, MAJOR_PENT)).toBe(true);
+    expect(inScale(b, RING_ROOT, MAJOR_PENT)).toBe(true);
   });
 });

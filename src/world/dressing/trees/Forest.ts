@@ -145,6 +145,8 @@ export class Forest {
   private framesSince = 1e9;
   /** Buckets indexed like SPECIES_IDS (speciesOf values). */
   private bucketList: (SpeciesBucket | undefined)[] = [];
+  /** Every LOD mesh of every bucket, in bucket order (the per-frame loops walk this). */
+  private lodList: LodMesh[] = [];
 
   private occluders = new Map<number, IslandOccluder>();
 
@@ -225,18 +227,19 @@ export class Forest {
     }
     this.applyLodScale();
     this.bucketList = SPECIES_IDS.map((sid) => this.buckets.get(sid));
+    for (const b of this.buckets.values()) this.lodList.push(...b.lods);
   }
 
   private materialFor(kind: 'foliage' | 'glow' | 'rock' | 'card'): Material {
     switch (kind) {
       case 'foliage':
-        return dressMaterial({ sway: 'tree' });
+        return dressMaterial({ sway: 'tree', instanced: true });
       case 'glow':
-        return dressMaterial({ sway: 'tree', glow: true, glowDay: 0.06, glowNight: 1.9 });
+        return dressMaterial({ sway: 'tree', glow: true, glowDay: 0.06, glowNight: 1.9, instanced: true });
       case 'rock':
-        return dressMaterial({});
+        return dressMaterial({ instanced: true });
       case 'card':
-        return dressMaterial({ sway: 'tree', doubleSide: true, keepNormals: true });
+        return dressMaterial({ sway: 'tree', doubleSide: true, keepNormals: true, instanced: true });
     }
   }
 
@@ -278,7 +281,9 @@ export class Forest {
     _frustum.setFromProjectionMatrix(_pv);
     const far2 = camera.far * camera.far;
 
-    for (const b of this.buckets.values()) for (const l of b.lods) l.count = 0;
+    // Indexed loops over arrays: Map and array iterators allocate until the optimizer gets to them.
+    const lodList = this.lodList;
+    for (let i = 0; i < lodList.length; i++) lodList[i].count = 0;
     const cx = camera.position.x;
     const cy = camera.position.y;
     const cz = camera.position.z;
@@ -286,7 +291,9 @@ export class Forest {
     byLod.fill(0);
     const bucketList = this.bucketList;
 
-    for (const g of this.groups) {
+    const groups = this.groups;
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
       const dc = g.sphere.center.distanceTo(camera.position) - g.sphere.radius;
       if (dc > g.reach || dc * dc > far2) continue;
       if (!_frustum.intersectsSphere(g.sphere)) continue;
@@ -316,20 +323,20 @@ export class Forest {
     }
 
     let calls = 0;
-    this.stats.drawn.length = 0;
-    for (const b of this.buckets.values()) {
-      for (const L of b.lods) {
-        const m = L.mesh;
-        m.count = L.count;
-        m.visible = L.count > 0;
-        if (L.count > 0) {
-          calls++;
-          // Upload only the used prefix; reuse the range objects instead of allocating new ones.
-          setRange(m.instanceMatrix, L.count * 16);
-          setRange(m.instanceColor!, L.count * 3);
-        }
-        this.stats.drawn.push(L.count);
+    const drawn = this.stats.drawn;
+    drawn.length = lodList.length;
+    for (let i = 0; i < lodList.length; i++) {
+      const L = lodList[i];
+      const m = L.mesh;
+      m.count = L.count;
+      m.visible = L.count > 0;
+      if (L.count > 0) {
+        calls++;
+        // Upload only the used prefix; reuse the range objects instead of allocating new ones.
+        setRange(m.instanceMatrix, L.count * 16);
+        setRange(m.instanceColor!, L.count * 3);
       }
+      drawn[i] = L.count;
     }
     this.stats.drawCalls = calls;
   }

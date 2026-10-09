@@ -20,6 +20,7 @@ import type { SkySystem } from '../game/contracts';
 import type { QualityProfile } from '../render/quality';
 import type { Renderer } from '../render/renderer';
 import { globalUniforms } from '../render/uniforms';
+import { registerShadowFrustum } from '../render/shadowOnly';
 import { LAYOUT, type WorldLayout } from '../world/layout';
 import { clamp01, smoothstep } from '../core/math';
 import { LATITUDE, keyLightDirection, moonDirection, nightAmount, shadowStrength, sunDirection } from './sunPath';
@@ -135,6 +136,8 @@ export class Sky implements SkySystem {
     sc.far = SHADOW_RANGE;
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.5;
+    // Shadow-only meshes (the world's coarse island casters) draw into this light's map.
+    registerShadowFrustum(this.sun.shadow.getFrustum());
     scene.add(this.sun, this.sun.target);
     this.hemi = new HemisphereLight(0xbcd4f0, 0xd0d6e0, 1.0);
     this.hemi.name = 'skyFill';
@@ -277,6 +280,7 @@ export class Sky implements SkySystem {
     const g = this.renderer.grade;
     g.uExposure.value = pal.exposure * (1 + flash * 0.12);
     g.uSaturation.value = pal.saturation;
+    g.uVibrance.value = pal.vibrance;
     g.uContrast.value = pal.contrast;
     g.uLift.value.copy(pal.lift);
     g.uGain.value.copy(pal.gain);

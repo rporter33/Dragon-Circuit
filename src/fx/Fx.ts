@@ -18,7 +18,7 @@ import { Vector3, type PerspectiveCamera, type Scene } from 'three';
 import type { FxSystem, PlayerSystem, WyvernRenderable } from '../game/contracts';
 import type { GameEventBus } from '../core/events';
 import type { QualityProfile } from '../render/quality';
-import type { Renderer } from '../render/renderer';
+import { wrapShaderTime, type Renderer } from '../render/renderer';
 import type { Settings, SurfaceKind } from '../core/types';
 import type { WorldLayout, IslandDef } from '../world/layout';
 import type { Terrain } from '../world/terrain';
@@ -154,11 +154,32 @@ export class Fx implements FxSystem {
     this.drifters?.setDensity(p);
   }
 
+  /**
+   * The effect clocks feed float32 shader uniforms (uNow, birth times), so they wrap like the
+   * shared time (wrapShaderTime: back by a power of two, behind a fade when possible). Particles,
+   * rings and trails move their birth times with the clock, so nothing changes on screen; the
+   * looping effects (thermals, fireflies, the launch gust) jump in phase, hidden by the fade.
+   */
+  private wrapClocks(): void {
+    const wrapped = wrapShaderTime(this.time, this.deps.renderer.grade.uFade.value > 0.95);
+    if (wrapped === this.time) return;
+    const by = this.time - wrapped;
+    this.time = wrapped;
+    this.soft.wrapTime(by);
+    this.glow.wrapTime(by);
+    this.rings.wrapTime(by);
+    this.trails.wrapTime(by);
+    this.thermals.wrapTime(by);
+    this.fireflies?.wrapTime(by);
+    this.gust?.wrapTime(by);
+  }
+
   update(dt: number, camera: PerspectiveCamera, player: PlayerSystem, wyvern: WyvernRenderable): void {
     this.player = player;
     this.wyvern = wyvern;
     const step = Math.min(0.1, Math.max(0, dt));
     this.time += step;
+    this.wrapClocks();
     const settings = this.deps.settings();
     const reduced = settings.reducedMotion;
     const f = player.flight;

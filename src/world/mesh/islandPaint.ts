@@ -131,8 +131,10 @@ const PALETTES: Record<IslandKind, KindPalette> = {
     ...BASE, grass: c('#3f7d55'), grassAlt: c('#3a7663'), light: c('#548a5e'), dark: c('#1f4f43'), dry: c('#5b7f55'),
     accent: c('#3f8378'), accent2: c('#5e9568'), accentAmount: 0.35, rock: c('#858a84'), mossiness: 1,
   },
+  // Moorland: muted tawny and russet-mauve turf (it shares the heather's family, so the purple
+  // reads as part of the moor rather than paint on a lawn), olive only down in the hollows.
   plateau: {
-    ...BASE, grass: c('#6f7d43'), grassAlt: c('#7c7a4b'), light: c('#9a9160'), dark: c('#4f5c38'), dry: c('#8f8558'),
+    ...BASE, grass: c('#857a50'), grassAlt: c('#80695c'), light: c('#b8a56e'), dark: c('#565a40'), dry: c('#a08b62'),
     accent: c('#5e3170'), accent2: c('#7a4a86'), accentAmount: 0.75, rock: c('#8f897d'),
   },
   rocky: { ...BASE, grass: c('#7d9849'), grassAlt: c('#8e9a50'), light: c('#b2ad69'), dark: c('#55763c'), accentAmount: 0.1, rock: c('#8f8a80') },

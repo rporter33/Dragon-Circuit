@@ -126,6 +126,19 @@ describe('ambienceMix', () => {
     expect(light.thunder).toBe(0);
     expect(heavy.thunder).toBe(1);
   });
+
+  it('the edge storm rises with weather.boundary and drowns the calm air', () => {
+    const calm = ambienceMix(base, emptyAmbienceMix());
+    expect(calm.storm).toBe(0);
+    // Optional input: missing or garbage reads as no storm.
+    expect(ambienceMix({ ...base, boundary: Number.NaN }, emptyAmbienceMix()).storm).toBe(0);
+    const near = ambienceMix({ ...base, boundary: 0.5 }, emptyAmbienceMix());
+    const deep = ambienceMix({ ...base, boundary: 1 }, emptyAmbienceMix());
+    expect(near.storm).toBeGreaterThan(0);
+    expect(deep.storm).toBeGreaterThan(near.storm);
+    expect(deep.storm).toBeLessThan(0.2);
+    expect(deep.air).toBeLessThan(calm.air * 0.3);
+  });
 });
 
 describe('loudestFall', () => {

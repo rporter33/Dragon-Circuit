@@ -324,8 +324,14 @@ export const ORBIT_CAM: Record<OrbitKind, {
   follow: number;
 }> = {
   foot: { dist: 5.2, orbitMin: -0.12, distSpan: 0, runExtra: 0.9, pitch: 0.14, pitchMin: -0.5, pitchMax: 1.15, shoulder: 0.55, radius: 0.35, follow: 1.0 },
-  mounted: { dist: 6.5, orbitMin: -0.1, distSpan: 0.6, runExtra: 1.5, pitch: 0.26, pitchMin: -0.45, pitchMax: 1.2, shoulder: 0, radius: 0.7, follow: 0.85 },
+  // Over the right shoulder: straight behind, the tail ran down the bottom centre of the frame
+  // through the prompt row (raising or pitching the camera can't clear it; the tail tip is only a
+  // few metres in front of the lens). Offset, it runs off to the lower left.
+  mounted: { dist: 6.5, orbitMin: -0.1, distSpan: 0.6, runExtra: 1.5, pitch: 0.26, pitchMin: -0.45, pitchMax: 1.2, shoulder: 2.0, radius: 0.7, follow: 0.85 },
 };
+
+/** Below this boom length (m) the orbit aims along its view rather than at the subject's head. */
+const MIN_LOOK = 1.6;
 
 /** How fast (rad/s) the idle on-foot camera swings off a wyvern that fills the frame. */
 const COMPANION_SWING = 0.6;
@@ -417,10 +423,20 @@ export class OrbitRig implements Rig {
     if (shoulder > 0) {
       const sh = castBoom(ctx.terrain, pivot, right, shoulder + P.radius, P.radius, boomHit);
       if (!sh.soft) shoulder = Math.min(shoulder, Math.max(0, sh.t - 0.05));
+      // Sphere tracing takes minimum steps, so it can stop a little past the contact: back the
+      // shoulder off until the boom's start is clear. A start inside a rail or a lintel would
+      // collapse the whole boom onto the rider's head.
+      for (let i = 0; i < 6 && shoulder > 0 && ctx.terrain.distance(want.copy(pivot).addScaledVector(right, shoulder)) < P.radius + 0.02; i++) {
+        shoulder = Math.max(0, shoulder - 0.12);
+      }
     }
     pivotS.copy(pivot).addScaledVector(right, shoulder);
     toCam.copy(arm).multiplyScalar(-1);
-    const hit = castBoom(ctx.terrain, pivotS, toCam, this.distSmooth + P.radius, P.radius, boomHit);
+    // Squeezed (the head right under a beam, against a post): trace a thinner boom, so the camera
+    // still finds the open air behind instead of stopping at the rider.
+    const clear = ctx.terrain.distance(pivotS);
+    const radius = clear < P.radius + 0.02 ? Math.max(0.06, clear - 0.04) : P.radius;
+    const hit = castBoom(ctx.terrain, pivotS, toCam, this.distSmooth + radius, radius, boomHit);
     if (hit.soft && !solidContact(ctx.terrain, want.copy(pivotS).addScaledVector(toCam, this.distSmooth), P.radius)) {
       // Leaves: ease in front of them (never snap, never closer than 40% of the boom).
       this.boom = boomStep(this.boom, this.distSmooth, Infinity, Math.max(hit.t, this.distSmooth * 0.4), dt, 5, 3);
@@ -429,6 +445,9 @@ export class OrbitRig implements Rig {
     }
     out.position.copy(pivotS).addScaledVector(toCam, this.boom);
     out.target.copy(pivotS).addScaledVector(UP, this.kind === 'mounted' ? 0.5 : 0.3);
+    // A boom pulled in to almost nothing would look straight up from the subject's head: aim
+    // along the view instead, past the subject.
+    if (this.boom < MIN_LOOK) out.target.addScaledVector(arm, MIN_LOOK - this.boom);
     if (tiltUp > 0) {
       want.subVectors(out.target, out.position).applyAxisAngle(right, tiltUp);
       out.target.copy(out.position).add(want);

@@ -32,6 +32,12 @@ export interface DressMaterialOptions {
   rim?: number;
   /** Base color multiplier (vertex colors carry the real color). */
   color?: string;
+  /**
+   * For InstancedMeshes. Instanced and plain meshes compile different programs from the same
+   * material, and three re-resolves the program (parameters and cache key) on every draw that
+   * switches between them; a separate material per kind lets each keep its own program.
+   */
+  instanced?: boolean;
 }
 
 /** Shared GLSL: wind sway displacement in world space. Needs uTime/uWind/uGust declared. */
@@ -140,6 +146,7 @@ function keyOf(o: DressMaterialOptions): string {
     o.keepNormals ? 'kn' : '',
     o.rim ?? 1,
     o.color ?? '',
+    o.instanced ? 'inst' : '',
   ].join('|');
 }
 

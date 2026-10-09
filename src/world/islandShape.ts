@@ -186,7 +186,7 @@ export class IslandShape {
       const bz = t[k + 1][1] - az;
       const len2 = bx * bx + bz * bz;
       const u = Math.max(0, Math.min(1, ((x - ax) * bx + (z - az) * bz) / len2));
-      const dd = Math.hypot(x - ax - bx * u, z - az - bz * u);
+      const dd = hyp(x - ax - bx * u, z - az - bz * u);
       if (dd < best) best = dd;
     }
     return best;
@@ -201,7 +201,8 @@ export class IslandShape {
   normRadius(x: number, z: number): number {
     const dx = x - this.def.x;
     const dz = z - this.def.z;
-    return Math.hypot(dx, dz) / this.outlineRadius(Math.atan2(dz, dx));
+    // sqrt rather than Math.hypot (which allocates in V8): these run many times a frame.
+    return Math.sqrt(dx * dx + dz * dz) / this.outlineRadius(Math.atan2(dz, dx));
   }
 
   /** Top surface height. Defined everywhere; only meaningful where normRadius <= 1. */
@@ -209,7 +210,7 @@ export class IslandShape {
     const d = this.def;
     const dx = x - d.x;
     const dz = z - d.z;
-    const s = Math.min(1, Math.hypot(dx, dz) / this.outlineRadius(Math.atan2(dz, dx)));
+    const s = Math.min(1, Math.sqrt(dx * dx + dz * dz) / this.outlineRadius(Math.atan2(dz, dx)));
     let hill = 0.5 + 0.5 * fbm2(this.hillN, dx * this.hillFreq, dz * this.hillFreq, 4);
     if (this.ridgedMix > 0) {
       hill = hill * (1 - this.ridgedMix) + ridged2(this.hillN, dx * this.hillFreq * 1.3 + 17, dz * this.hillFreq * 1.3 - 9, 4) * this.ridgedMix;
@@ -236,7 +237,7 @@ export class IslandShape {
     const d = this.def;
     const dx = x - d.x;
     const dz = z - d.z;
-    const r = Math.hypot(dx, dz);
+    const r = Math.sqrt(dx * dx + dz * dz);
     const theta = Math.atan2(dz, dx);
     const s0 = Math.min(1, r / this.outlineRadius(theta));
     // A keel pulled off-center: the radial coordinate is warped (still 0 at the center and 1 at
@@ -285,7 +286,9 @@ export class IslandShape {
         const px = cx + 0.2 + 0.6 * cellHash(cx + 17, cz - 5, seed);
         const pz = cz + 0.2 + 0.6 * cellHash(cx - 9, cz + 23, seed);
         const radius = 0.32 + 0.22 * cellHash(cx + 3, cz + 7, seed);
-        const dist = Math.hypot(gx - px, gz - pz) / radius;
+        const tx = gx - px;
+        const tz = gz - pz;
+        const dist = Math.sqrt(tx * tx + tz * tz) / radius;
         if (dist >= 1) continue;
         // Stalactite profile: a flared root tapering to a point.
         const t = 1 - dist;
@@ -455,13 +458,18 @@ export class ArchShape {
         a = toEnd < toStart ? arcEnd : arcStart;
         const ex = Math.cos(a) * radius;
         const ey = Math.sin(a) * radius;
-        const dr = Math.hypot(lx, ly) - radius;
-        return ellipseDistance(Math.hypot(lx - ex, ly - ey), lz, this.radiusAt(a, Math.atan2(lz / k, dr)), k);
+        const dr = hyp(lx, ly) - radius;
+        return ellipseDistance(hyp(lx - ex, ly - ey), lz, this.radiusAt(a, Math.atan2(lz / k, dr)), k);
       }
     }
-    const dr = Math.hypot(lx, ly) - radius;
+    const dr = hyp(lx, ly) - radius;
     return ellipseDistance(dr, lz, this.radiusAt(a, Math.atan2(lz / k, dr)), k);
   }
+}
+
+/** sqrt(a² + b²): Math.hypot allocates its argument list in V8, and these run per ray step. */
+function hyp(a: number, b: number): number {
+  return Math.sqrt(a * a + b * b);
 }
 
 /**
@@ -471,8 +479,8 @@ export class ArchShape {
 function ellipseDistance(u: number, v: number, r: number, k: number): number {
   const A = r;
   const B = r * k;
-  const k0 = Math.hypot(u / A, v / B);
-  const k1 = Math.hypot(u / (A * A), v / (B * B));
+  const k0 = hyp(u / A, v / B);
+  const k1 = hyp(u / (A * A), v / (B * B));
   if (k1 < 1e-9) return -B;
   return (k0 * (k0 - 1)) / k1;
 }

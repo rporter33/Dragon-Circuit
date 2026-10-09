@@ -163,6 +163,12 @@ export class LaunchGust {
     this.mat.uniforms.uPxScale.value = v;
   }
 
+  /** Step the clock back by `by` seconds (see Fx: done while the screen is faded out). */
+  wrapTime(by: number): void {
+    this.now -= by;
+    this.mat.uniforms.uNow.value = this.now;
+  }
+
   update(dt: number, cam: Vector3, strength = 1): void {
     this.now += dt;
     const d = cam.distanceTo(this.origin);

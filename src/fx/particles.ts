@@ -331,6 +331,19 @@ export class BurstParticles {
     this.dirtyTo = -1;
   }
 
+  /**
+   * Step the clock back by `by` seconds (float32 precision in long sessions, see Fx). Birth
+   * times move with it, so every particle keeps its age: nothing changes on screen.
+   */
+  wrapTime(by: number): void {
+    this.now -= by;
+    this.mat.uniforms.uNow.value = this.now;
+    const T = this.aTime.array as Float32Array;
+    for (let i = 0; i < this.capacity; i++) T[i * 4] -= by;
+    this.aTime.clearUpdateRanges();
+    this.aTime.needsUpdate = true;
+  }
+
   /** Draw only the first `n` slots (quality scaling); emission wraps within them. */
   setActiveCapacity(n: number): void {
     const c = Math.max(16, Math.min(this.capacity, Math.floor(n)));
