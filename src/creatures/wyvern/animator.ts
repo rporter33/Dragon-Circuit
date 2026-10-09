@@ -295,7 +295,7 @@ export class WyvernAnimator {
     e[5] = lean;
     e[6] = f.chestAir;
     e[7] = spineYaw * 0.5;
-    e[8] = lean * 0.5;
+    e[8] = lean * 0.5 + f.turnLean;
     // The stretch lifts the tail root level with the back.
     e[9] = f.pelvisAir + stretch * 0.05;
     e[10] = -spineYaw * 0.55;

@@ -121,6 +121,8 @@ export class AnimFrame {
   brace = 0;
   /** Spine pitch of the takeoff crouch (rad). */
   crouchPitch = 0;
+  /** The chest's lean into a ground turn (rad of roll, − = left side down). */
+  turnLean = 0;
   /** Seconds since the wrists left the ground at a launch (C6), 99 when not launching. Read by B6. */
   launchT = 99;
 

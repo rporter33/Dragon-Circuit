@@ -23,6 +23,8 @@ export interface GaitTiming {
 
 /** Lateral-sequence walk: LH, LF, RH, RF. */
 export const WALK: GaitTiming = { offsets: [0, 0.5, 0.25, 0.75], duty: 0.62, cycle: 1.55 };
+/** Cycle length (× standHeight) when turning on the spot: short, quick steps round the pivot. */
+export const TURN_CYCLE = 0.6;
 /** Bounding run: the hind pair pushes off, then the knuckles catch. */
 export const RUN: GaitTiming = { offsets: [0, 0.08, 0.5, 0.58], duty: 0.36, cycle: 2.5 };
 
@@ -134,8 +136,12 @@ export class Gait {
     const sh = ctx.standHeight;
     const T = gaitTiming(ctx.runBlend, this.timing);
     const speed = Math.hypot(ctx.velocity.x, ctx.velocity.z);
-    const speedEff = Math.max(speed, Math.abs(ctx.yawRate) * 0.9 * sh);
-    const cycleLen = T.cycle * sh;
+    const turnEff = Math.abs(ctx.yawRate) * 0.9 * sh;
+    const speedEff = Math.max(speed, turnEff);
+    // Turning on the spot the feet step short and quick round the pivot (TURN_CYCLE), not the
+    // long strides of a straight walk.
+    const turning = speedEff > 1e-6 ? clamp((turnEff - speed) / speedEff, 0, 1) : 0;
+    const cycleLen = lerp(T.cycle, TURN_CYCLE, turning) * sh;
     this.cycleTime = cycleLen / Math.max(0.3, speedEff);
     if (ctx.moving) this.phase = (this.phase + (speedEff / cycleLen) * ctx.dt) % 1;
 

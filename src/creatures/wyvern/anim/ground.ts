@@ -17,7 +17,7 @@
 
 import { Quaternion, Vector3 } from 'three';
 import type { TerrainQuery } from '../../../core/types';
-import { TAU, clamp, clamp01, smoothstep } from '../../../core/math';
+import { DEG, TAU, clamp, clamp01, smoothstep } from '../../../core/math';
 import { SIDE_SIGN, type RigDef } from '../rig';
 import { LEG_ANGLES } from '../proportions';
 import { Bouncy, aimRotation, solveTwoBone } from '../ik';
@@ -188,6 +188,8 @@ export class GroundLayer {
     f.dipPitch = (dipV / sh) * (0.5 + 0.2 * heft);
     f.gaitRoll = moving ? 0.03 * Math.sin(gaitPhase * TAU) * (1 - runBlend) : 0;
     f.crouchPitch = f.takeoffCrouch ? -0.08 * f.openAmt : 0;
+    // Turning on the ground, the chest leans into the turn (3° at a full turn).
+    f.turnLean = f.groundW * clamp(-0.05 * f.om.y, -3 * DEG, 3 * DEG);
     // The folded-stance wing IK weight for this frame: knuckles on the ground as front feet
     // (lifted off them to shuffle, brace or bask).
     this.ikW = f.groundW * (1 - f.openAmt) * (1 - f.shuffle * 0.65) * (1 - 0.85 * f.brace) * (1 - f.bask);

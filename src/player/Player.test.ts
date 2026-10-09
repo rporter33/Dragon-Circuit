@@ -544,6 +544,43 @@ describe('the wyvern on its feet (GroundWalker)', () => {
     expect(min).toBeGreaterThan(P.riderKeepOut - 1e-6);
     expect(w.speed).toBeLessThan(0.5);
   });
+
+  it('turns like a big animal: its own top rate, wound up and eased out, pivoting on its haunches (C8)', () => {
+    for (const id of BREED_ORDER) {
+      const b = BREEDS[id];
+      const sh = b.standHeight;
+      const w = walker(id);
+      const cap = P.groundTurnRate[id];
+      // Hind point: where the hind feet stand (GAIT.hind), turnPivot × sh behind the center.
+      const hind = () => new Vector3(w.position.x - Math.sin(w.yaw) * P.turnPivot * sh, 0, w.position.z - Math.cos(w.yaw) * P.turnPivot * sh);
+      const h0 = hind();
+      const c0 = w.chest(sh, new Vector3());
+      // Told to face the other way (a touch to the left): it turns on the spot.
+      const back = new Vector3(Math.sin(Math.PI - 0.05), 0, Math.cos(Math.PI - 0.05));
+      let peak = 0;
+      let jerk = 0;
+      let prev = 0;
+      let t180 = -1;
+      for (let i = 0; i < 6 * 120; i++) {
+        w.step(DT, back, 0, b, terrain, false);
+        peak = Math.max(peak, Math.abs(w.yawRate));
+        jerk = Math.max(jerk, Math.abs(w.yawRate - prev) / DT);
+        prev = w.yawRate;
+        if (t180 < 0 && Math.abs(Math.atan2(Math.sin(w.yaw - (Math.PI - 0.05)), Math.cos(w.yaw - (Math.PI - 0.05)))) < 0.02) t180 = i * DT;
+      }
+      // No faster than its cap (harrier 1.2 rad/s ≈ 69°/s, ironback 0.8 ≈ 46°/s)...
+      expect(peak, id).toBeLessThan(cap + 1e-9);
+      expect(peak, id).toBeGreaterThan(0.9 * cap);
+      // ...wound up and eased out at the yaw-acceleration limit, not snapped.
+      expect(jerk, id).toBeLessThan(P.groundYawAccel + 1e-6);
+      expect(t180, id).toBeGreaterThan((Math.PI - 0.05) / cap);
+      expect(Math.abs(w.yawRate), id).toBeLessThan(0.02);
+      // The haunches stay put while the chest swings round.
+      expect(hind().distanceTo(h0), id).toBeLessThan(0.05);
+      expect(w.chest(sh, new Vector3()).distanceTo(c0), id).toBeGreaterThan(1.2 * (P.chestAhead + P.turnPivot) * sh);
+      expect(w.speed).toBe(0);
+    }
+  });
 });
 
 describe('respawn', () => {

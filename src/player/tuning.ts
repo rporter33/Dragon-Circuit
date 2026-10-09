@@ -2,6 +2,7 @@
 // respawns. Flight itself is tuned in flight/FlightModel.ts and flight/breeds.ts.
 
 import { DEG } from '../core/math';
+import type { BreedId } from '../core/types';
 
 export const PLAYER_TUNING = {
   // --- Landing -------------------------------------------------------------------------------
@@ -32,6 +33,19 @@ export const PLAYER_TUNING = {
   /** Ground acceleration / braking (m/s²). */
   wyvernAccel: 6,
   wyvernBrake: 8,
+  /**
+   * Ground turning: the most each breed turns (rad/s; a big animal comes round at 45–90°/s, the
+   * heaviest slowest), and how quickly a turn winds up and settles (rad/s²).
+   */
+  groundTurnRate: { skimmer: 1.6, harrier: 1.2, galewing: 1.0, ironback: 0.8 } as Readonly<Record<BreedId, number>>,
+  groundYawAccel: 3,
+  /**
+   * Turning on the spot it pivots on its haunches: about a point this × standHeight behind the
+   * body center (the hind feet, GAIT.hind), so the hind feet step in place and the wrists walk
+   * round. Fully below `turnPivotSpeed` m/s, fading out by twice that.
+   */
+  turnPivot: 0.2,
+  turnPivotSpeed: 1,
   /** Below this fraction of groundSpeed the gait is a walk. */
   walkFraction: 0.55,
   /** Keyboard keys are all or nothing: W walks at this fraction of groundSpeed, Shift gallops. */

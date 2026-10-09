@@ -604,6 +604,7 @@ export class Player implements PlayerSystem {
     w.yaw = hs > 2 ? Math.atan2(s.velocity.x, s.velocity.z) : yawOf(_fwd.set(0, 0, 1).applyQuaternion(s.orientation));
     w.speed = Math.min(hs, P.landSpeed);
     w.turnRate = 0;
+    w.yawRate = 0;
     this.companion.state = 'idle';
     this.touchdownQuat.copy(s.orientation);
     this.landBlend = 0;
@@ -1065,7 +1066,8 @@ export class Player implements PlayerSystem {
     if (this.mode === 'landed' && this.landBlend < 1) {
       s.orientation.slerpQuaternions(this.touchdownQuat, stand, smoothstep(0, 1, this.landBlend));
     } else s.orientation.copy(stand);
-    s.velocity.set(Math.sin(w.yaw) * w.speed, 0, Math.cos(w.yaw) * w.speed);
+    // (The walk plus the swing of a turn on the haunches.)
+    s.velocity.copy(w.velocity);
     s.angularVelocity.set(0, w.turnRate, 0);
     s.airspeed = w.speed;
     s.stall = 0;
