@@ -269,7 +269,8 @@ void main() {
 class Streamers {
   readonly mesh: Mesh;
   private pts = [new Float32Array(TRAIL_POINTS * 3), new Float32Array(TRAIL_POINTS * 3)];
-  private born = new Float32Array(TRAIL_POINTS);
+  /** Birth times: doubles, as `now` keeps growing for the whole session. */
+  private born = new Float64Array(TRAIL_POINTS);
   private count = 0;
   private head = 0;
   private commitTimer = 0;
@@ -401,7 +402,7 @@ export function ghostLookOf(g: GhostRecording): WyvernLook {
 
 export class RaceGhost {
   readonly group = new Group();
-  /** The model (null until the first ghost is shown). */
+  /** The model (built at construction when given a look, else at the first ghost shown). */
   wyvern: Wyvern | null = null;
   /** The recording the model was built for. */
   private builtFor: GhostRecording | null = null;
@@ -413,12 +414,26 @@ export class RaceGhost {
   private streamers: Streamers;
   private visible = false;
 
-  constructor(scene: Scene, _quality: QualityProfile) {
+  /**
+   * `look`: build the model now (hidden), so the boot shader warmup compiles the ghost's programs
+   * (body, membrane, depth prepass, outline, streamers) instead of linking them at the moment a
+   * race starts. A recording flown on another breed rebuilds the geometry; the programs stay.
+   */
+  constructor(scene: Scene, _quality: QualityProfile, look?: WyvernLook) {
     this.group.name = 'race-ghost';
     this.streamers = new Streamers(this.mats.tint, this.mats.opacity);
     this.group.add(this.streamers.mesh);
     this.group.visible = false;
     scene.add(this.group);
+    if (look) this.build(look);
+  }
+
+  private build(look: WyvernLook): Wyvern {
+    const w = new Wyvern(look, { ghost: true });
+    this.wyvern = w;
+    this.group.add(w.group);
+    this.dress();
+    return w;
   }
 
   get shown(): boolean {
@@ -427,12 +442,12 @@ export class RaceGhost {
 
   /** Pose the ghost from a decoded sample of `rec`, tinted `color`. */
   show(rec: GhostRecording, s: GhostSample, color: string, dt: number, camera: PerspectiveCamera): void {
-    if (!this.wyvern) {
-      this.wyvern = new Wyvern(ghostLookOf(rec), { ghost: true });
-      this.group.add(this.wyvern.group);
+    let w = this.wyvern;
+    if (!w) {
+      w = this.build(ghostLookOf(rec));
       this.builtFor = rec;
     } else if (this.builtFor !== rec) {
-      this.wyvern.setLook(ghostLookOf(rec));
+      w.setLook(ghostLookOf(rec));
       this.builtFor = rec;
     }
     this.dress();
@@ -454,8 +469,8 @@ export class RaceGhost {
     pose.gait = 'idle';
     pose.groundY = null;
     pose.lookTarget.copy(s.position).addScaledVector(s.velocity, 1.5);
-    this.wyvern.update(dt, pose);
-    this.wyvern.getWingtips(_l, _r);
+    w.update(dt, pose);
+    w.getWingtips(_l, _r);
     this.streamers.update(dt, _l, _r, camera);
   }
 

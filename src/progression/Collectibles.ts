@@ -41,6 +41,7 @@ import { hashString } from '../core/rng';
 export const PICKUP_RADIUS = { foot: 4, air: 7 } as const;
 /** Seconds the pickup flourish takes. */
 const COLLECT_TIME = 0.9;
+const TAU = Math.PI * 2;
 
 export interface CollectiblesDeps {
   scene: Scene;
@@ -87,7 +88,9 @@ export class Collectibles implements CollectibleSystem {
   private haloState: BufferAttribute;
   private zones: DiscoveryZone[];
   private discoverTimer = 0;
-  private time = 0;
+  /** Relic turn and breathing phases (radians, wrapped: no clock grows without bound). */
+  private spin = 0;
+  private bob = 0;
   /** The save document the visuals reflect (a reset swaps it for a fresh one). */
   private shownData: SaveData;
 
@@ -221,7 +224,8 @@ export class Collectibles implements CollectibleSystem {
   }
 
   update(dt: number, camera: PerspectiveCamera, player: PlayerSystem): void {
-    this.time += dt;
+    this.spin = (this.spin + dt * 0.45) % TAU;
+    this.bob = (this.bob + dt * 1.3) % TAU;
     if (this.deps.save.data !== this.shownData) this.resetFromSave();
     // Pickups: rider on foot, wyvern in the air (or carrying the rider on the ground).
     const onFoot = player.mode === 'onFoot';
@@ -262,8 +266,8 @@ export class Collectibles implements CollectibleSystem {
     for (const l of this.live) {
       if (!l.relic || l.collect === 2) continue;
       const a = l.relic.artifact;
-      a.rotation.y = this.time * 0.45 + l.relic.spin;
-      if (l.collect === -1) a.position.y = (l.c.groundY !== null ? l.c.groundY + 0.95 : l.c.position.y - 0.45) + 0.06 * Math.sin(this.time * 1.3 + l.relic.spin);
+      a.rotation.y = this.spin + l.relic.spin;
+      if (l.collect === -1) a.position.y = (l.c.groundY !== null ? l.c.groundY + 0.95 : l.c.position.y - 0.45) + 0.06 * Math.sin(this.bob + l.relic.spin);
     }
     // Halo size follows the view so glints stay a sensible size on any screen.
     (this.halo.material as import('three').ShaderMaterial).uniforms.uPixelScale.value = this.pixelScale(camera);

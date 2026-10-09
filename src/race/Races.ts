@@ -122,7 +122,6 @@ export class Races implements RaceSystem {
   private missedAt = -1;
   private offCourseTime = 0;
   private finishedTime = 0;
-  private time = 0;
   private armCheck = 0;
   /** Seconds flying since the last takeoff, catch or respawn. */
   private airTime = 0;
@@ -132,8 +131,11 @@ export class Races implements RaceSystem {
   private runBreed: BreedId | null = null;
   private runLook: WyvernLook | null = null;
   private runRider: RiderLook | null = null;
-  /** The race restart() tries again after a stand-down or an abort, and until when. */
-  private retry: { id: string; until: number } | null = null;
+  /**
+   * The race restart() tries again after a stand-down or an abort, and the seconds left to do so
+   * (a countdown, not a session clock: nothing here grows without bound).
+   */
+  private retry: { id: string; left: number } | null = null;
   /** The save document this state belongs to (a reset swaps it). */
   private saveData: SaveData;
 
@@ -146,7 +148,7 @@ export class Races implements RaceSystem {
     this.showGhost = deps.settings().showGhost;
     this.saveData = deps.save.data;
     this.visuals = new RaceVisuals(deps.scene, this.defs, deps.quality);
-    this.ghost = new RaceGhost(deps.scene, deps.quality);
+    this.ghost = new RaceGhost(deps.scene, deps.quality, deps.save.data.wyvern);
     deps.events.on('respawn', () => {
       this.airTime = 0;
       if (this.activeId && this.state === 'running') this.abort('respawn');
@@ -196,7 +198,7 @@ export class Races implements RaceSystem {
    * its gate or was abandoned, for RETRY_WINDOW seconds. Null otherwise.
    */
   get retryId(): string | null {
-    return this.retry && this.time <= this.retry.until ? this.retry.id : null;
+    return this.retry?.id ?? null;
   }
 
   // --- Commands ---------------------------------------------------------------------------------
@@ -226,7 +228,7 @@ export class Races implements RaceSystem {
     const live = this.state === 'running' || this.state === 'countdown';
     if (live) this.deps.events.emit('raceAbort', { raceId: id, reason });
     this.reset();
-    this.retry = live && reason !== 'quit' && reason !== 'restart' ? { id, until: this.time + RETRY_WINDOW } : null;
+    this.retry = live && reason !== 'quit' && reason !== 'restart' ? { id, left: RETRY_WINDOW } : null;
   }
 
   /**
@@ -253,7 +255,7 @@ export class Races implements RaceSystem {
   // --- Simulation -------------------------------------------------------------------------------
 
   fixedUpdate(dt: number, player: PlayerSystem): void {
-    this.time += dt;
+    if (this.retry && (this.retry.left -= dt) <= 0) this.retry = null;
     this.checkSave();
     const a = player.prevPosition;
     const b = player.position;
@@ -391,7 +393,7 @@ export class Races implements RaceSystem {
     const id = this.activeId;
     if (!id || this.state !== 'countdown') return;
     this.reset();
-    this.retry = { id, until: this.time + RETRY_WINDOW };
+    this.retry = { id, left: RETRY_WINDOW };
     this.deps.events.emit('raceDisarmed', { raceId: id, reason });
   }
 
@@ -528,7 +530,7 @@ export class Races implements RaceSystem {
     this.ghost.show(g!, s, courseColors(g!.raceId).light, dt, camera);
   }
 
-  /** The ghost's model (for showcases and tests), or null before the first ghost is shown. */
+  /** The ghost's model (for showcases and tests). */
   get ghostWyvern(): RaceGhost['wyvern'] {
     return this.ghost.wyvern;
   }

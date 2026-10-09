@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PerspectiveCamera, Quaternion, Scene, Vector3, type SkinnedMesh } from 'three';
+import { PerspectiveCamera, Quaternion, Scene, Vector3, type Object3D, type SkinnedMesh } from 'three';
 import { EventBus } from '../core/events';
 import type { BreedStats, GameEvents, PlayerMode } from '../core/types';
 import type { GhostRecording, PlayerSystem } from '../game/contracts';
@@ -425,6 +425,21 @@ describe('Races: the rolling start from the menu', () => {
     expect(races.retryId).toBeNull();
   });
 
+  it('the second chance lasts 20 s of play, then R does nothing', () => {
+    const { player, races, flyTo, idle } = setup();
+    races.begin('roost-loop');
+    flyTo(gatePoint(-20).add(new Vector3(0, -GATE_HALF_HEIGHT - 12, 0)));
+    flyTo(gatePoint(20).add(new Vector3(0, -GATE_HALF_HEIGHT - 12, 0)));
+    expect(races.retryId).toBe('roost-loop');
+    player.mode = 'landed';
+    idle(18.5); // (the stand-down came ~0.6 s before the end of the last leg)
+    expect(races.retryId).toBe('roost-loop');
+    idle(1.5);
+    expect(races.retryId).toBeNull();
+    races.restart();
+    expect(player.teleports).toHaveLength(1);
+  });
+
   it('landing at an armed gate stands it down too', () => {
     const { log, player, races, approach } = setup();
     approach(gatePoint(-120));
@@ -494,6 +509,17 @@ describe('Races: records keep the breed they were flown on', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(races.bestMs).toBeNull();
     expect(races.currentGhost).toBeNull();
+  });
+
+  it('the ghost model exists from the start (the boot shader warmup compiles its programs)', () => {
+    const { races } = setup();
+    const mesh = races.ghostWyvern?.skinnedMesh;
+    expect(mesh).toBeTruthy();
+    expect((mesh!.material as { name: string }[]).map((m) => m.name)).toEqual(['race-ghost-body', 'race-ghost-membrane']);
+    // ...hidden until a race runs against a ghost.
+    let shown = true;
+    for (let o: Object3D | null = mesh!; o; o = o.parent) shown &&= o.visible;
+    expect(shown).toBe(false);
   });
 
   it('the ghost is rebuilt as each recording’s breed, in its own readable materials', () => {
