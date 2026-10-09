@@ -49,6 +49,8 @@ const _q = new Quaternion();
 const _q2 = new Quaternion();
 const _v = new Vector3();
 const _v2 = new Vector3();
+const _tgt = new Vector3();
+const _mouth = new Vector3();
 const _e = new Euler();
 
 export type IdleCue = 'blink' | 'nictitate' | 'tongue';
@@ -57,6 +59,11 @@ export type IdleCue = 'blink' | 'nictitate' | 'tongue';
 const GREET_TIME = 3.8;
 const GREET_NICT = 0.35;
 const GREET_TONGUE = 0.85;
+/**
+ * How close the greeting brings the snout to the rider's face (m): the neck curls round toward
+ * them only until the mouth is this far off, and the head turns the rest of the way on its own.
+ */
+const GREET_STANDOFF = 1.0;
 
 export class LifeLayer {
   private readonly a: WyvernAnimator;
@@ -107,6 +114,14 @@ export class LifeLayer {
   private neckHold = 0;
   private readonly headLP: Spring;
   private holdInit = false;
+  /**
+   * How far this frame's greeting curls the neck round (0..1, see GREET_STANDOFF), and the mouth's
+   * distance to the look target after a neck pass.
+   */
+  private greetReach = 1;
+  private mouthDist = 0;
+  /** The snout tip in the head bone's bind frame (rig.mouth − the head pivot). */
+  private readonly mouthOffset: Vector3;
   /** Euler angles for setEulerAt: one neck bone; jaw, fans and tongue (x, y, z each). */
   private readonly neckAng = new Float64Array(3);
   private readonly headAng = new Float64Array(15);
@@ -121,6 +136,7 @@ export class LifeLayer {
     this.neckLag = new Bouncy(TAU * BREEDS[a.rig.props.breed].flapRate * 1.25, 0.5);
     this.neckReach = 0.62 * a.rig.props.shape.neckLength;
     this.headLP = new Spring(TAU * BREEDS[a.rig.props.breed].flapRate * HOLD_CUTOFF);
+    this.mouthOffset = a.rig.mouth.clone().sub(a.rig.bones[a.rig.idx.head].pos);
     this.baskDuration = 3.0 + 0.8 * heft;
   }
 
@@ -348,7 +364,9 @@ export class LifeLayer {
     const f = this.f;
     const I = this.rig.idx;
     this.neckHold = 0;
+    this.greetReach = 1;
     this.poseNeck();
+    if (f.greet > 0.001) this.greetStandoff();
     const hp = a.modelP[I.head];
     _v.copy(hp).applyQuaternion(a.qW);
     const y = _v.y;
@@ -372,6 +390,34 @@ export class LifeLayer {
     }
   }
 
+  /**
+   * The greeting stops the snout GREET_STANDOFF from the rider's face (the look target), whatever
+   * the neck's length and the rider's distance: if the full curl round brings the mouth closer,
+   * the neck is posed again without it, and then with the share of it that leaves the mouth about
+   * that far off (linear between the two). The head still turns to face them, and the neck still
+   * comes down (only the curl round is held back). Two extra neck passes, only while greeting close.
+   */
+  private greetStandoff(): void {
+    this.a.toModel(this.f.pose.lookTarget, _tgt);
+    this.measureMouth();
+    const d1 = this.mouthDist;
+    if (d1 >= GREET_STANDOFF) return;
+    this.greetReach = 0;
+    this.poseNeck();
+    this.measureMouth();
+    const d0 = this.mouthDist;
+    this.greetReach = d0 > GREET_STANDOFF && d0 > d1 + 1e-4 ? clamp((d0 - GREET_STANDOFF) / (d0 - d1), 0, 1) : 0;
+    if (this.greetReach > 0) this.poseNeck();
+  }
+
+  /** The mouth's distance (model space) to _tgt after the last neck pass, into mouthDist. */
+  private measureMouth(): void {
+    const a = this.a;
+    const head = this.rig.idx.head;
+    _mouth.copy(this.mouthOffset).applyQuaternion(a.modelQ[head]).add(a.modelP[head]);
+    this.mouthDist = _mouth.distanceTo(_tgt);
+  }
+
   /** One pass of the neck (posture, bends, look, plus this frame's height hold) and the head. */
   private poseNeck(): void {
     const a = this.a;
@@ -390,8 +436,9 @@ export class LifeLayer {
     // Greeting a rider at its shoulder, the neck curls round toward them (but stops short: the
     // head turns the rest of the way on its own, so the snout ends a little way off their face).
     const greet = f.greet;
-    const neckYawMax = 1.35 + 0.35 * greet;
-    const neckYaw = clamp(ly, -neckYawMax, neckYawMax) * (1 + 0.35 * greet);
+    const curl = greet * this.greetReach;
+    const neckYawMax = 1.35 + 0.35 * curl;
+    const neckYaw = clamp(ly, -neckYawMax, neckYawMax) * (1 + 0.35 * curl);
     for (let i = 0; i < neckN; i++) {
       let pitch = lerp(NECK_FLIGHT[i], NECK_GROUND[i], groundW);
       pitch = lerp(pitch, NECK_TUCK[i], tuck);
