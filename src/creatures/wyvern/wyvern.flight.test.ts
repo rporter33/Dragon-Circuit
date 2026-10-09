@@ -13,6 +13,8 @@ import type { BreedId } from '../../core/types';
 import { DEG } from '../../core/math';
 import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { strokeForce } from '../../flight/FlightModel';
+import { launch, neutralInput, stillAir } from '../../flight/telemetry';
+import type { FlightInput } from '../../core/types';
 import { createWyvernPose } from '../../player/poses';
 import { Wyvern } from './Wyvern';
 import { FLAP_STYLES, W, bodyClock, flapPose, strokeLoad, strokePhase, strokeTravel, strokeWarp } from './wingPoses';
@@ -626,7 +628,7 @@ describe('the living glide (B4: a gliding wing is never still; gusts, load and f
 
 describe('landing (B5: a height-driven flare, backwing beats, legs reaching)', { timeout: 60000 }, () => {
   /** One beat flared and flapping at `feet` m above flat ground; the left tip against the shoulder (body frame). */
-  function flaredBeat(breed: BreedId, feet: number) {
+  function flaredBeat(breed: BreedId, feet: number, flare = 1) {
     const w = new Wyvern(look(breed));
     const p = gliding();
     const sh = BREEDS[breed].standHeight;
@@ -634,7 +636,7 @@ describe('landing (B5: a height-driven flare, backwing beats, legs reaching)', {
     p.groundY = 10;
     p.velocity.set(0, -3, 10);
     p.airspeed = 10.4;
-    p.flare = 1;
+    p.flare = flare;
     p.flapStrength = 1;
     const rate = BREEDS[breed].flapRate * 1.4;
     const hum = w.skinnedMesh!.skeleton.bones.find((b) => b.name === 'humerusL')!;
@@ -660,14 +662,17 @@ describe('landing (B5: a height-driven flare, backwing beats, legs reaching)', {
   it('beats backwing strokes over the last metres: high, short and swept far forward, with real travel', () => {
     for (const b of BREED_ORDER) {
       const low = flaredBeat(b, 1);
+      // (Flared and beating this slowly up high is a hover, B7b.)
       const high = flaredBeat(b, 40);
-      // A short stroke that stays high (never driven down past the shoulder's level by much)...
+      const plain = flaredBeat(b, 40, 0);
+      // A short stroke that stays high (never driven down past the shoulder's level by much, not
+      // even as far as the hover's)...
       expect(low.bottom, b).toBeGreaterThan(high.bottom + 5);
       // ...with real travel (the strip's ≥ 40° between the extremes)...
       expect(low.top - low.bottom, b).toBeGreaterThan(30);
       // ...and the stroke plane laid back toward the horizontal: more fore-aft travel per metre
-      // of rise and fall than a flaring beat up high.
-      expect(low.plane, b).toBeGreaterThan(1.3 * high.plane);
+      // of rise and fall than the breed's own wingbeat.
+      expect(low.plane, b).toBeGreaterThan(1.3 * plain.plane);
     }
   });
 });
@@ -769,6 +774,51 @@ describe('fatigue, hover and the pull-out (B7)', { timeout: 60000 }, () => {
       expect(hov.hover, b).toBeGreaterThan(0.8);
       expect(fast.hover, b).toBeLessThan(0.05);
       expect(hov.foreAft / hov.vertical, b).toBeGreaterThan(1.3 * (fast.foreAft / fast.vertical));
+    }
+  });
+
+  it('hangs in a hover whenever the flight model is held flared and beating, and only then (B7b)', () => {
+    // The real thing: flare and flap held, the flight model settles at about 1.1 × the breed's
+    // stall speed and swings ±15% over each beat. The hover holds through every beat of it. A
+    // hard brake from 30 m/s with the flaps going is not a hover yet, and the slow flight either
+    // side of it (the flaps alone, pitched up; the flare alone) never is.
+    const env = stillAir();
+    const fly = (b: BreedId, input: Partial<FlightInput>, speed = 24) => {
+      const m = launch(BREEDS[b], speed);
+      const w = new Wyvern(look(b));
+      const p = gliding();
+      const inp: FlightInput = { ...neutralInput(), ...input };
+      const hover: number[] = [];
+      for (let i = 0; i < 10 * 60; i++) {
+        for (let k = 0; k < 2; k++) {
+          m.state.stamina = 1;
+          m.step(1 / 120, inp, env);
+        }
+        const s = m.state;
+        p.position.copy(s.position);
+        p.velocity.copy(s.velocity);
+        p.orientation.copy(s.orientation);
+        p.lookTarget.copy(s.position).addScaledVector(s.velocity, 2);
+        p.airspeed = s.airspeed;
+        p.flare = s.flare;
+        p.flapStrength = s.flapStrength;
+        p.flapPhase = s.flapPhase;
+        p.wingSpread = s.wingSpread;
+        p.stall = s.stall;
+        w.update(1 / 60, p);
+        hover.push((w as unknown as { animator: { frame: { hover: number } } }).animator.frame.hover);
+      }
+      w.dispose();
+      return hover;
+    };
+    for (const b of BREED_ORDER) {
+      const held = fly(b, { flare: 1, flap: 1 });
+      // The last 3 s: at least two beats of the slowest breed.
+      expect(Math.min(...held.slice(-180)), b).toBeGreaterThan(0.8);
+      const brake = fly(b, { flare: 1, flap: 1 }, 30);
+      expect(Math.max(...brake.slice(0, 18)), b).toBeLessThan(0.05);
+      expect(Math.max(...fly(b, { flap: 1, pitch: 0.6 })), b).toBe(0);
+      expect(Math.max(...fly(b, { flare: 1 })), b).toBeLessThan(0.05);
     }
   });
 

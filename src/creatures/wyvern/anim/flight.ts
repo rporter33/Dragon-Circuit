@@ -19,6 +19,7 @@
 import { Vector3 } from 'three';
 import { DEG, TAU, clamp, clamp01, smoothstep } from '../../../core/math';
 import { BREEDS } from '../../../flight/breeds';
+import { deriveFlight } from '../../../flight/FlightModel';
 import { SIDE_SIGN } from '../rig';
 import { Bouncy, Spring, noise1 } from '../ik';
 import {
@@ -89,6 +90,14 @@ const LAUNCH_BEATS = 2;
  */
 const HAND_TUCK = 0.6;
 const HAND_LAG = 0.12;
+/**
+ * Hover (B7, B7b): full below HOVER_FULL × the breed's stall speed, gone by HOVER_NONE ×. Flare
+ * and flap held, the flight model hangs at 0.9–1.25 × stall speed (1.1 × on average, every
+ * breed), so the whole beat stays a hover. Braking with the flaps from cruise (1.6 × and up)
+ * never reads as one, and without the flare there is no hover at all.
+ */
+const HOVER_FULL = 1.2;
+const HOVER_NONE = 1.55;
 /** First channel of the hand group (hand, fingers, claw); before it, the humerus and forearm. */
 const HAND_CH = W.handEl;
 
@@ -134,6 +143,9 @@ export class FlightLayer {
   /** The breed's top roll rate (rad/s) and yaw authority (rad/s²): a ghost's stick is estimated against them. */
   private readonly maxRollRate: number;
   private readonly yawAuthority: number;
+  /** The airspeeds (m/s) the hover is full below and gone above (HOVER_FULL/NONE × stall speed). */
+  private readonly hoverFull: number;
+  private readonly hoverNone: number;
   /**
    * The stick this frame (pose.control, or estimated from the body's motion for a ghost) and the
    * roll stick's slow follower (ROLL_OMEGA): stick − follower is the roll's initiation, which
@@ -184,6 +196,9 @@ export class FlightLayer {
     this.clockC = 0.5 * D;
     this.maxRollRate = BREEDS[a.rig.props.breed].maxRollRate;
     this.yawAuthority = BREEDS[a.rig.props.breed].yawAuthority;
+    const vStall = deriveFlight(BREEDS[a.rig.props.breed]).vStall;
+    this.hoverFull = HOVER_FULL * vStall;
+    this.hoverNone = HOVER_NONE * vStall;
   }
 
   /**
@@ -348,7 +363,7 @@ export class FlightLayer {
     this.launch();
     // Hover (B7): flared and beating slowly enough to hang in the air (not the last metres to
     // the ground, which beat the backwing). Published for the tail's air brake.
-    this.hoverW = flare * flap * (1 - smoothstep(6, 14, f.speed)) * (1 - this.backW) * airW;
+    this.hoverW = flare * flap * (1 - smoothstep(this.hoverFull, this.hoverNone, f.speed)) * (1 - this.backW) * airW;
     f.hover = this.hoverW;
     // The pull-out: the hands follow the arms' tuck a moment behind, and stay swept back pulling
     // out of a fast dive while the arms open.
