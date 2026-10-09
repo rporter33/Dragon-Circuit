@@ -12,6 +12,7 @@ import { GeoBuilder, MREGION, REGION, Skin, ellipsoid } from '../builder';
 import type { RigDef } from '../rig';
 import { bodyChain } from './body';
 import { leaf, spike, strip } from './shape';
+import { RES, sides, tackN, type Res } from './res';
 
 export interface SaddleInfo {
   /** Seat (rider's hips), body space bind. */
@@ -50,7 +51,12 @@ interface ShellOpts {
 }
 
 /** A shell lying on the body surface between two arc lengths and girth angles, with a rim. */
-function shell(b: GeoBuilder, rig: RigDef, o: ShellOpts): void {
+function shell(b: GeoBuilder, rig: RigDef, o: ShellOpts, res: Res): void {
+  // Coarser shells (and the coarser body under them) cut deeper chords: float them a little
+  // higher so the hide never pokes through.
+  const lift = res.tack === 2 ? 0 : res.tack === 1 ? 0.025 : 0.045;
+  const top0 = o.top;
+  o = { ...o, ns: tackN(res, o.ns, 2), nt: tackN(res, o.nt, 2), top: (u, v) => top0(u, v) + lift, bottom: o.bottom + lift };
   const plan = rig.plan;
   const p = new Vector3();
   const n = new Vector3();
@@ -96,11 +102,12 @@ function shell(b: GeoBuilder, rig: RigDef, o: ShellOpts): void {
 }
 
 /** A strap ring around the body at arc length s (skinned like the body there). */
-function girth(b: GeoBuilder, rig: RigDef, s: number, width: number, hug: (s: number) => Skin, thMax = Math.PI): void {
+function girth(b: GeoBuilder, rig: RigDef, s: number, width: number, hug: (s: number) => Skin, res: Res, thMax = Math.PI): void {
+  if (res.tack === 0) return;
   const plan = rig.plan;
   const p = new Vector3();
   const n = new Vector3();
-  const N = 24;
+  const N = tackN(res, 24, 8);
   const rows: number[][] = [];
   b.begin(0);
   for (const ds of [-width / 2, width / 2]) {
@@ -118,7 +125,8 @@ function girth(b: GeoBuilder, rig: RigDef, s: number, width: number, hug: (s: nu
 }
 
 /** A small rectangular buckle or plate standing on the surface. */
-function buckle(b: GeoBuilder, rig: RigDef, s: number, th: number, size: number, hug: (s: number) => Skin): void {
+function buckle(b: GeoBuilder, rig: RigDef, s: number, th: number, size: number, hug: (s: number) => Skin, res: Res): void {
+  if (res.tack < 2) return;
   const skin = hug(s);
   const p = new Vector3();
   const n = new Vector3();
@@ -147,23 +155,25 @@ function buckle(b: GeoBuilder, rig: RigDef, s: number, th: number, size: number,
   b.end();
 }
 
-function stirrup(b: GeoBuilder, top: Vector3, drop: number, sx: number, skin: Skin): void {
+function stirrup(b: GeoBuilder, top: Vector3, drop: number, sx: number, skin: Skin, res: Res): void {
+  if (res.tack === 0) return;
   b.begin(0);
   const bottom = top.clone().add(new Vector3(0.05 * sx, -drop, 0));
-  spike(b, [top.clone(), top.clone().lerp(bottom, 0.5), bottom.clone().add(new Vector3(0, 0.02, 0)), bottom], 0.035, skin, { region: REGION.leather }, 4, new Vector3(sx, 0, 0), 0.35, 0);
+  spike(b, [top.clone(), top.clone().lerp(bottom, 0.5), bottom.clone().add(new Vector3(0, 0.02, 0)), bottom], 0.035, skin, { region: REGION.leather }, sides(res, 4), new Vector3(sx, 0, 0), 0.35, 0);
   b.end();
   // Ring.
   const pts: Vector3[] = [];
-  for (let i = 0; i <= 12; i++) {
-    const a = (i / 12) * Math.PI * 2;
+  const NR = tackN(res, 12, 5);
+  for (let i = 0; i <= NR; i++) {
+    const a = (i / NR) * Math.PI * 2;
     pts.push(bottom.clone().add(new Vector3(0, -0.1 + Math.cos(a) * 0.1, Math.sin(a) * 0.13)));
   }
   b.begin(0);
-  spike(b, pts, 0.022, skin, { region: REGION.metal }, 5, new Vector3(sx, 0, 0), 1, 0);
+  spike(b, pts, 0.022, skin, { region: REGION.metal }, sides(res, 5), new Vector3(sx, 0, 0), 1, 0);
   b.end();
 }
 
-export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo {
+export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string, res: Res = RES[0]): SaddleInfo {
   const plan = rig.plan;
   const S = rig.props.shape;
   const sc = plan.sAtZ(rig.seat.z);
@@ -201,7 +211,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       bottom: 0.0,
       region: () => REGION.leather,
       skin: hug,
-    });
+    }, res);
   const blanket = (len: number, wide: number, trim: number) =>
     shell(b, rig, {
       s0: sc - m(len * 0.55),
@@ -214,7 +224,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       bottom: -0.02,
       region: (u, v, rim) => (rim || u < 0.06 || u > 0.94 || v < 0.05 || v > 0.95 ? trim : REGION.cloth),
       skin: hug,
-    });
+    }, res);
 
   switch (id) {
     case 'racing': {
@@ -232,18 +242,18 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         bottom: 0.03,
         region: () => REGION.cloth,
         skin: hug,
-      });
-      girth(b, rig, sc - m(0.55), 0.09, hug);
-      for (const sx of [1, -1]) {
+      }, res);
+      girth(b, rig, sc - m(0.55), 0.09, hug, res);
+      for (const sx of res.tack > 0 ? [1, -1] : []) {
         const base = new Vector3(0.17 * sx * scale, 0, rig.seat.z + m(0.62));
         const s = plan.sAtZ(base.z);
         plan.surface(s, 0.35 * sx, p, n);
         base.copy(p);
         const tip = base.clone().add(new Vector3(0.04 * sx, 0.3, 0.12));
         b.begin(0);
-        spike(b, [base.clone().addScaledVector(n, -0.05), base.clone().lerp(tip, 0.6), tip], 0.03, skin, { region: REGION.metal }, 5, new Vector3(1, 0, 0), 1, 0);
+        spike(b, [base.clone().addScaledVector(n, -0.05), base.clone().lerp(tip, 0.6), tip], 0.03, skin, { region: REGION.metal }, sides(res, 5), new Vector3(1, 0, 0), 1, 0);
         const g0 = tip.clone().add(new Vector3(-0.02 * sx, -0.02, -0.02));
-        spike(b, [g0, g0.clone().add(new Vector3(0.09 * sx, 0, 0)), g0.clone().add(new Vector3(0.14 * sx, 0, 0))], 0.035, skin, { region: REGION.leather }, 6, new Vector3(0, 1, 0), 1, 0);
+        spike(b, [g0, g0.clone().add(new Vector3(0.09 * sx, 0, 0)), g0.clone().add(new Vector3(0.14 * sx, 0, 0))], 0.035, skin, { region: REGION.leather }, sides(res, 6), new Vector3(0, 1, 0), 1, 0);
         b.end();
       }
       seat.y = topY + 0.08;
@@ -251,13 +261,13 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       // Short stirrups set back so the knees tuck up.
       for (const sx of [1, -1]) {
         plan.surface(sc + m(0.25), 0.7 * sx, p, n);
-        stirrup(b, p.clone().addScaledVector(n, 0.04), 0.45, sx, skin);
+        stirrup(b, p.clone().addScaledVector(n, 0.04), 0.45, sx, skin, res);
       }
       break;
     }
     case 'royal': {
       // Carved howdah: blanket with gold trim, a wooden seat with a back, posts and a canopy.
-      blanket(1.9, 1.25, REGION.metal);
+      if (res.tack > 0) blanket(1.9, 1.25, REGION.metal);
       shell(b, rig, {
         s0: sc - m(0.55),
         s1: sc + m(0.5),
@@ -269,9 +279,9 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         bottom: 0.03,
         region: (u, v, rim) => (rim ? REGION.metal : REGION.wood),
         skin: hug,
-      });
+      }, res);
       // Cushion.
-      shell(b, rig, {
+      if (res.tack > 0) shell(b, rig, {
         s0: sc - m(0.4),
         s1: sc + m(0.32),
         th0: -0.5,
@@ -282,7 +292,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         bottom: 0.12,
         region: () => REGION.cloth,
         skin: hug,
-      });
+      }, res);
       // Backrest.
       const backS = sc + m(0.52);
       const bst = plan.station(backS);
@@ -301,7 +311,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         0.05,
         () => skin,
         (_t, f) => ({ region: f > 0.8 ? REGION.metal : REGION.wood }),
-        3,
+        res.tack === 2 ? 3 : 1,
       );
       b.end();
       // Posts, finials and the canopy.
@@ -319,16 +329,16 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         const top = new Vector3(base.x * 0.95, seat.y + H, base.z);
         posts.push(top);
         b.begin(0);
-        spike(b, [base.clone().addScaledVector(n, -0.06), base.clone().lerp(top, 0.5), top], 0.045, skin, { region: REGION.wood }, 6, new Vector3(0, 0, 1), 1, 0);
-        spike(b, [top.clone(), top.clone().add(new Vector3(0, 0.12, 0)), top.clone().add(new Vector3(0, 0.26, 0))], 0.06, skin, { region: REGION.metal }, 6);
+        spike(b, res.tack > 0 ? [base.clone().addScaledVector(n, -0.06), base.clone().lerp(top, 0.5), top] : [base.clone().addScaledVector(n, -0.06), top], 0.045, skin, { region: REGION.wood }, sides(res, 6), new Vector3(0, 0, 1), 1, 0);
+        if (res.tack > 0) spike(b, [top.clone(), top.clone().add(new Vector3(0, 0.12, 0)), top.clone().add(new Vector3(0, 0.26, 0))], 0.06, skin, { region: REGION.metal }, sides(res, 6));
         b.end();
       }
       // Canopy: a shallow dome over the posts, scalloped hem.
       b.begin(1);
       const [p00, p10, p01, p11] = [posts[1], posts[0], posts[3], posts[2]]; // (−x,front) (+x,front) (−x,back) (+x,back)
       const grid: number[][] = [];
-      const NX = 6;
-      const NZ = 6;
+      const NX = tackN(res, 6, 2);
+      const NZ = tackN(res, 6, 2);
       for (let i = 0; i <= NZ; i++) {
         const row: number[] = [];
         for (let j = 0; j <= NX; j++) {
@@ -340,7 +350,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
           p.x *= 1.12;
           p.y += 0.28 * Math.sin(Math.PI * u) * Math.sin(Math.PI * w) + 0.05;
           const edge = i === 0 || i === NZ || j === 0 || j === NX;
-          if (edge && (i + j) % 2 === 1) p.y -= 0.1;
+          if (edge && (i + j) % 2 === 1 && res.tack === 2) p.y -= 0.1;
           row.push(b.vertex(p, skin, { region: MREGION.canopy, belly: 0.6, dorsal: edge ? 1 : 0, flutter: edge ? 0.4 : 0.1 }, u, w));
         }
         grid.push(row);
@@ -349,15 +359,15 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       b.end();
       // Tassels from the corners.
       b.begin(1);
-      for (const top of posts) {
+      for (const top of res.tack === 2 ? posts : []) {
         const a = top.clone().add(new Vector3(top.x > 0 ? 0.08 : -0.08, 0.02, 0));
         const pts = [a, a.clone().add(new Vector3(0, -0.2, 0)), a.clone().add(new Vector3(0, -0.42, 0))];
         const side = [new Vector3(0, 0, 1), new Vector3(0, 0, 1), new Vector3(0, 0, 1)];
         strip(b, pts, side, [0.03, 0.05, 0.07], () => skin, (_i, t) => ({ region: MREGION.canopy, belly: 0.5, dorsal: 1, flutter: t }), 1);
       }
       b.end();
-      girth(b, rig, sc - m(0.75), 0.12, hug);
-      girth(b, rig, sc + m(0.85), 0.12, hug);
+      girth(b, rig, sc - m(0.75), 0.12, hug, res);
+      girth(b, rig, sc + m(0.85), 0.12, hug, res);
       seat.y = topY + 0.24;
       grip.set(0, 0.38, 0.47);
       break;
@@ -365,24 +375,26 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
     case 'nomad':
     case 'rider':
     default: {
-      blanket(1.55, 1.12, REGION.leather);
+      if (res.tack > 0) blanket(1.55, 1.12, REGION.leather);
       leatherSeat(0.1, 0.24, 0.16, 1.0, 0.72);
       // Pommel horn.
       const front = plan.station(sc - m(0.46));
       const pBase = front.center.clone().addScaledVector(front.up, front.upper + 0.12);
-      b.begin(0);
-      spike(b, [pBase.clone(), pBase.clone().add(new Vector3(0, 0.12, 0.03)), pBase.clone().add(new Vector3(0, 0.2, 0.06))], 0.05, skin, { region: REGION.leather }, 6, new Vector3(0, 0, 1), 1, 0.4);
-      ellipsoid(b, pBase.clone().add(new Vector3(0, 0.21, 0.06)), new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1), [0.055, 0.035, 0.055], () => skin, () => ({ region: REGION.metal }), 4, 8);
-      b.end();
-      girth(b, rig, sc - m(0.62), 0.11, hug);
-      girth(b, rig, sc + m(0.7), 0.11, hug);
-      for (const sx of [1, -1]) {
-        buckle(b, rig, sc - m(0.62), 1.15 * sx, 0.06, hug);
-        buckle(b, rig, sc + m(0.7), 1.15 * sx, 0.06, hug);
-        plan.surface(sc + m(0.05), 0.78 * sx, p, n);
-        stirrup(b, p.clone().addScaledVector(n, 0.05), 0.7, sx, skin);
+      if (res.tack > 0) {
+        b.begin(0);
+        spike(b, [pBase.clone(), pBase.clone().add(new Vector3(0, 0.12, 0.03)), pBase.clone().add(new Vector3(0, 0.2, 0.06))], 0.05, skin, { region: REGION.leather }, sides(res, 6), new Vector3(0, 0, 1), 1, 0.4);
+        if (res.tack === 2) ellipsoid(b, pBase.clone().add(new Vector3(0, 0.21, 0.06)), new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1), [0.055, 0.035, 0.055], () => skin, () => ({ region: REGION.metal }), 4, 8);
+        b.end();
       }
-      if (id === 'nomad') {
+      girth(b, rig, sc - m(0.62), 0.11, hug, res);
+      girth(b, rig, sc + m(0.7), 0.11, hug, res);
+      for (const sx of [1, -1]) {
+        buckle(b, rig, sc - m(0.62), 1.15 * sx, 0.06, hug, res);
+        buckle(b, rig, sc + m(0.7), 1.15 * sx, 0.06, hug, res);
+        plan.surface(sc + m(0.05), 0.78 * sx, p, n);
+        stirrup(b, p.clone().addScaledVector(n, 0.05), 0.7, sx, skin, res);
+      }
+      if (id === 'nomad' && res.tack > 0) {
         // Bedroll across the back behind the cantle.
         const bs = sc + m(0.72);
         const bst = plan.station(bs);
@@ -390,9 +402,9 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         b.begin(0);
         const roll: Vector3[] = [];
         for (let i = 0; i <= 6; i++) roll.push(c0.clone().add(new Vector3(-0.58 + (1.16 * i) / 6, -0.05 * Math.pow((i - 3) / 3, 2) * 2, 0)));
-        spike(b, roll, 0.17, skin, { region: REGION.wool }, 12, new Vector3(0, 1, 0), 1, 0);
+        spike(b, roll, 0.17, skin, { region: REGION.wool }, sides(res, 12), new Vector3(0, 1, 0), 1, 0);
         b.end();
-        for (const x of [-0.32, 0.32]) {
+        for (const x of res.tack === 2 ? [-0.32, 0.32] : []) {
           b.begin(0);
           const ring: Vector3[] = [];
           for (let i = 0; i <= 10; i++) {
@@ -424,12 +436,12 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
             0.17,
             () => skin,
             (_t, f) => ({ region: f > 0.85 ? REGION.metal : REGION.leather }),
-            3,
+            res.tack === 2 ? 3 : 1,
             0.4,
           );
           b.end();
-          buckle(b, rig, sc + m(0.62), 1.32 * sx, 0.05, hug);
-          if (sx > 0) {
+          buckle(b, rig, sc + m(0.62), 1.32 * sx, 0.05, hug, res);
+          if (sx > 0 && res.tack === 2) {
             // A lantern hanging off the left bag.
             const hook = bag.clone().addScaledVector(n, 0.2).addScaledVector(u, -0.3);
             const lamp = hook.clone().add(new Vector3(0.02, -0.3, 0));

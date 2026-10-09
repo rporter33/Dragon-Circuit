@@ -6,8 +6,7 @@ import { smoothstep } from '../../../core/math';
 import { GeoBuilder, REGION, Skin } from '../builder';
 import { surfacePoint, type RigDef } from '../rig';
 import { SkinChain, type ChainSegment } from './chain';
-
-export const BODY_AROUND = 18;
+import { RES, type Res } from './res';
 
 /** The spine chain as arc-length segments of the body plan. */
 export function bodyChain(rig: RigDef): SkinChain {
@@ -29,7 +28,8 @@ export function bodyChain(rig: RigDef): SkinChain {
   return new SkinChain(segs);
 }
 
-export function buildBody(b: GeoBuilder, rig: RigDef): void {
+export function buildBody(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): void {
+  const AROUND = res.bodyAround;
   const { plan, idx } = rig;
   const chain = bodyChain(rig);
   const k = plan.keyS;
@@ -40,7 +40,7 @@ export function buildBody(b: GeoBuilder, rig: RigDef): void {
 
   // Stations: denser where the body bends most (neck and tail base), ~0.16 m elsewhere.
   const stations: number[] = [];
-  const step = Math.max(0.1, rig.props.shape.torsoLength * 0.048);
+  const step = Math.max(0.1, rig.props.shape.torsoLength * 0.048) * res.stationStep;
   for (let s = 0; s < len; s += step * (s > k[m.tailBase] + 1.5 ? 1.25 : 1)) stations.push(s);
   stations.push(len);
 
@@ -48,6 +48,16 @@ export function buildBody(b: GeoBuilder, rig: RigDef): void {
   const sRear = k[m.rear];
   const sNeckBase = k[m.neckBase];
   const sTail = k[m.tailBase];
+  const T = rig.props.shape.torsoLength;
+  const hh = rig.props.shape.torsoHalfHeight;
+  const hwT = rig.props.shape.torsoHalfWidth;
+  // Shoulder girdle surface anatomy (the same Gaussian bumps as the dorsal ridge): the shoulder
+  // blades rise as withers ahead of the saddle, the pectorals bulge low on the chest; both are
+  // partly carried by the humerus so they work with every wingbeat.
+  const sWithers = plan.sAtZ(0.28 * T);
+  const sPecs = plan.sAtZ(0.24 * T);
+  const sigS = 0.06 * T;
+  const hum = [idx.wings[0].humerus, idx.wings[1].humerus];
   const rings: number[][] = [];
   b.begin(0);
   for (let si = 0; si < stations.length; si++) {
@@ -56,13 +66,21 @@ export function buildBody(b: GeoBuilder, rig: RigDef): void {
     // A low dorsal ridge along the neck, back and tail.
     const ridge = 0.07 * smoothstep(k[1], k[2], s) * (1 - 0.6 * smoothstep(sTail, len, s));
     const ring: number[] = [];
-    for (let a = 0; a < BODY_AROUND; a++) {
-      const th = (a / BODY_AROUND) * Math.PI * 2;
+    for (let a = 0; a < AROUND; a++) {
+      const th = (a / AROUND) * Math.PI * 2;
       const c = Math.cos(th);
-      surfacePoint(st, th, p);
-      const bump = ridge * Math.exp(-(th > Math.PI ? (th - Math.PI * 2) ** 2 : th * th) / 0.08) * st.upper;
+      surfacePoint(st, th, p, n);
+      const ths = th > Math.PI ? th - Math.PI * 2 : th;
+      const bump = ridge * Math.exp(-(ths * ths) / 0.08) * st.upper;
       p.addScaledVector(st.up, bump);
-      const skin = chain.skin(s);
+      // Withers (θ ±0.7) and pectorals (θ ±2.2), on the side of the angle's sign (+ = left).
+      const side = ths >= 0 ? 0 : 1;
+      const at = Math.abs(ths);
+      const gW = Math.exp(-(((s - sWithers) / sigS) ** 2) - ((at - 0.7) / 0.32) ** 2);
+      const gP = Math.exp(-(((s - sPecs) / (1.3 * sigS)) ** 2) - ((at - 2.2) / 0.42) ** 2);
+      if (gW > 1e-3 || gP > 1e-3) p.addScaledVector(n, 0.12 * hh * gW + 0.1 * hwT * gP);
+      const wHum = 0.3 * gW + 0.4 * gP;
+      const skin = wHum > 1e-3 ? new Skin().mix(chain.skin(s), 1 - wHum).add(hum[side], wHum) : chain.skin(s);
       // Angle around the tube for the scale rows (aMat.w = 2 + θ/π, θ in (−π, π], 0 on the spine;
       // the body material reads it, membranes use the channel for flutter instead).
       const around = 2 + (th > Math.PI ? th - Math.PI * 2 : th) / Math.PI;
@@ -95,8 +113,8 @@ export function buildBody(b: GeoBuilder, rig: RigDef): void {
   for (let r = 0; r < rings.length - 1; r++) {
     const A = rings[r];
     const B = rings[r + 1];
-    for (let i = 0; i < BODY_AROUND; i++) {
-      const j = (i + 1) % BODY_AROUND;
+    for (let i = 0; i < AROUND; i++) {
+      const j = (i + 1) % AROUND;
       b.quad(A[i], A[j], B[j], B[i]);
     }
   }
@@ -107,8 +125,8 @@ export function buildBody(b: GeoBuilder, rig: RigDef): void {
   const c1 = b.vertex(n.copy(st1.center).addScaledVector(st1.tangent, 0.02), chain.skin(len), { region: REGION.skin, belly: 0.5 }, len, 0);
   const first = rings[0];
   const last = rings[rings.length - 1];
-  for (let i = 0; i < BODY_AROUND; i++) {
-    const j = (i + 1) % BODY_AROUND;
+  for (let i = 0; i < AROUND; i++) {
+    const j = (i + 1) % AROUND;
     b.tri(c0, first[j], first[i]);
     b.tri(c1, last[i], last[j]);
   }

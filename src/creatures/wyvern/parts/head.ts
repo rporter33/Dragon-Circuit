@@ -9,6 +9,7 @@ import { GeoBuilder, REGION, Skin } from '../builder';
 import { TONGUE, type RigDef } from '../rig';
 import { ellipsoid } from '../builder';
 import { keyed, spike, spow } from './shape';
+import { RES, type Res } from './res';
 
 export interface HeadInfo {
   /** Left eye center (body space, bind) and outward axis; the right eye mirrors x. */
@@ -21,9 +22,8 @@ export interface HeadInfo {
   cheek: Vector3;
 }
 
-const AROUND = 18;
-
-export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
+export function buildHead(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): HeadInfo {
+  const AROUND = res.headAround;
   const S = rig.props.shape;
   const H = rig.bones[rig.idx.head].pos;
   const L = S.headLength;
@@ -116,7 +116,7 @@ export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
   // --- Skull ------------------------------------------------------------------------------------
   const p = new Vector3();
   b.begin(0);
-  const STATIONS = 22;
+  const STATIONS = res.headStations;
   const rings: number[][] = [];
   for (let i = 0; i <= STATIONS; i++) {
     const t = i / STATIONS;
@@ -163,8 +163,8 @@ export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
   // --- Lower jaw ----------------------------------------------------------------------------------
   b.begin(0);
   const J = rig.bones[rig.idx.jaw].pos;
-  const JST = 14;
-  const JAR = 14;
+  const JST = res.jawStations;
+  const JAR = res.jawAround;
   const jz0 = J.z - H.z - 0.06 * L;
   const jz1 = 0.965 * L;
   const jrings: number[][] = [];
@@ -221,9 +221,10 @@ export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
     const ay = new Vector3(0, 1, 0).addScaledVector(ax, -ax.y).normalize();
     const az = new Vector3().crossVectors(ax, ay).normalize();
     b.begin(0);
-    ellipsoid(b, c, ax, ay, az, [rEye, rEye * 0.92, rEye * 1.08], () => headSkin, () => ({ region: REGION.eye }), 8, 14);
+    ellipsoid(b, c, ax, ay, az, [rEye, rEye * 0.92, rEye * 1.08], () => headSkin, () => ({ region: REGION.eye }), res.eye[0], res.eye[1]);
     b.end();
     // Nostril.
+    if (res.lod === 2) continue;
     const nose = ringPoint(0.95, 0.5 * side, new Vector3());
     const nAx = new Vector3(0.6 * side, 0.5, 0.6).normalize();
     const nAy = new Vector3(0, 1, 0).addScaledVector(nAx, -nAx.y).normalize();
@@ -236,6 +237,7 @@ export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
   // --- Teeth --------------------------------------------------------------------------------------
   const toothLen = 0.055 * L;
   for (const side of [1, -1]) {
+    if (!res.teeth[0]) break;
     b.begin(0);
     for (let i = 0; i < 5; i++) {
       const t = 0.5 + i * 0.105;
@@ -244,7 +246,7 @@ export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
       const base = new Vector3(H.x + w * side, H.y + mouthY(t) - 0.02 * Hh, H.z + z);
       const len = toothLen * (i === 3 ? 1.5 : 1) * (1 - 0.1 * i);
       const tip = base.clone().add(new Vector3(0.12 * len * side, -len, 0.15 * len));
-      spike(b, [base, base.clone().lerp(tip, 0.5), tip], 0.02 * L, headSkin, { region: REGION.claw }, 5);
+      spike(b, res.toothSegs > 1 ? [base, base.clone().lerp(tip, 0.5), tip] : [base, tip], 0.02 * L, headSkin, { region: REGION.claw }, res.toothSides);
     }
     for (let i = 0; i < 4; i++) {
       const tj = 0.5 + i * 0.13;
@@ -254,11 +256,12 @@ export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
       const base = new Vector3(H.x + w * side, H.y + mouthY(tu) + 0.02 * Hh, H.z + z);
       const len = toothLen * 0.75 * (i === 3 ? 1.25 : 1);
       const tip = base.clone().add(new Vector3(0.05 * len * side, len, 0.1 * len));
-      spike(b, [base, base.clone().lerp(tip, 0.5), tip], 0.018 * L, jawSkin, { region: REGION.claw }, 5);
+      spike(b, res.toothSegs > 1 ? [base, base.clone().lerp(tip, 0.5), tip] : [base, tip], 0.018 * L, jawSkin, { region: REGION.claw }, res.toothSides);
     }
     b.end();
   }
 
+  if (!res.tongue) return headInfo();
   // --- Tongue ------------------------------------------------------------------------------------
   // A long forked tongue lying on the jaw floor, wholly inside the closed mouth at rest; flicks
   // slide it out through the front to taste the air. Flat and broad at the root, then two prongs.
@@ -291,12 +294,16 @@ export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
   }
   b.end();
 
-  return {
-    eyeCenter,
-    eyeAxis,
-    eyeRadius: rEye,
-    skullBack: ringPoint(0.1, 0.55, new Vector3()),
-    browTop: ringPoint(0.38, 0.6, new Vector3()),
-    cheek: ringPoint(0.16, 1.9, new Vector3()),
-  };
+  return headInfo();
+
+  function headInfo(): HeadInfo {
+    return {
+      eyeCenter,
+      eyeAxis,
+      eyeRadius: rEye,
+      skullBack: ringPoint(0.1, 0.55, new Vector3()),
+      browTop: ringPoint(0.38, 0.6, new Vector3()),
+      cheek: ringPoint(0.16, 1.9, new Vector3()),
+    };
+  }
 }

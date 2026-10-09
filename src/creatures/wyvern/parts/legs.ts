@@ -6,8 +6,11 @@ import { GeoBuilder, REGION, Skin } from '../builder';
 import { SIDE_SIGN, type RigDef } from '../rig';
 import { SkinChain } from './chain';
 import { bezier3, spike } from './shape';
+import { RES, sides, steps, type Res } from './res';
 
-export function buildLegs(b: GeoBuilder, rig: RigDef): void {
+export function buildLegs(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): void {
+  const thighRings = res.lod === 0 ? 4 + res.limbRings : res.lod === 1 ? 3 : 2;
+  const shinRings = res.lod === 0 ? 3 : res.lod === 1 ? 2 : 1;
   const P = rig.props;
   const S = P.shape;
   const G = P.leg;
@@ -32,28 +35,31 @@ export function buildLegs(b: GeoBuilder, rig: RigDef): void {
     };
     const inBody = hip.clone().add(new Vector3(-0.35 * R * sx, 0.55 * R, 0.1 * R));
     push(inBody, R * 0.9, R * 1.05);
-    push(hip.clone().lerp(inBody, 0.35), R * 1.0, R * 1.12);
-    for (let i = 1; i <= 4; i++) {
-      const t = i / 5;
+    if (res.lod < 2) push(hip.clone().lerp(inBody, 0.35), R * 1.0, R * 1.12);
+    for (let i = 1; i <= thighRings; i++) {
+      const t = i / (thighRings + 1);
       const r = R * (1 - 0.55 * t * t);
       push(hip.clone().lerp(knee, t), r * 0.92, r * 1.12);
     }
     push(knee.clone(), R * 0.5, R * 0.54);
-    for (let i = 1; i <= 3; i++) {
-      const t = i / 4;
+    const iKnee = pts.length - 1;
+    for (let i = 1; i <= shinRings; i++) {
+      const t = i / (shinRings + 1);
       // The calf muscle sits high on the shin.
       const r = R * (0.5 - 0.16 * t + 0.06 * Math.sin(Math.PI * t * 0.8));
       push(knee.clone().lerp(ankle, t), r * 0.85, r);
     }
+    const iAnkle = pts.length;
     push(ankle.clone(), R * 0.32, R * 0.34);
-    push(ankle.clone().lerp(ball, 0.5), R * 0.26, R * 0.29);
+    if (res.lod < 2) push(ankle.clone().lerp(ball, 0.5), R * 0.26, R * 0.29);
+    const iBall = pts.length;
     push(ball.clone(), R * 0.3, R * 0.31);
     push(ball.clone().add(new Vector3(0, -0.02 * R, 0.25 * R)), R * 0.22, R * 0.22);
 
     const sHip = sAt[1];
-    const sKnee = sAt[6];
-    const sAnkle = sAt[10];
-    const sBall = sAt[12];
+    const sKnee = sAt[iKnee];
+    const sAnkle = sAt[iAnkle];
+    const sBall = sAt[iBall];
     const chain = new SkinChain([
       { bone: rig.idx.pelvis, s0: -0.6 * R, s1: sHip - 0.1 * R },
       { bone: li.thigh, s0: sHip - 0.1 * R, s1: sKnee },
@@ -69,7 +75,7 @@ export function buildLegs(b: GeoBuilder, rig: RigDef): void {
     const w = new Vector3();
     const p = new Vector3();
     const rings: number[][] = [];
-    const SEG = 12;
+    const SEG = res.legAround;
     for (let i = 0; i < n; i++) {
       dir.subVectors(pts[Math.min(n - 1, i + 1)], pts[Math.max(0, i - 1)]).normalize();
       // u: the leg's "front" (knee direction), w: lateral.
@@ -84,13 +90,13 @@ export function buildLegs(b: GeoBuilder, rig: RigDef): void {
         const s = Math.sin(th);
         // Thigh muscle bulges at the back-outside; the shin is a little keeled at the front.
         const out = -s * sx;
-        const bulge = i >= 1 && i <= 5 ? 1 + 0.1 * Math.max(0, -c) + 0.06 * Math.max(0, out) : 1;
+        const bulge = i >= 1 && i < iKnee ? 1 + 0.1 * Math.max(0, -c) + 0.06 * Math.max(0, out) : 1;
         p.copy(pts[i])
           .addScaledVector(u, c * rf * bulge)
           .addScaledVector(w, s * rl * bulge);
         // Belly-colored inner/front of the thigh, scaled skin elsewhere.
         const inner = Math.max(0, -out);
-        ring.push(b.vertex(p, skin, { region: REGION.skin, belly: i <= 5 ? 0.6 * inner : 0, dorsal: i <= 5 ? 0.2 * Math.max(0, out) : 0 }, 4 + sAt[i], out));
+        ring.push(b.vertex(p, skin, { region: REGION.skin, belly: i < iKnee ? 0.6 * inner : 0, dorsal: i < iKnee ? 0.2 * Math.max(0, out) : 0 }, 4 + sAt[i], out));
       }
       rings.push(ring);
     }
@@ -125,17 +131,18 @@ export function buildLegs(b: GeoBuilder, rig: RigDef): void {
       mid.y = ground + toeR * 1.25;
       const end = start.clone().addScaledVector(d, len);
       end.y = ground + toeR * 0.95;
-      const path = bezier3(start, mid, end, 4);
+      const path = bezier3(start, mid, end, steps(res, 4));
       b.begin(0);
-      spike(b, path, toeR, toeSkin, { region: REGION.skin, belly: 0.3 }, 8, new Vector3(0, 1, 0), 1, 0.35);
+      spike(b, path, toeR, toeSkin, { region: REGION.skin, belly: 0.3 }, sides(res, 8), new Vector3(0, 1, 0), 1, 0.35);
       b.end();
+      if (!res.claws) continue;
       // Claw: curved down to the ground.
       const c0 = end.clone().addScaledVector(d, -0.25 * toeR);
       c0.y += 0.1 * toeR;
       const c1 = c0.clone().addScaledVector(d, 0.9 * toeR).add(new Vector3(0, 0.25 * toeR, 0));
       const c2 = c0.clone().addScaledVector(d, 1.9 * toeR).add(new Vector3(0, -toeR * 0.9, 0));
       b.begin(0);
-      spike(b, bezier3(c0, c1, c2, 4), toeR * 0.7, toeSkin, { region: REGION.claw }, 6, new Vector3(0, 1, 0), 0.75);
+      spike(b, bezier3(c0, c1, c2, steps(res, 4)), toeR * 0.7, toeSkin, { region: REGION.claw }, sides(res, 6), new Vector3(0, 1, 0), 0.75);
       b.end();
     }
   }

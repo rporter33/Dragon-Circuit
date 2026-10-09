@@ -15,22 +15,47 @@ import { GeoBuilder, MREGION, REGION, Skin } from '../builder';
 import { SIDE_SIGN, type RigDef } from '../rig';
 import { bodyChain } from './body';
 import { SkinChain } from './chain';
-import { bezier3, spike } from './shape';
+import { bezier3, keyed, spike } from './shape';
+import { RES, sides, steps, type Res } from './res';
 
 /** How far below the flank's equator the membrane root runs half-way back (fraction of lower). */
 const ROOT_DROP = 0.3;
 const _line = new Vector3();
 const _dip = new Vector3();
 
+/** Humerus radius along the bone (× the arm scale k): the deltopectoral mass near the shoulder. */
+const HUMERUS_R: [number, number][] = [
+  [0, 0.345],
+  [0.25, 0.33],
+  [0.5, 0.26],
+  [0.75, 0.2],
+  [1, 0.17],
+];
+
+/** The arm's radius scale (m): every arm, hand and digit radius is a multiple of it. */
+export function armScale(rig: RigDef): number {
+  const S = rig.props.shape;
+  return 1.25 * Math.sqrt(S.torsoHalfWidth / 0.74) * (S.armBulk ?? 1);
+}
+
+/** Radius of the humerus where it leaves the shoulder (m). */
+export function humerusRootRadius(rig: RigDef): number {
+  return HUMERUS_R[0][1] * armScale(rig);
+}
+
 export interface WingInfo {
   /** Membrane area of one wing (m², bind pose), for checks against BreedStats.wingArea. */
   membraneArea: number;
 }
 
-export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
+export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingInfo {
+  const humRings = res.lod === 0 ? 3 + res.limbRings : res.lod === 1 ? 3 : 1;
+  const foreRings = res.lod === 0 ? 4 : res.lod === 1 ? 2 : 1;
+  /** Membrane grid size for a base count (LOD0 ×1.5 ... LOD2 fans). */
+  const grid = (n: number, min: number) => (res.membrane > 0 ? Math.max(min, Math.round(n * res.membrane)) : min);
   const P = rig.props;
   const S = P.shape;
-  const k = 1.25 * Math.sqrt(S.torsoHalfWidth / 0.74);
+  const k = armScale(rig);
   let area = 0;
   for (let side = 0; side < 2; side++) {
     const sx = SIDE_SIGN[side];
@@ -47,25 +72,34 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
     const pts: Vector3[] = [];
     const rad: [number, number][] = [];
     const sAt: number[] = [];
-    const push = (p: Vector3, r: number) => {
+    // Ring centre offsets (the deltopectoral crest) in the ring's (up, forward) frame.
+    const crest: number[] = [];
+    const push = (p: Vector3, r: number, dp = 0) => {
       sAt.push(pts.length ? sAt[sAt.length - 1] + p.distanceTo(pts[pts.length - 1]) : 0);
       pts.push(p);
-      rad.push([r, r * 0.82]);
+      rad.push([r, r * 0.68]);
+      crest.push(dp);
     };
+    // A flier's arm: a massive humerus flattened in the wing plane, with the deltopectoral crest
+    // (where the flight muscles insert) bulging toward the leading edge's underside near the
+    // shoulder, tapering to a stout forearm.
     const inBody = sh.clone().add(new Vector3(-0.45 * S.torsoHalfWidth * sx, -0.05, 0));
-    push(inBody, 0.3 * k);
-    push(sh.clone(), 0.27 * k);
-    for (let i = 1; i <= 3; i++) push(sh.clone().lerp(el, i / 4), (0.25 - 0.035 * i) * k);
-    push(el.clone(), 0.14 * k);
-    for (let i = 1; i <= 4; i++) push(el.clone().lerp(wr, i / 5), (0.12 - 0.01 * i) * k);
+    push(inBody, 0.34 * k);
+    const iSh = pts.length;
+    push(sh.clone(), 0.345 * k);
+    for (let i = 1; i <= humRings; i++) {
+      const t = i / (humRings + 1);
+      push(sh.clone().lerp(el, t), keyed(HUMERUS_R, t) * k, t > 0.15 && t < 0.45 ? 0.06 * k * Math.sin((Math.PI * (t - 0.15)) / 0.3) : 0);
+    }
+    const iEl = pts.length;
+    push(el.clone(), 0.17 * k);
+    for (let i = 1; i <= foreRings; i++) push(el.clone().lerp(wr, i / (foreRings + 1)), (0.17 - (0.024 * i) / (foreRings + 1)) * k);
+    const iWr = pts.length;
     push(wr.clone(), 0.1 * k);
-    push(wr.clone().lerp(kn, 0.5), 0.075 * k);
+    if (res.lod < 2) push(wr.clone().lerp(kn, 0.5), 0.075 * k);
+    const iKn = pts.length;
     push(kn.clone(), 0.085 * k);
     push(kn.clone().add(new Vector3(0.05 * sx, 0, 0)), 0.06 * k);
-    const iSh = 1;
-    const iEl = 5;
-    const iWr = 10;
-    const iKn = 12;
     const chain = new SkinChain([
       { bone: rig.idx.chest, s0: -0.4, s1: sAt[iSh] },
       { bone: wi.humerus, s0: sAt[iSh], s1: sAt[iEl] },
@@ -80,7 +114,7 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
     const u = new Vector3();
     const w = new Vector3();
     const p = new Vector3();
-    const SEG = 10;
+    const SEG = res.armAround;
     for (let i = 0; i < pts.length; i++) {
       dir.subVectors(pts[Math.min(pts.length - 1, i + 1)], pts[Math.max(0, i - 1)]).normalize();
       u.set(0, 1, 0).addScaledVector(dir, -dir.y).normalize();
@@ -91,7 +125,9 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         const th = (q / SEG) * Math.PI * 2;
         const c = Math.cos(th);
         // A slight leading-edge ridge (the forearm's front is the wing's leading edge).
-        p.copy(pts[i]).addScaledVector(u, c * rad[i][1]).addScaledVector(w, Math.sin(th) * rad[i][0]);
+        p.copy(pts[i])
+          .addScaledVector(u, c * rad[i][1] - crest[i] * 0.7)
+          .addScaledVector(w, Math.sin(th) * rad[i][0] + crest[i] * 0.7 * sx);
         ring.push(b.vertex(p, skin, { region: REGION.skin, belly: Math.max(0, -c) * 0.7, dorsal: Math.max(0, c) }, 20 + sAt[i], Math.sin(th)));
       }
       rings.push(ring);
@@ -116,7 +152,7 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         { bone: fa, s0: 0, s1: la },
         { bone: fb, s0: la, s1: la + P.arm.fingers[f][1] },
       ]);
-      const N = 7;
+      const N = res.fingerRings;
       const fpts: Vector3[] = [];
       for (let i = 0; i <= N; i++) fpts.push(kn.clone().lerp(tips[f], i / N));
       const r0 = (0.065 - 0.008 * f) * k;
@@ -127,7 +163,7 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         r0,
         (i) => fchain.skin((i / N) * (la + P.arm.fingers[f][1])),
         { region: REGION.skin, dorsal: 0.6 },
-        6,
+        res.fingerSides,
         new Vector3(0, 1, 0),
         0.8,
         0.75,
@@ -137,14 +173,14 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
 
     // --- Thumb claws at the wrist (the "hands" it walks on) -------------------------------------
     const clawSkin = Skin.of(wi.claw);
-    for (let c = 0; c < 2; c++) {
+    for (let c = 0; c < (res.claws ? 2 : 0); c++) {
       const d = new Vector3((0.25 + 0.3 * c) * sx, -0.2 - 0.25 * c, 1).normalize();
       const base = wr.clone().add(new Vector3(0.02 * sx, -0.02, 0.06 * k));
       const len = (c === 0 ? 0.36 : 0.24) * k;
       const c1 = base.clone().addScaledVector(d, len * 0.6).add(new Vector3(0, 0.06 * k, 0));
       const c2 = base.clone().addScaledVector(d, len).add(new Vector3(0, -0.1 * k, 0));
       b.begin(0);
-      spike(b, bezier3(base, c1, c2, 4), (c === 0 ? 0.06 : 0.045) * k, clawSkin, { region: REGION.claw }, 6, new Vector3(0, 1, 0), 0.8);
+      spike(b, bezier3(base, c1, c2, steps(res, 4)), (c === 0 ? 0.06 : 0.045) * k, clawSkin, { region: REGION.claw }, sides(res, 6), new Vector3(0, 1, 0), 0.8);
       b.end();
     }
 
@@ -211,8 +247,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
       const depth = S.wing.scallop * tA.distanceTo(tB);
       const E = new Vector3();
       patch(
-        16,
-        8,
+        grid(16, 1),
+        grid(8, 2),
         (t, v, out) => {
           E.lerpVectors(tA, tB, v).addScaledVector(inward, depth * Math.sin(Math.PI * v));
           return out.lerpVectors(kn, E, t);
@@ -278,8 +314,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
     const Lp = new Vector3();
     const Rp = new Vector3();
     patch(
-      16,
-      10,
+      grid(16, 2),
+      grid(10, 2),
       (t, v, out) => {
         armAt(t, Lp);
         Rp.lerpVectors(trail, tip2, t).addScaledVector(inwardC, depthC * Math.sin(Math.PI * t));
@@ -307,8 +343,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
     const lead0 = sh.clone().add(new Vector3(0, 0, 0.12));
     const fwd = new Vector3(0, 0, 1);
     patch(
-      10,
-      2,
+      grid(10, 2),
+      grid(2, 1),
       (t, v, out) => {
         armAt(t * (armLen[2] / armTotal), Lp);
         Rp.lerpVectors(lead0, wr, t).addScaledVector(fwd, 0.06 * Math.sin(Math.PI * t));
