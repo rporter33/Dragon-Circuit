@@ -252,7 +252,10 @@ export interface FlapStyle {
    * How far (phase) the arm runs ahead of the beat's clock. The bend runs out along the wing, so
    * the tip reaches the bottom after the shoulder does; leading the arm by that much centres the
    * wingtip's short dwell at the bottom on the 'flap' event, when the flight model's power stroke
-   * ends (measured on the rig with the chest's beat pitch: wyvern.flight.test.ts).
+   * ends (measured on the rig with the chest's beat pitch: wyvern.flight.test.ts). The harrier's
+   * and the ironback's grew 0.01 when A13 put the span in the wingtip finger's outer phalanx and
+   * B4 filled the membrane load: the load bows that spar up through the power stroke, and the
+   * longer it is, the later its lowest point.
    */
   readonly lead: number;
   /**
@@ -326,9 +329,9 @@ const breedStyle = (id: BreedId, s: StyleSpec) => flapStyle(BREEDS[id].downFrac 
  */
 export const FLAP_STYLES: Readonly<Record<BreedId, FlapStyle>> = {
   skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05, tiltBack: 0.3, pronOut: 0.13, pronIn: 0.14, glideTips: 1 }),
-  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1 }),
+  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.074, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1 }),
   galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 16, tipLag: 0.2, lead: 0.093, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1.3 }),
-  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1 }),
+  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.066, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1, glideTips: 1 }),
 };
 
 /**
