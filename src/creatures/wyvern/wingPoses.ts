@@ -79,10 +79,15 @@ export const TUCK = pose({
   f2bEl: -2,
 });
 
-/** Air brake: wings forward and high, cupped, leading edge pitched up hard. */
+/**
+ * Air brake: wings forward and high, cupped, leading edge pitched up hard. The arm reaches well
+ * forward (30°): it carries the shoulder's skin forward with it, away from a bracing rider's boots
+ * (the toes point at the back of the shoulder), which the longer arms of B8's bigger wings
+ * otherwise drew down onto them (galewing, royal saddle: 5 mm at 22°, 31 mm at 30°).
+ */
 export const FLARE = pose({
   humEl: 26,
-  humSw: -22,
+  humSw: -30,
   humTw: -28,
   foreEl: 6,
   foreSw: -8,

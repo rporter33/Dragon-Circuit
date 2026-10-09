@@ -218,6 +218,57 @@ export function measureClimb(breed: BreedStats, seconds = 40): ClimbResult {
   return best;
 }
 
+export interface CirclingResult {
+  /** Settled sink rate while circling (m/s, positive down). */
+  sink: number;
+  /** Airspeed held (m/s). */
+  speed: number;
+  /** Radius of the circle flown (m). */
+  radius: number;
+}
+
+/**
+ * Thermalling: circle at `bankDeg` of bank and the race autopilot's circling speed (1.25 × stall,
+ * raised for the load factor of the bank) in still air, wings spread, no flapping, and measure
+ * the sink. A thermal rising at w lifts the wyvern at w − sink. With the stick held the phugoid
+ * damper is off, so the path swings gently around the circle: the sink is averaged over a long
+ * window (many phugoid periods) after a settling time.
+ */
+export function measureCircling(breed: BreedStats, bankDeg = 35, settle = 20, seconds = 60): CirclingResult {
+  const d = new FlightModel(breed).derived;
+  const bank = bankDeg * DEG;
+  const vTarget = (1.25 * d.vStall) / Math.sqrt(Math.cos(bank));
+  const m = launch(breed, vTarget);
+  const env = stillAir();
+  const input = neutralInput();
+  const from = Math.round(settle / SIM_DT);
+  const steps = Math.round((settle + seconds) / SIM_DT);
+  let y0 = 0;
+  let speed = 0;
+  let n = 0;
+  let iv = 0;
+  let prevGamma = 0;
+  for (let i = 0; i < steps; i++) {
+    // Hold the bank (positive = right) with the stick, and the speed with the pitch (damping the
+    // flight path's rate so the hold doesn't pump the phugoid).
+    input.roll = clamp(2 * (bank - bankAngle(m)) - 0.6 * m.state.angularVelocity.z, -1, 1);
+    const ev = m.state.airspeed - vTarget;
+    iv = clamp(iv + ev * SIM_DT, -20, 20);
+    const gamma = pathAngle(m);
+    const gammaRate = i === 0 ? 0 : (gamma - prevGamma) / SIM_DT;
+    prevGamma = gamma;
+    input.pitch = clamp(0.06 * ev + 0.01 * iv - 1.2 * gammaRate + 0.38 * (1 / Math.cos(bank) - 1), -1, 1);
+    m.step(SIM_DT, input, env);
+    if (i === from) y0 = m.state.position.y;
+    if (i > from) {
+      speed += m.state.airspeed;
+      n++;
+    }
+  }
+  const v = speed / n;
+  return { sink: (y0 - m.state.position.y) / (n * SIM_DT), speed: v, radius: (v * v) / (9.81 * Math.tan(bank)) };
+}
+
 /** Seconds of continuous full-strength flapping from a full meter until it is empty. */
 export function measureEndurance(breed: BreedStats, capacity = 1): number {
   const m = launch(breed, new FlightModel(breed).derived.vCruise);
