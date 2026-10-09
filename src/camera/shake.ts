@@ -74,7 +74,9 @@ export class CameraShake {
   }
 
   update(dt: number, out: ShakeOffsets): ShakeOffsets {
-    if (dt > 0) this.t += dt;
+    // No time passed (or a bad frame time): hold the last offsets rather than resampling them.
+    if (!(dt > 0)) return out;
+    this.t += dt;
     this.trauma.update(dt);
     const n = this.n;
     const t = this.t;
