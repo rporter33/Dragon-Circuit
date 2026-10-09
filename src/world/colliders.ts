@@ -34,6 +34,12 @@ interface Entry {
 
 const tmpN = new Vector3();
 
+interface Source {
+  get: () => readonly Collider[];
+  list: readonly Collider[] | null;
+  seen: number;
+}
+
 function isSphere(c: Collider): c is SphereCollider {
   return c.kind === 'sphere';
 }
@@ -41,12 +47,27 @@ function isBox(c: Collider): c is BoxCollider {
   return c.kind === 'box';
 }
 
+/**
+ * Work done by queries, for tests and profiling: a query should only ever touch the handful of
+ * shapes near it, however many the world holds.
+ */
+export interface ColliderWork {
+  queries: number;
+  /** Entries pulled from grid cells (after de-duplication). */
+  candidates: number;
+  /** Exact shape tests (signed distance evaluations) after the cheap bounds rejects. */
+  exact: number;
+}
+
 export class ColliderIndex {
+  readonly work: ColliderWork = { queries: 0, candidates: 0, exact: 0 };
   private grid = new Map<number, Entry[]>();
   private entries: Entry[] = [];
   private stamp = 0;
   private scratch: Entry[] = [];
-  private sources = new Map<string, { get: () => readonly Collider[]; list: readonly Collider[] | null; seen: number }>();
+  private sources = new Map<string, Source>();
+  /** The sources' values, for the per-frame sync (a Map iterator would allocate). */
+  private sourceList: Source[] = [];
 
   get size(): number {
     return this.entries.length;
@@ -101,24 +122,28 @@ export class ColliderIndex {
    */
   addSource(id: string, get: () => readonly Collider[]): void {
     this.sources.set(id, { get, list: null, seen: 0 });
+    this.sourceList = [...this.sources.values()];
     this.sync();
   }
 
   /** Bring the index up to date with its sources. Cheap when nothing changed. */
   sync(): void {
+    const sources = this.sourceList;
     let replaced = false;
-    for (const src of this.sources.values()) {
+    for (let s = 0; s < sources.length; s++) {
+      const src = sources[s];
       const list = src.get();
       if (src.list !== null && list !== src.list) replaced = true;
     }
     if (replaced) {
       this.clear();
-      for (const src of this.sources.values()) {
-        src.list = null;
-        src.seen = 0;
+      for (let s = 0; s < sources.length; s++) {
+        sources[s].list = null;
+        sources[s].seen = 0;
       }
     }
-    for (const src of this.sources.values()) {
+    for (let s = 0; s < sources.length; s++) {
+      const src = sources[s];
       const list = src.get();
       src.list = list;
       for (let i = src.seen; i < list.length; i++) this.add(list[i]);
@@ -141,7 +166,10 @@ export class ColliderIndex {
       for (let cz = Math.floor((z - r) / CELL); cz <= Math.floor((z + r) / CELL); cz++) {
         const list = this.grid.get(key(cx, cz));
         if (!list) continue;
-        for (const e of list) {
+        // Indexed loops throughout: these run many times a frame, and for-of allocates an
+        // iterator until the optimizer gets to it.
+        for (let i = 0; i < list.length; i++) {
+          const e = list[i];
           if (e.stamp === s) continue;
           e.stamp = s;
           out.push(e);
@@ -159,10 +187,16 @@ export class ColliderIndex {
   resolveSphere(p: Vector3, radius: number, outNormal: Vector3, info?: ContactInfo): boolean {
     if (this.entries.length === 0) return false;
     let hit = false;
-    for (const e of this.near(p.x, p.z, radius)) {
+    const list = this.near(p.x, p.z, radius);
+    const work = this.work;
+    work.queries++;
+    work.candidates += list.length;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
       if (p.y - radius > e.top || p.y + radius < e.bottom) continue;
       if (p.x + radius < e.minX || p.x - radius > e.maxX || p.z + radius < e.minZ || p.z - radius > e.maxZ) continue;
       const c = e.c;
+      work.exact++;
       const d = signedDistance(c, p, tmpN);
       if (d >= radius) continue;
       const depth = radius - d;
@@ -181,6 +215,7 @@ export class ColliderIndex {
   /** Signed distance to the nearest collider within maxR (Infinity if none that close). */
   distance(p: Vector3, maxR: number): number {
     if (this.entries.length === 0) return Infinity;
+    this.work.queries++;
     const s = ++this.stamp;
     const pcx = Math.floor(p.x / CELL);
     const pcz = Math.floor(p.z / CELL);
@@ -190,8 +225,8 @@ export class ColliderIndex {
       for (let cz = Math.floor((p.z - maxR) / CELL); cz <= Math.floor((p.z + maxR) / CELL); cz++) {
         if (cx === pcx && cz === pcz) continue;
         // Skip whole cells farther than the best so far.
-        const gx = Math.max(cx * CELL - p.x, 0, p.x - (cx + 1) * CELL);
-        const gz = Math.max(cz * CELL - p.z, 0, p.z - (cz + 1) * CELL);
+        const gx = gap(cx * CELL, (cx + 1) * CELL, p.x);
+        const gz = gap(cz * CELL, (cz + 1) * CELL, p.z);
         const lim = Math.min(best, maxR);
         if (lim > 0 && gx * gx + gz * gz > lim * lim) continue;
         best = this.distanceInCell(this.grid.get(key(cx, cz)), p, maxR, best, s);
@@ -202,16 +237,20 @@ export class ColliderIndex {
 
   private distanceInCell(list: Entry[] | undefined, p: Vector3, maxR: number, best: number, s: number): number {
     if (!list) return best;
-    for (const e of list) {
+    const work = this.work;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
       if (e.stamp === s) continue;
       e.stamp = s;
+      work.candidates++;
       // Distance to the entry's bounding box never overestimates: skip anything whose box is
       // already farther than the best (or the search radius).
-      const ex = Math.max(e.minX - p.x, 0, p.x - e.maxX);
-      const ey = Math.max(e.bottom - p.y, 0, p.y - e.top);
-      const ez = Math.max(e.minZ - p.z, 0, p.z - e.maxZ);
+      const ex = gap(e.minX, e.maxX, p.x);
+      const ey = gap(e.bottom, e.top, p.y);
+      const ez = gap(e.minZ, e.maxZ, p.z);
       const lim = Math.min(best, maxR);
       if (lim > 0 && ex * ex + ey * ey + ez * ez > lim * lim) continue;
+      work.exact++;
       const d = signedDistance(e.c, p, null);
       if (d < best) best = d;
     }
@@ -224,17 +263,26 @@ export class ColliderIndex {
    */
   groundAt(x: number, z: number, fromY: number, stepUp: number): { y: number; surface: SurfaceKind } | null {
     if (this.entries.length === 0) return null;
-    let best: { y: number; surface: SurfaceKind } | null = null;
-    for (const e of this.near(x, z, 0)) {
+    let best: Entry | null = null;
+    const list = this.near(x, z, 0);
+    this.work.queries++;
+    this.work.candidates += list.length;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
       const c = e.c;
       if (c.soft || e.top > fromY + stepUp) continue;
-      if (best && e.top <= best.y) continue;
+      if (best && e.top <= best.top) continue;
       if (x < e.minX || x > e.maxX || z < e.minZ || z > e.maxZ) continue;
       if (!insideTopFace(c, x, z)) continue;
-      best = { y: e.top, surface: c.surface ?? 'wood' };
+      best = e;
     }
-    return best;
+    return best ? { y: best.top, surface: best.c.surface ?? 'wood' } : null;
   }
+}
+
+/** Distance from v to the interval [lo, hi] (0 inside); a 3-argument Math.max allocates in V8. */
+function gap(lo: number, hi: number, v: number): number {
+  return v < lo ? lo - v : v > hi ? v - hi : 0;
 }
 
 function key(cx: number, cz: number): number {
@@ -253,7 +301,9 @@ function insideTopFace(c: Collider, x: number, z: number): boolean {
     const lz = dx * sn + dz * cs;
     return Math.abs(lx) <= c.hx && Math.abs(lz) <= c.hz;
   }
-  return Math.hypot(x - c.x, z - c.z) <= c.radius;
+  const dx = x - c.x;
+  const dz = z - c.z;
+  return dx * dx + dz * dz <= c.radius * c.radius;
 }
 
 /**
@@ -265,7 +315,8 @@ export function signedDistance(c: Collider, p: Vector3, n: Vector3 | null): numb
     const dx = p.x - c.x;
     const dy = p.y - c.y;
     const dz = p.z - c.z;
-    const len = Math.hypot(dx, dy, dz);
+    // Plain square roots in the shape tests: Math.hypot allocates its argument list in V8.
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (n) {
       if (len > 1e-6) n.set(dx / len, dy / len, dz / len);
       else n.set(0, 1, 0);
@@ -279,7 +330,7 @@ export function signedDistance(c: Collider, p: Vector3, n: Vector3 | null): numb
 function cylinderDistance(c: CylinderCollider, p: Vector3, n: Vector3 | null): number {
   const dx = p.x - c.x;
   const dz = p.z - c.z;
-  const rxz = Math.hypot(dx, dz);
+  const rxz = Math.sqrt(dx * dx + dz * dz);
   const ox = rxz > 1e-6 ? dx / rxz : 1;
   const oz = rxz > 1e-6 ? dz / rxz : 0;
   const radial = rxz - c.radius; // + outside the side
@@ -297,7 +348,7 @@ function cylinderDistance(c: CylinderCollider, p: Vector3, n: Vector3 | null): n
     return vertical;
   }
   if (radial > 0 && vertical > 0) {
-    const d = Math.hypot(radial, vertical);
+    const d = Math.sqrt(radial * radial + vertical * vertical);
     n?.set((ox * radial) / d, (up * vertical) / d, (oz * radial) / d);
     return d;
   }
@@ -334,7 +385,7 @@ function boxDistance(c: BoxCollider, p: Vector3, n: Vector3 | null): number {
     const ex = Math.max(qx, 0);
     const ey = Math.max(qy, 0);
     const ez = Math.max(qz, 0);
-    d = Math.hypot(ex, ey, ez);
+    d = Math.sqrt(ex * ex + ey * ey + ez * ez);
     nx = (ex * (Math.sign(lx) || 1)) / d;
     ny = (ey * (Math.sign(dy) || 1)) / d;
     nz = (ez * (Math.sign(lz) || 1)) / d;
