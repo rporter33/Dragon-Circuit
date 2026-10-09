@@ -38,6 +38,7 @@ import { smoothstep } from '../../core/math';
  *                        head (the snout, like cam=head) instead of the body centre
  *   rider=beside         the rider stands on foot beside the wyvern's left shoulder, facing the
  *                        camera (size comparison)
+ *   kneel=k&kneelAt=s    the mount kneel (WyvernPose.kneel, 0..1), going down from time s
  */
 
 const FLIGHT = new Set(['glide', 'flap', 'tuck', 'flare', 'stall', 'bankL', 'bankR', 'hover', 'landing']);
@@ -129,6 +130,8 @@ function synth(p: WyvernPose, name: string, t: number, breed: BreedId, at: Vecto
   p.flapStrength = 0;
   p.wingSpread = flight ? 1 : 0.22;
   p.fatigue = num('fatigue', 0);
+  // kneel=k[&kneelAt=s]: the mount kneel (C11), down from showcase time s at the real ramp (2.6/s).
+  p.kneel = num('kneel', 0) * smoothstep(0, 1, Math.min(1, Math.max(0, (t - num('kneelAt', -1)) * 2.6)));
   p.gaitTime = t;
   p.groundSpeed = 0;
   p.gait = 'idle';

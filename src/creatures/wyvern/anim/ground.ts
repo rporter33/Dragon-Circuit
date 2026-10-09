@@ -24,7 +24,7 @@ import { armScale } from '../parts/wings';
 import { Gait, type GaitContext } from '../gait';
 import { FLAP_STYLES, WING_CHANNELS, blendPose, flapPose, type WingPose } from '../wingPoses';
 import type { WyvernAnimator } from '../animator';
-import { BASK, FOLDED, SETTLE } from './groundPoses';
+import { BASK, FOLDED, KNEEL, SETTLE, STAND_ROOT_PITCH } from './groundPoses';
 import { FWD, LEFT, UP, bump, type AnimFrame } from './frame';
 
 /**
@@ -152,6 +152,12 @@ export class GroundLayer {
   private readonly armR: number;
   /** The breed's standing metatarsus angle from vertical (BreedShape.legAngles). */
   private readonly metaAngle: number;
+  /** The forefeet's standing rest spots (body frame; the gait's are moved from these by the kneel). */
+  private readonly foreRest: [Vector3, Vector3];
+  /** How far the body lowers at a full kneel (m): until the keel nearly touches the ground. */
+  private readonly kneelDepth: number;
+  /** Which side the rider is on for the kneel: +1 the wyvern's left … −1 its right (smoothed). */
+  private kneelSide = 1;
   /**
    * Per side (12 each), for trailRoll: the innermost finger's bind direction (3); the offset of
    * the inner panel's trailing-edge midpoint from that finger's outer joint, across the finger (3);
@@ -252,6 +258,21 @@ export class GroundLayer {
     }
     const restFore = (side: number) => new Vector3((this.elbowAt.x - FOLD.wristIn * sh) * SIDE_SIGN[side], -sh, P.shoulder[2] + FOLD.wristFwd * P.arm.forearm);
     this.gait = new Gait([restHind(0), restHind(1), restFore(0), restFore(1)]);
+    this.foreRest = [restFore(0), restFore(1)];
+    {
+      // The kneel's depth: the torso's lowest point under the kneel's pitch, down to a clearance.
+      const plan = rig.plan;
+      const s0 = plan.keyS[plan.marks.neckBase];
+      const s1 = plan.keyS[plan.marks.tailBase];
+      const pa = STAND_ROOT_PITCH + KNEEL.pitch;
+      let low = 0;
+      for (let k = 0; k <= 40; k++) {
+        const st = plan.station(s0 + ((s1 - s0) * k) / 40);
+        const y = st.center.y - st.lower;
+        low = Math.min(low, y * Math.cos(pa) - st.center.z * Math.sin(pa));
+      }
+      this.kneelDepth = clamp(sh + low - KNEEL.clear * sh, KNEEL.minDepth * sh, KNEEL.maxDepth * sh);
+    }
     this.gaitCtx = {
       dt: 0,
       toWorld: (m, out) => out.copy(m).applyQuaternion(a.qW).add(a.posW),
@@ -310,12 +331,36 @@ export class GroundLayer {
       const runSpeed = this.rig.props.breed === 'galewing' ? 5 : 5.5;
       c.runBlend = smoothstep(runSpeed * 0.7, runSpeed * 1.25, gs);
       c.moving = !f.takeoffCrouch && (gs > 0.35 || Math.abs(f.om.y) > 0.35);
+      // The kneel brings the forefeet forward along the ground (the rider's side a little wider),
+      // stepping as a pair.
+      this.kneelRest();
+      c.foreTogether = f.kneel > 0.02;
       if (f.teleport) this.gait.reset(c);
       this.gait.update(c);
     }
     f.runBlend = this.gaitCtx.runBlend;
     f.gaitPhase = this.gait.phase;
     f.moving = this.gaitCtx.moving && !airborne;
+  }
+
+  /** The forefeet's rest spots for this frame's kneel, and which side the rider is on. */
+  private kneelRest(): void {
+    const f = this.f;
+    const k = f.kneel;
+    // The rider's side from where the head is looking (their head while mounting).
+    const lt = this.a.toModel(f.pose.lookTarget, _v);
+    const toward = lt.x > 0.25 ? 1 : lt.x < -0.25 ? -1 : this.kneelSide > 0 ? 1 : -1;
+    this.kneelSide += (toward - this.kneelSide) * clamp01(f.dt * 3);
+    const fwd = KNEEL.fwd * this.rig.props.arm.forearm * k;
+    for (let side = 0; side < 2; side++) {
+      const sx = SIDE_SIGN[side];
+      const near = clamp01(this.kneelSide * sx);
+      const r = this.gait.rest[2 + side];
+      const b = this.foreRest[side];
+      r.x = b.x + sx * (KNEEL.out + KNEEL.nearOut * near) * k;
+      r.y = b.y;
+      r.z = b.z + fwd;
+    }
   }
 
   /** The gait's bob, sway, pitch and roll, the landing dip, the takeoff crouch. */
@@ -331,6 +376,11 @@ export class GroundLayer {
     f.dipPitch = (dipV / sh) * (0.5 + 0.2 * heft);
     f.gaitRoll = moving ? 0.03 * Math.sin(gaitPhase * TAU) * (1 - runBlend) : 0;
     f.crouchPitch = f.takeoffCrouch ? -0.08 * f.openAmt : 0;
+    // The kneel: down nose-first to a belly-down couch, rolled toward the rider.
+    const kn = f.kneel * f.groundW;
+    f.kneelDrop = -this.kneelDepth * kn;
+    f.kneelPitch = KNEEL.pitch * kn;
+    f.kneelRoll = -KNEEL.roll * kn * this.kneelSide;
     // Turning on the ground, the chest leans into the turn (3° at a full turn).
     f.turnLean = f.groundW * clamp(-0.05 * f.om.y, -3 * DEG, 3 * DEG);
     // The folded-stance wing IK weight for this frame: knuckles on the ground as front feet
@@ -678,7 +728,7 @@ export class GroundLayer {
     ball.z += up.z * sole;
     // Metatarsus leans forward at the breed's own angle (near flat on the ironback); more when the
     // heel lifts during a swing.
-    const ang = this.metaAngle + foot.airborne * 0.5;
+    const ang = this.metaAngle + (KNEEL.metaFlat - this.metaAngle) * this.f.kneel + foot.airborne * 0.5;
     const ca = -Math.cos(ang);
     const sa = Math.sin(ang);
     const metaDir = _v3;

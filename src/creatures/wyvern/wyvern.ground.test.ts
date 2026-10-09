@@ -426,6 +426,57 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
     }
   });
 
+  it('kneels for its rider: a belly-down couch toward their side, the folded forearm a low step (C11)', () => {
+    for (const breed of BREED_ORDER) {
+      const sh = BREEDS[breed].standHeight;
+      for (const side of [1, -1]) {
+        const w = new Wyvern(look(breed));
+        const pose = standing(breed);
+        // The rider at the shoulder on `side` (+1 the wyvern's left), its head the look target.
+        pose.lookTarget.set(side * (0.55 * sh + 1.3), 10 + 1.6, 0.25 * sh);
+        for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
+        const near = side > 0 ? 'L' : 'R';
+        const far = side > 0 ? 'R' : 'L';
+        const stand = {
+          seat: w.socket('seat', new Vector3())!.clone(),
+          step: w.socket(side > 0 ? 'stepL' : 'stepR', new Vector3())!.clone(),
+          shoulder: boneWorld(w, `humerus${near}`),
+        };
+        const hind0 = [boneWorld(w, 'toesL'), boneWorld(w, 'toesR')];
+        // Down over 0.4 s (E's timeline ramps at 2.6/s), held.
+        for (let i = 0; i < 120; i++) {
+          pose.kneel = Math.min(1, i / 24);
+          w.update(1 / 60, pose);
+        }
+        const seat = w.socket('seat', new Vector3())!;
+        const step = w.socket(side > 0 ? 'stepL' : 'stepR', new Vector3())!;
+        const shoulder = boneWorld(w, `humerus${near}`);
+        const id = `${breed} ${near}`;
+        // The shoulder comes down at least 0.3·standHeight (a couch, not a dip), the seat with it.
+        expect(stand.shoulder.y - shoulder.y, id).toBeGreaterThan(0.3 * sh);
+        expect(stand.seat.y - seat.y, id).toBeGreaterThan(0.3 * sh);
+        // Rolled toward the rider: the near shoulder lower than the far one.
+        expect(shoulder.y, id).toBeLessThan(boneWorld(w, `humerus${far}`).y - 0.02);
+        // The near forearm is brought forward and out as a low step.
+        expect(step.y - 10, id).toBeLessThan(0.75 * (stand.step.y - 10));
+        expect(step.y - 10, id).toBeLessThan(0.3 * sh);
+        expect(step.z - stand.step.z, id).toBeGreaterThan(0.2);
+        expect((step.x - stand.step.x) * side, id).toBeGreaterThan(0.15);
+        // The belly stays off the ground; the hind feet stay where they stood.
+        expect(seat.y - 10, id).toBeGreaterThan(0.5 * sh);
+        expect(boneWorld(w, 'toesL').distanceTo(hind0[0]), id).toBeLessThan(0.08);
+        expect(boneWorld(w, 'toesR').distanceTo(hind0[1]), id).toBeLessThan(0.08);
+        // And up again: back to the standing seat.
+        for (let i = 0; i < 180; i++) {
+          pose.kneel = Math.max(0, 1 - i / 24);
+          w.update(1 / 60, pose);
+        }
+        expect(w.socket('seat', new Vector3())!.distanceTo(stand.seat), id).toBeLessThan(0.03);
+        w.dispose();
+      }
+    }
+  });
+
   it('settles on landing: the body sinks into the legs and springs back', () => {
     const w = new Wyvern(look('harrier'));
     const sh = BREEDS.harrier.standHeight;

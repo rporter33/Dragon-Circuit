@@ -73,6 +73,11 @@ export interface GaitContext {
   runBlend: number;
   /** True when the gait should cycle (moving or turning); false lets feet settle. */
   moving: boolean;
+  /**
+   * Standing still, the forefeet step as a pair, quicker and on a shorter drift (the kneel brings
+   * them forward together). Absent: false.
+   */
+  foreTogether?: boolean;
 }
 
 export class Foot {
@@ -199,13 +204,15 @@ export class Gait {
       }
       this.predict(foot, i, ctx);
       if (!ctx.moving && !foot.swinging) {
-        // Standing: step only if this foot has drifted, one foot at a time.
+        // Standing: step only if this foot has drifted, one foot at a time (or the forefeet as a
+        // pair, quicker, when they are brought forward together).
         _v.subVectors(foot.target, foot.plant);
         _v.y = 0;
-        if (_v.length() > 0.28 * sh && swingingCount === 0) {
+        const pair = fore && ctx.foreTogether === true;
+        if (_v.length() > (pair ? 0.1 : 0.28) * sh && (swingingCount === 0 || pair)) {
           foot.swinging = true;
           foot.s = 0;
-          foot.stepTime = 0.42;
+          foot.stepTime = pair ? 0.3 : 0.42;
           foot.from.copy(foot.plant);
           foot.lift = sh * (fore ? 0.12 : 0.14);
           swingingCount++;

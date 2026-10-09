@@ -125,6 +125,13 @@ export class AnimFrame {
   turnLean = 0;
   /** Seconds since the wrists left the ground at a launch (C6), 99 when not launching. Read by B6. */
   launchT = 99;
+  /**
+   * The kneel (C11, from pose.kneel): how far the body is lowered for its rider (m, ≤ 0), pitched
+   * nose-down (rad) and rolled down toward the rider's side (rad, the root's roll).
+   */
+  kneelDrop = 0;
+  kneelPitch = 0;
+  kneelRoll = 0;
 
   // --- Life: anim/life.ts (LifeLayer) --------------------------------------------------------
   /** Idle on the ground (standing still in the idle gait). */
