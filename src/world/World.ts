@@ -16,11 +16,11 @@
 // needs synchronously, and with ?manual=1 (headless captures) the budget is unlimited so every
 // capture shows final detail.
 
-import { Group, Mesh, MeshBasicMaterial, MeshDepthMaterial, type BufferGeometry, type PerspectiveCamera, type Scene, type Vector3 } from 'three';
+import { Group, Mesh, MeshDepthMaterial, type BufferGeometry, type PerspectiveCamera, type Scene, type Vector3 } from 'three';
 import type { WorldSystem } from '../game/contracts';
 import type { QualityProfile } from '../render/quality';
 import { readDebugParams } from '../debug/params';
-import { makeShadowOnly } from '../render/shadowOnly';
+import { makeShadowOnly, shadowOnlyMaterial } from '../render/shadowOnly';
 import { LAYOUT, type WorldLayout } from './layout';
 import { Terrain } from './terrain';
 import type { ArchShape, IslandShape, SpireShape } from './islandShape';
@@ -233,7 +233,7 @@ export class World implements WorldSystem {
   private createProxy(f: Feature, mesh: Mesh): void {
     // A level's geometry is shared (with its hidden-part draw range): no extra GPU memory. Culled
     // from the main pass; the shadow pass culls it against the shadow box like any caster.
-    const p = makeShadowOnly(new Mesh(mesh.geometry, shadowProxyMaterial()));
+    const p = makeShadowOnly(new Mesh(mesh.geometry, shadowOnlyMaterial()));
     p.name = `${f.name}-shadow`;
     p.position.copy(f.lod.position);
     p.updateMatrix();
@@ -401,7 +401,6 @@ export class World implements WorldSystem {
 
 type Vector3Like = [number, number, number];
 
-let proxyMaterial: MeshBasicMaterial | null = null;
 let insetMaterial: MeshDepthMaterial | null = null;
 
 /**
@@ -423,12 +422,6 @@ function insetDepthMaterial(): MeshDepthMaterial {
   return m;
 }
 
-/** Never drawn on screen (see makeShadowOnly); the shadow pass uses its own depth material. */
-function shadowProxyMaterial(): MeshBasicMaterial {
-  proxyMaterial ??= new MeshBasicMaterial({ colorWrite: false, depthWrite: false });
-  proxyMaterial.name = 'world-shadow-proxy';
-  return proxyMaterial;
-}
 
 function runBuilder<T>(gen: Generator<void, T>): T {
   for (;;) {

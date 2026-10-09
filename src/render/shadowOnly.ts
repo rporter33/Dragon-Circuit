@@ -7,7 +7,7 @@
 // screen (not even a draw call) while still casting. The world uses it to cast island shadows
 // from a coarse stand-in of the rock that is drawn.
 
-import { Mesh, type Frustum } from 'three';
+import { Mesh, MeshBasicMaterial, type Frustum } from 'three';
 
 const shadowFrustums = new WeakSet<Frustum>();
 
@@ -19,6 +19,19 @@ export function registerShadowFrustum(frustum: Frustum): void {
 /** True for frustums registered with registerShadowFrustum. */
 export function isShadowFrustum(frustum: Frustum): boolean {
   return shadowFrustums.has(frustum);
+}
+
+let material: MeshBasicMaterial | null = null;
+
+/**
+ * A material for shadow-only meshes: it is never drawn on screen (the mesh is culled from the
+ * main pass), and if it ever were it would write nothing. The shadow pass uses its own depth
+ * material.
+ */
+export function shadowOnlyMaterial(): MeshBasicMaterial {
+  material ??= new MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  material.name = 'shadow-only';
+  return material;
 }
 
 /** Make `mesh` draw only into registered shadow maps (it is still culled against them). */
