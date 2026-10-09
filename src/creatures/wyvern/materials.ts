@@ -387,7 +387,7 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
     c *= 0.92 + 0.08 * sin(t * 40.0);
     return c;
   }
-  if (region == 9) {
+  if (region == 9 || region == 13) {
     // Claws and teeth: ivory, darkening at the tips of claws.
     return mix(vec3(0.93, 0.88, 0.76), vec3(0.32, 0.27, 0.24), smoothstep(0.45, 1.0, vUv2.x) * 0.6);
   }

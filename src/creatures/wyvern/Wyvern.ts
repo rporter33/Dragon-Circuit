@@ -1,4 +1,4 @@
-// The wyvern: a procedurally built SkinnedMesh (body + membranes, two draw calls) on a ~53-bone
+// The wyvern: a procedurally built SkinnedMesh (body + membranes, two draw calls) on a 58-bone
 // skeleton, posed every frame by the procedural animator from the player's WyvernPose.
 //
 // setLook() only touches uniforms when colors or the pattern change; a breed or a shape cosmetic
@@ -12,6 +12,7 @@ import type { WyvernRenderable } from '../../game/contracts';
 import type { TerrainQuery } from '../../core/types';
 import { rigFor, type RigDef } from './rig';
 import { buildWyvernGeometry, type WyvernMeshInfo } from './geometry';
+import { armScale, foldRest, type FoldRest } from './parts/wings';
 import {
   applyLookUniforms,
   createBodyMaterial,
@@ -30,13 +31,18 @@ export interface WyvernOptions {
 }
 
 const _m = new Matrix4();
+const _v = new Vector3();
+const _mInv = new Matrix4();
+const _acc = new Float64Array(16);
 const X_AXIS = new Vector3(1, 0, 0);
-const _s = new Vector3();
+/** The forearm's radius about half way down (× the arm scale; parts/wings.ts). */
+const FOREARM_STEP_R = 0.16;
 
 /**
  * Attachment points on the wyvern (world space, see Wyvern.socket): the seat (the saddle origin),
- * the pommel (where the rider's hand grips), and the steps on each forearm a mounting rider puts a
- * foot on (the anatomy pass places these exactly).
+ * the pommel (where the rider's hand grips, at the top of the pommel horn), and the steps on each
+ * forearm a mounting rider puts a foot on (on the top face of the forearm, 55% of the way from the
+ * elbow to the wrist; outward when the wing is folded).
  */
 export type WyvernSocket = 'seat' | 'pommel' | 'stepL' | 'stepR';
 
@@ -58,6 +64,10 @@ export class Wyvern implements WyvernRenderable {
   /** Graphics quality (LOD caps and shading detail follow it once the LOD chain lands). */
   private quality: QualityLevel = 'high';
   private tipOffset = new Vector3();
+  /** The fold helpers' rest blend, flattened for the per-frame hold (see holdFoldHelpers). */
+  private foldHold = { start: new Int32Array(3), bone: new Int32Array(0), weight: new Float64Array(0), offset: new Float64Array(0) };
+  /** The forearm steps (WyvernSocket stepL/R) in each forearm bone's space. */
+  private stepOffset: [Vector3, Vector3] = [new Vector3(), new Vector3()];
   private mouthOffset = new Vector3();
 
   constructor(look: WyvernLook, opts: WyvernOptions = {}) {
@@ -98,6 +108,7 @@ export class Wyvern implements WyvernRenderable {
     this.animator.update(dt, pose, this.uniforms);
     this.animator.apply(this.bones);
     this.group.updateMatrixWorld(true);
+    this.holdFoldHelpers();
   }
 
   getWingtips(outLeft: Vector3, outRight: Vector3): void {
@@ -176,15 +187,12 @@ export class Wyvern implements WyvernRenderable {
       this.saddle.updateWorldMatrix(true, false);
       return out.copy(grip).applyMatrix4(this.saddle.matrixWorld);
     }
-    // A step on the forearm, 40% of the way from the elbow to the wrist.
-    const w = this.rig.idx.wings[name === 'stepL' ? 0 : 1];
-    const elbow = this.bones[w.forearm];
-    const wrist = this.bones[w.hand];
-    elbow.updateWorldMatrix(true, false);
-    wrist.updateWorldMatrix(false, false);
-    elbow.getWorldPosition(out);
-    wrist.getWorldPosition(_s);
-    return out.lerp(_s, 0.4);
+    // A step on the top (dorsal, outward when folded) face of the forearm, a little over half
+    // way down from the elbow: where a mounting rider plants a foot.
+    const side = name === 'stepL' ? 0 : 1;
+    const fore = this.bones[this.rig.idx.wings[side].forearm];
+    fore.updateWorldMatrix(true, false);
+    return out.copy(this.stepOffset[side]).applyMatrix4(fore.matrixWorld);
   }
 
   dispose(): void {
@@ -194,6 +202,42 @@ export class Wyvern implements WyvernRenderable {
   }
 
   // --- Internals ----------------------------------------------------------------------------------
+
+  /**
+   * Until the animator drives the wing-fold helpers (stream C, C3), hold each at its rest blend
+   * (parts/wings.ts foldRest): the linear blend of the skinning matrices of the bones the inner
+   * membrane panel hangs from, averaged over the panel by the helper's weight. Linear blend
+   * skinning is linear in the bone matrices, so this is the same kind of blend the panel's own
+   * weights make (not a rigid average, which would bow the sheet when the arm folds). World
+   * matrices must be current; the helpers' are written here (their local matrix stays relative
+   * to the chest, so anything re-deriving world matrices later keeps the hold).
+   */
+  private holdFoldHelpers(): void {
+    const B = this.bones;
+    const F = this.foldHold;
+    _mInv.copy(B[this.rig.idx.chest].matrixWorld).invert();
+    const acc = _acc;
+    for (let side = 0; side < 2; side++) {
+      acc.fill(0);
+      for (let i = F.start[side]; i < F.start[side + 1]; i++) {
+        // This bone's skinning matrix carried to the helper's bind pivot: M · T(pivot − bone).
+        const e = B[F.bone[i]].matrixWorld.elements;
+        const w = F.weight[i];
+        const ox = F.offset[i * 3];
+        const oy = F.offset[i * 3 + 1];
+        const oz = F.offset[i * 3 + 2];
+        for (let k = 0; k < 12; k++) acc[k] += e[k] * w;
+        acc[12] += (e[0] * ox + e[4] * oy + e[8] * oz + e[12]) * w;
+        acc[13] += (e[1] * ox + e[5] * oy + e[9] * oz + e[13]) * w;
+        acc[14] += (e[2] * ox + e[6] * oy + e[10] * oz + e[14]) * w;
+        acc[15] += e[15] * w;
+      }
+      const fold = B[this.rig.idx.fold[side]];
+      const mw = fold.matrixWorld.elements;
+      for (let k = 0; k < 16; k++) mw[k] = acc[k];
+      fold.matrix.multiplyMatrices(_mInv, fold.matrixWorld);
+    }
+  }
 
   private disposeMesh(): void {
     if (this.mesh) {
@@ -218,6 +262,7 @@ export class Wyvern implements WyvernRenderable {
     if (breedChanged) this.rig = rigFor(look.breed);
     const rig = this.rig;
     this.info = buildWyvernGeometry(rig, look);
+    this.foldHold = flattenFoldRest(rig, foldRest(rig));
     this.shapeKey = shapeKeyOf(look);
 
     // Bones: identity rest rotations, positions relative to the parent.
@@ -235,6 +280,8 @@ export class Wyvern implements WyvernRenderable {
       } else b.position.copy(d.pos);
       inverses.push(new Matrix4().makeTranslation(-d.pos.x, -d.pos.y, -d.pos.z));
     });
+    // The fold helpers' matrices are written whole (a blend, see holdFoldHelpers), not composed.
+    for (const i of rig.idx.fold) bones[i].matrixAutoUpdate = false;
     this.bones = bones;
     this.group.add(bones[0]);
     this.skeleton = new Skeleton(bones, inverses);
@@ -258,6 +305,17 @@ export class Wyvern implements WyvernRenderable {
     this.saddle.userData.gripOffset = this.info.saddle.grip.clone();
     this.saddle.userData.flank = { ...this.info.saddle.flank };
 
+    // Forearm steps: on the forearm's top surface (bind: the wing spread flat, dorsal = +Y).
+    for (let side = 0; side < 2; side++) {
+      const fi = rig.idx.wings[side].forearm;
+      const elbow = rig.bones[fi].pos;
+      const wrist = rig.bones[rig.idx.wings[side].hand].pos;
+      this.stepOffset[side]
+        .lerpVectors(elbow, wrist, 0.55)
+        .add(_v.set(0, FOREARM_STEP_R * armScale(rig), 0))
+        .sub(elbow);
+    }
+
     // Wingtip: end of the distal wingtip finger, in that bone's space. Mouth: in head space.
     const fb = rig.idx.wings[0].fingers[0][1];
     this.tipOffset.subVectors(rig.fingerTips[0], rig.bones[fb].pos);
@@ -279,3 +337,24 @@ function shapeKeyOf(look: WyvernLook): string {
   return `${look.breed}|${look.horns}|${look.frill}|${look.tail}|${look.saddle}`;
 }
 
+/** FoldRest as flat typed arrays: per side a run of (bone, weight, offset to the helper's pivot). */
+function flattenFoldRest(rig: RigDef, rest: FoldRest) {
+  const n = rest[0].length + rest[1].length;
+  const out = { start: new Int32Array(3), bone: new Int32Array(n), weight: new Float64Array(n), offset: new Float64Array(n * 3) };
+  let i = 0;
+  for (let side = 0; side < 2; side++) {
+    out.start[side] = i;
+    const pivot = rig.bones[rig.idx.fold[side]].pos;
+    for (const { bone, weight } of rest[side]) {
+      out.bone[i] = bone;
+      out.weight[i] = weight;
+      _v.subVectors(pivot, rig.bones[bone].pos);
+      out.offset[i * 3] = _v.x;
+      out.offset[i * 3 + 1] = _v.y;
+      out.offset[i * 3 + 2] = _v.z;
+      i++;
+    }
+  }
+  out.start[2] = i;
+  return out;
+}

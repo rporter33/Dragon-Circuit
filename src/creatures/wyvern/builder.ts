@@ -5,8 +5,13 @@
 //   aMat  (vec4): region id, belly mask, dorsal mask, flutter amount (membranes) or, on the
 //                 body tube, the angle around it (2 + θ/π) for the scale rows
 //   aUv2  (vec2): part-specific coordinates (arc length along a part, lateral position, …)
-//   aExtra (vec4): per-vertex shading data — x baked ambient occlusion (1 = open), y crease or
-//                 pleat mask, z head/foot zone id, w spare; (1, 0, 0, 0) unless a part sets it
+//   aExtra (vec4): per-vertex shading data; (1, 0, 0, 0) unless a part sets it
+//                 x  baked ambient occlusion (1 = open; A10)
+//                 y  crease or pleat mask: on the inner wing panel, 1 in the troughs of the fold
+//                    pleats (in phase with the uFold vertex pleats); skin-fold creases (A10)
+//                 z  zone id (ZONE): 1 lip row, 2 eye ring, 3 nostril, 4 ear, 5 scutate scales
+//                    (front of the metatarsus and the toe tops)
+//                 w  spare
 // Two index lists are kept: group 0 for the opaque body, group 1 for membranes.
 
 import { BufferAttribute, BufferGeometry, Float32BufferAttribute, Uint16BufferAttribute, Vector3 } from 'three';
@@ -28,6 +33,20 @@ export const REGION = {
   tongue: 12,
   tooth: 13,
 } as const;
+
+/** aExtra.z zone ids (see the header). */
+export const ZONE = {
+  lip: 1,
+  eyeRing: 2,
+  nostril: 3,
+  ear: 4,
+  scutate: 5,
+} as const;
+
+/** aExtra for a vertex in a zone (open, no crease). */
+export function zoneExtra(zone: number): readonly [number, number, number, number] {
+  return [1, 0, zone, 0];
+}
 
 /** Membrane regions (aMat.x in group 1). */
 export const MREGION = {
@@ -216,9 +235,12 @@ export class GeoBuilder {
     const M = this.mat;
     const U = this.uv;
     const E = this.extra;
+    // Continuous channels interpolate; the zone id is categorical, so it comes from the corner
+    // whose region the new vertex takes.
+    const zoneFrom = M[a * 4] === region ? a : b;
     _ex[0] = (E[a * 4] + E[b * 4]) / 2;
     _ex[1] = (E[a * 4 + 1] + E[b * 4 + 1]) / 2;
-    _ex[2] = (E[a * 4 + 2] + E[b * 4 + 2]) / 2;
+    _ex[2] = E[zoneFrom * 4 + 2];
     _ex[3] = (E[a * 4 + 3] + E[b * 4 + 3]) / 2;
     const i = this.vertex(
       _bp,

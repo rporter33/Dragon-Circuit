@@ -5,11 +5,12 @@
 import { Vector3 } from 'three';
 import { clamp, lerp, smoothstep } from '../../../core/math';
 import type { WyvernLook } from '../../../core/types';
-import { GeoBuilder, MREGION, REGION, Skin } from '../builder';
+import { GeoBuilder, MREGION, REGION, Skin, tube } from '../builder';
 import type { RigDef } from '../rig';
 import { bodyChain } from './body';
 import type { HeadInfo } from './head';
 import { bezier3, bezier4, leaf, spike, strip } from './shape';
+import { RES, sides as nsides, steps, type Res } from './res';
 
 const UP = new Vector3(0, 1, 0);
 
@@ -27,7 +28,7 @@ function headFrame(rig: RigDef) {
 // Horns
 // ---------------------------------------------------------------------------------------------
 
-export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: string): void {
+export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: string, res: Res = RES[0]): void {
   const { L, at } = headFrame(rig);
   const skin = Skin.of(rig.idx.head);
   const horn = (i: number, t: number) => ({ region: REGION.horn, belly: 0, dorsal: t });
@@ -38,7 +39,7 @@ export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
       // Hornless: just low brow nubs so the skull still has a silhouette.
       for (const sx of [1, -1]) {
         const base = at(0.55 * sx, 1.0, 0.36);
-        spike(b, [base, base.clone().add(new Vector3(0.02 * sx * L, 0.05 * L, -0.06 * L))], 0.05 * L, skin, horn, 6);
+        spike(b, [base, base.clone().add(new Vector3(0.02 * sx * L, 0.05 * L, -0.06 * L))], 0.05 * L, skin, horn, nsides(res, 6));
       }
       break;
     case 'ram':
@@ -47,7 +48,7 @@ export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         const c = at(0.95 * sx, 0.55, 0.06);
         const pts: Vector3[] = [];
         const turns = 1.15;
-        const N = 16;
+        const N = steps(res, 16) + (res.lod === 2 ? 2 : 0);
         for (let i = 0; i <= N; i++) {
           const t = i / N;
           const a = 0.6 + t * turns * Math.PI * 2;
@@ -62,7 +63,7 @@ export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         }
         // Start inside the skull so the base is buried.
         pts.unshift(at(0.55 * sx, 0.95, 0.12));
-        spike(b, pts, 0.13 * L * bulk, skin, horn, 10, new Vector3(sx, 0, 0), 1, 0.7);
+        spike(b, pts, 0.13 * L * bulk, skin, horn, nsides(res, 10), new Vector3(sx, 0, 0), 1, 0.7);
       }
       break;
     case 'crown': {
@@ -73,7 +74,7 @@ export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         const out = new Vector3(Math.sin(a) * 0.8, Math.cos(a) * 0.9 + 0.2, -0.6).normalize();
         const len = (0.26 + 0.08 * Math.cos(a)) * L;
         const tip = base.clone().addScaledVector(out, len);
-        spike(b, [base.clone().addScaledVector(out, -0.04 * L), base.clone().addScaledVector(out, len * 0.5), tip], 0.055 * L * bulk, skin, horn, 6);
+        spike(b, res.lod === 2 ? [base.clone().addScaledVector(out, -0.04 * L), tip] : [base.clone().addScaledVector(out, -0.04 * L), base.clone().addScaledVector(out, len * 0.5), tip], 0.055 * L * bulk, skin, horn, nsides(res, 6));
       }
       break;
     }
@@ -81,18 +82,20 @@ export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
       for (const sx of [1, -1]) {
         const base = at(0.5 * sx, 1.0, 0.16);
         const beam = bezier4(base, base.clone().add(new Vector3(0.12 * sx * L, 0.4 * L, -0.1 * L)), base.clone().add(new Vector3(0.32 * sx * L, 0.75 * L, -0.15 * L)), base.clone().add(new Vector3(0.42 * sx * L, 1.0 * L, -0.42 * L)), 9);
-        spike(b, beam, 0.07 * L, skin, horn, 8, new Vector3(sx, 0, 0), 1, 0.6);
+        const beamPath = res.lod === 0 ? beam : beam.filter((_, i) => i % (res.lod === 1 ? 2 : 4) === 0 || i === beam.length - 1);
+        spike(b, beamPath, 0.07 * L, skin, horn, nsides(res, 8), new Vector3(sx, 0, 0), 1, 0.6);
         // Tines branch forward and up off the beam.
         for (const [k, len, fwd] of [
           [2, 0.32, 0.9],
           [5, 0.36, 0.6],
           [7, 0.26, 0.2],
         ] as const) {
+          if (res.lod === 2 && k !== 5) continue;
           const p0 = beam[k];
           const dir = new Vector3(0.25 * sx, 0.7, fwd).normalize();
           const tip = p0.clone().addScaledVector(dir, len * L);
           const mid = p0.clone().addScaledVector(dir, len * L * 0.5).add(new Vector3(0, 0.04 * L, -0.04 * L));
-          spike(b, [p0.clone().addScaledVector(dir, -0.03 * L), mid, tip], 0.04 * L, skin, horn, 6);
+          spike(b, [p0.clone().addScaledVector(dir, -0.03 * L), mid, tip], 0.04 * L, skin, horn, nsides(res, 6));
         }
       }
       break;
@@ -102,11 +105,12 @@ export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
       const dir = new Vector3(0, 0.55, 0.84).normalize();
       const len = 0.85 * L;
       const pts: Vector3[] = [base.clone().addScaledVector(dir, -0.06 * L)];
-      for (let i = 1; i <= 14; i++) pts.push(base.clone().addScaledVector(dir, (i / 14) * len));
+      const NU = steps(res, 14);
+      for (let i = 1; i <= NU; i++) pts.push(base.clone().addScaledVector(dir, (i / NU) * len));
       b.end();
       b.begin(0);
       const start = b.vertexCount;
-      spike(b, pts, 0.1 * L, skin, horn, 10, UP, 1, 0.9);
+      spike(b, pts, 0.1 * L, skin, horn, nsides(res, 10), UP, 1, 0.9);
       // Twist a spiral groove into it: push vertices in and out along a helix.
       const P = new Vector3();
       for (let vi = start; vi < b.vertexCount; vi++) {
@@ -132,18 +136,32 @@ export function buildHorns(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
           base.clone().add(new Vector3(0.1 * sx * L, 0.1 * L, -0.22 * L)),
           base.clone().add(new Vector3(0.16 * sx * L, 0.06 * L, -0.6 * L)),
           base.clone().add(new Vector3(0.2 * sx * L, 0.22 * L, -0.92 * L)),
-          12,
+          steps(res, 12) + (res.lod === 2 ? 1 : 0),
         );
-        spike(b, pts, 0.12 * L * bulk, skin, horn, 9, new Vector3(sx, 0, 0), 1, 0.8);
+        const r0 = 0.12 * L * bulk;
+        spike(b, pts, r0, skin, horn, nsides(res, 9), new Vector3(sx, 0, 0), 1, 0.8);
+        // A bony boss rooting the horn in the skull: a cone collar half sunk in, wider than the
+        // horn (the horn itself does not move).
+        if (res.lod < 2) {
+          const d = pts[1].clone().sub(pts[0]).normalize();
+          tube(b, {
+            points: [pts[0].clone().addScaledVector(d, -0.05 * L), pts[0].clone().addScaledVector(d, -0.01 * L), pts[0].clone().addScaledVector(d, 0.03 * L)],
+            radii: [1.4 * r0, 1.32 * r0, 1.02 * r0],
+            segments: nsides(res, 9),
+            hint: new Vector3(sx, 0, 0),
+            skin: () => skin,
+            mat: () => ({ region: REGION.horn, dorsal: 0 }),
+          });
+        }
         // A smaller second pair below.
         const b2 = at(0.88 * sx, 0.45, 0.06);
         spike(
           b,
-          bezier3(b2.clone().add(new Vector3(-0.06 * sx * L, 0, 0.04 * L)), b2.clone().add(new Vector3(0.14 * sx * L, 0.02 * L, -0.2 * L)), b2.clone().add(new Vector3(0.2 * sx * L, 0.1 * L, -0.42 * L)), 6),
+          bezier3(b2.clone().add(new Vector3(-0.06 * sx * L, 0, 0.04 * L)), b2.clone().add(new Vector3(0.14 * sx * L, 0.02 * L, -0.2 * L)), b2.clone().add(new Vector3(0.2 * sx * L, 0.1 * L, -0.42 * L)), steps(res, 6)),
           0.055 * L * bulk,
           skin,
           horn,
-          7,
+          nsides(res, 7),
         );
       }
       break;
@@ -171,7 +189,7 @@ function saddleGap(rig: RigDef): [number, number] {
   return [s - 0.22 * T, s + 0.2 * T];
 }
 
-export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: string, saddle: string): void {
+export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: string, saddle: string, res: Res = RES[0]): void {
   const plan = rig.plan;
   const k = plan.keyS;
   const m = plan.marks;
@@ -188,7 +206,7 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
       // Webbed crest from the back of the skull down the neck, held up by spines.
       const s0 = k[m.neckTop] - 0.05;
       const s1 = k[m.neckBase] + 0.1;
-      const N = 26;
+      const N = Math.max(7, steps(res, 26));
       const pts: Vector3[] = [];
       const sides: Vector3[] = [];
       const widths: number[] = [];
@@ -211,14 +229,16 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
       const rows: number[][] = [];
       for (let i = 0; i <= N; i++) {
         const row: number[] = [];
-        for (let j = 0; j <= 3; j++) {
-          const f = j / 3;
+        const NJ = res.lod === 0 ? 3 : 1;
+        for (let j = 0; j <= NJ; j++) {
+          const f = j / NJ;
           p.lerpVectors(base[i], top[i], f);
           row.push(b.vertex(p, chain.skin(ss[i]), { region: MREGION.fin, belly: 0.4 + 0.6 * f, dorsal: f, flutter: f * f }, f, (i / N) * rays));
         }
         rows.push(row);
       }
-      for (let i = 0; i < N; i++) for (let j = 0; j < 3; j++) b.quad(rows[i][j], rows[i + 1][j], rows[i + 1][j + 1], rows[i][j + 1]);
+      const NJ = rows[0].length - 1;
+      for (let i = 0; i < N; i++) for (let j = 0; j < NJ; j++) b.quad(rows[i][j], rows[i + 1][j], rows[i + 1][j + 1], rows[i][j + 1]);
       b.end();
       // Spines along the rays (solid).
       b.begin(0);
@@ -226,7 +246,7 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         const i = Math.round((r / rays) * N);
         const a = base[i];
         const c = top[i].clone().addScaledVector(up.subVectors(top[i], a).normalize(), 0.06 * scale);
-        spike(b, [a.clone().addScaledVector(up, -0.05), a.clone().lerp(c, 0.5), c], 0.035 * scale, chain.skin(ss[i]), { region: REGION.horn }, 5);
+        spike(b, [a.clone().addScaledVector(up, -0.05), a.clone().lerp(c, 0.5), c], 0.035 * scale, chain.skin(ss[i]), { region: REGION.horn }, nsides(res, 5));
       }
       b.end();
       void pts;
@@ -244,13 +264,14 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         seed = (seed * 16807) % 2147483647;
         return seed / 2147483647;
       };
-      const rowsN = 9;
+      const rowsN = res.lod === 0 ? 9 : res.lod === 1 ? 5 : 3;
       for (let r = 0; r < rowsN; r++) {
         const t = r / (rowsN - 1);
         const s = lerp(s0, s1, t);
         const st = plan.station(s);
-        for (let a = -3; a <= 3; a++) {
-          const th = a * 0.42 + (rnd() - 0.5) * 0.15;
+        const span = res.lod === 2 ? 1 : 3;
+        for (let a = -span; a <= span; a++) {
+          const th = a * (1.26 / span) + (rnd() - 0.5) * 0.15;
           plan.surface(s, th, p, up);
           const len = (0.62 - 0.3 * t) * scale * (1 - Math.abs(a) * 0.08) * (0.85 + 0.3 * rnd());
           const back = st.tangent.clone();
@@ -259,14 +280,15 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
           const pts: Vector3[] = [];
           const sides: Vector3[] = [];
           const widths: number[] = [];
-          for (let i = 0; i <= 4; i++) {
-            const f = i / 4;
+          const NS = res.lod === 0 ? 4 : 2;
+          for (let i = 0; i <= NS; i++) {
+            const f = i / NS;
             pts.push(p.clone().addScaledVector(up, -0.03).addScaledVector(dir, len * f).addScaledVector(up, -len * 0.25 * f * f));
             sides.push(side);
             widths.push(0.075 * scale * Math.sin(Math.PI * (0.15 + 0.85 * f)) + 0.01);
           }
           const sk = chain.skin(s);
-          strip(b, pts, sides, widths, () => sk, (i, f) => ({ region: MREGION.feather, belly: 0.7, dorsal: f, flutter: f * f * 0.8 }), 2);
+          strip(b, pts, sides, widths, () => sk, (i, f) => ({ region: MREGION.feather, belly: 0.7, dorsal: f, flutter: f * f * 0.8 }), res.lod === 0 ? 2 : 1);
         }
       }
       b.end();
@@ -279,7 +301,7 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         const bone = rig.idx.fans[side];
         const pivot = rig.bones[bone].pos;
         const sk = Skin.of(bone);
-        const rays = 6;
+        const rays = res.lod === 2 ? 3 : 6;
         const R = 0.62 * L;
         const tips: Vector3[] = [];
         for (let r = 0; r <= rays; r++) {
@@ -288,7 +310,7 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         }
         b.begin(1);
         const center = b.vertex(pivot.clone().add(new Vector3(0.02 * sx, 0, 0)), sk, { region: MREGION.fin, belly: 0.3, dorsal: 0 }, 0, 0);
-        const M = 4;
+        const M = res.lod === 0 ? 4 : res.lod === 1 ? 2 : 1;
         const ring: number[][] = [];
         for (let r = 0; r <= rays; r++) {
           const col: number[] = [];
@@ -308,8 +330,9 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         b.end();
         b.begin(0);
         for (let r = 0; r <= rays; r++) {
+          if (res.lod === 2) break;
           const tip = tips[r].clone().lerp(pivot, -0.08);
-          spike(b, [pivot.clone(), pivot.clone().lerp(tip, 0.5), tip], 0.028 * L, sk, { region: REGION.horn }, 5);
+          spike(b, [pivot.clone(), pivot.clone().lerp(tip, 0.5), tip], 0.028 * L, sk, { region: REGION.horn }, nsides(res, 5));
         }
         b.end();
       }
@@ -324,15 +347,18 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
       const step = 0.34 * scale;
       b.begin(0);
       const hasRoyal = saddle === 'royal' || saddle === 'nomad';
+      let nth = 0;
       for (let s = sStart; s < sEnd; s += step) {
         if (s > g0 - (hasRoyal ? 0.4 : 0) && s < g1 + (hasRoyal ? 0.5 : 0)) continue;
+        if (res.lod === 2 && nth++ % 2 === 1) continue;
         const st = plan.station(s);
         dorsal(rig, s, -0.06, p, up);
         const along = (s - sStart) / (sEnd - sStart);
-        const h = (0.22 + 0.16 * Math.sin(Math.PI * clamp(along * 1.4, 0, 1))) * scale * (1 - 0.6 * smoothstep(0.7, 1, along));
+        // A bold dorsal row (x1.4): a silhouette feature along the neck and back, not dots.
+        const h = 1.4 * (0.22 + 0.16 * Math.sin(Math.PI * clamp(along * 1.4, 0, 1))) * scale * (1 - 0.6 * smoothstep(0.7, 1, along));
         const tip = p.clone().addScaledVector(up, h).addScaledVector(st.tangent, h * 0.55);
         const mid = p.clone().addScaledVector(up, h * 0.55).addScaledVector(st.tangent, h * 0.12);
-        spike(b, [p.clone(), mid, tip], 0.07 * scale * (1 - 0.4 * along), chain.skin(s), { region: REGION.horn }, 5, st.tangent, 0.45);
+        spike(b, res.lod === 0 ? [p.clone(), mid, tip] : [p.clone(), tip], 1.4 * 0.07 * scale * (1 - 0.4 * along), chain.skin(s), { region: REGION.horn }, nsides(res, 5), st.tangent, 0.45);
       }
       b.end();
       void head;
@@ -345,7 +371,8 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
 // Tail tips
 // ---------------------------------------------------------------------------------------------
 
-export function buildTailTip(b: GeoBuilder, rig: RigDef, id: string): void {
+export function buildTailTip(b: GeoBuilder, rig: RigDef, id: string, res: Res = RES[0]): void {
+  const leafRings = res.lod === 0 ? 3 : 1;
   const plan = rig.plan;
   const chain = bodyChain(rig);
   const len = plan.length;
@@ -374,13 +401,13 @@ export function buildTailTip(b: GeoBuilder, rig: RigDef, id: string): void {
         outline.push([along * (along > 0 ? Lb * 0.62 : Lb * 0.55), w]);
       }
       b.begin(0);
-      leaf(b, center, back, side, up, outline, 0.05 * scale, skinAt, () => ({ region: REGION.skin, dorsal: 0.9, belly: 0 }), 3);
+      leaf(b, center, back, side, up, outline, 0.05 * scale, skinAt, () => ({ region: REGION.skin, dorsal: 0.9, belly: 0 }), leafRings);
       b.end();
       return;
     }
     case 'plume': {
       b.begin(1);
-      const N = 9;
+      const N = res.lod === 2 ? 3 : res.lod === 1 ? 5 : 9;
       for (let i = 0; i < N; i++) {
         const a = (i / (N - 1) - 0.5) * 1.3;
         const lift = (i % 2 === 0 ? 0.12 : -0.05) + 0.05 * Math.cos(a * 3);
@@ -390,13 +417,14 @@ export function buildTailTip(b: GeoBuilder, rig: RigDef, id: string): void {
         const pts: Vector3[] = [];
         const sides: Vector3[] = [];
         const widths: number[] = [];
-        for (let k = 0; k <= 6; k++) {
-          const f = k / 6;
+        const NS = res.lod === 0 ? 6 : 2;
+        for (let k = 0; k <= NS; k++) {
+          const f = k / NS;
           pts.push(tip.clone().addScaledVector(back, -0.12 * scale).addScaledVector(dir, fl * f).addScaledVector(up, -0.12 * fl * f * f));
           sides.push(fside);
           widths.push(0.1 * scale * Math.sin(Math.PI * (0.12 + 0.88 * f)) + 0.012);
         }
-        strip(b, pts, sides, widths, () => tipSkin, (_k, f) => ({ region: MREGION.feather, belly: 0.8, dorsal: f, flutter: f * f }), 2);
+        strip(b, pts, sides, widths, () => tipSkin, (_k, f) => ({ region: MREGION.feather, belly: 0.8, dorsal: f, flutter: f * f }), res.lod === 0 ? 2 : 1);
       }
       b.end();
       return;
@@ -419,15 +447,15 @@ export function buildTailTip(b: GeoBuilder, rig: RigDef, id: string): void {
         R * 0.75,
         () => tipSkin,
         (_top, f) => ({ region: REGION.horn, dorsal: 0.6, belly: 0 }) as const,
-        4,
+        res.lod === 0 ? 4 : 1,
       );
       b.end();
       b.begin(0);
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < (res.lod === 2 ? 0 : 6); i++) {
         const a = (i / 6) * Math.PI * 2 + 0.3;
         const d = side.clone().multiplyScalar(Math.cos(a)).addScaledVector(up, Math.sin(a) * 0.8).addScaledVector(back, 0.2).normalize();
         const base = c.clone().addScaledVector(d, R * 0.7);
-        spike(b, [base, base.clone().addScaledVector(d, R * 0.35), base.clone().addScaledVector(d, R * 0.6)], R * 0.3, tipSkin, { region: REGION.horn }, 6);
+        spike(b, [base, base.clone().addScaledVector(d, R * 0.35), base.clone().addScaledVector(d, R * 0.6)], R * 0.3, tipSkin, { region: REGION.horn }, nsides(res, 6));
       }
       b.end();
       return;
@@ -441,13 +469,14 @@ export function buildTailTip(b: GeoBuilder, rig: RigDef, id: string): void {
         const sides: Vector3[] = [];
         const widths: number[] = [];
         const fside = new Vector3().crossVectors(dir, up).normalize();
-        for (let k = 0; k <= 12; k++) {
-          const f = k / 12;
+        const NR = res.lod === 0 ? 12 : res.lod === 1 ? 6 : 3;
+        for (let k = 0; k <= NR; k++) {
+          const f = k / NR;
           pts.push(tip.clone().addScaledVector(back, -0.2 * scale).addScaledVector(dir, Lr * f).addScaledVector(side, 0.12 * s * Math.sin(f * 5)));
           sides.push(fside);
           widths.push(0.13 * scale * (1 - 0.65 * f) * Math.min(1, f * 6 + 0.25));
         }
-        strip(b, pts, sides, widths, (k) => (k < 2 ? chain.skin(len - 0.3) : tipSkin), (_k, f) => ({ region: MREGION.fin, belly: 0.9, dorsal: f, flutter: 0.4 + f }), 2);
+        strip(b, pts, sides, widths, (k) => (k < 1 ? chain.skin(len - 0.3) : tipSkin), (_k, f) => ({ region: MREGION.fin, belly: 0.9, dorsal: f, flutter: 0.4 + f }), res.lod === 0 ? 2 : 1);
       }
       b.end();
       return;
@@ -471,7 +500,7 @@ export function buildTailTip(b: GeoBuilder, rig: RigDef, id: string): void {
       // u = toward the tip, v = side: (u × v) must be +n, so use n = back × side.
       const n = new Vector3().crossVectors(back, side).normalize();
       b.begin(0);
-      leaf(b, tip.clone().addScaledVector(back, 0.12 * scale), back, side, n, outline, 0.06 * scale, () => tipSkin, () => ({ region: REGION.skin, dorsal: 0.9, belly: 0 }), 3);
+      leaf(b, tip.clone().addScaledVector(back, 0.12 * scale), back, side, n, outline, 0.06 * scale, () => tipSkin, () => ({ region: REGION.skin, dorsal: 0.9, belly: 0 }), leafRings);
       b.end();
       return;
     }
@@ -524,12 +553,43 @@ function keeledScute(b: GeoBuilder, c: Vector3, u: Vector3, v: Vector3, n: Vecto
   }
 }
 
+/** Dorsal shield columns: girth angle, width (× body radius), keel height (× scale). */
+const DORSAL_SHIELD: [number, number, number][] = [
+  [0.17, 0.15, 0.075],
+  [0.52, 0.15, 0.065],
+  [0.88, 0.12, 0.045],
+];
+const DORSAL_SHIELD_FAR: [number, number, number][] = [[0.3, 0.2, 0.075]];
+
+/**
+ * The far-LOD osteoderm: a keeled ridge of six triangles, its rim sunk into the skin (same frame
+ * and aUv2 convention as keeledScute).
+ */
+function lowScute(b: GeoBuilder, c: Vector3, u: Vector3, v: Vector3, n: Vector3, halfLen: number, halfWid: number, keel: number, skin: Skin): void {
+  const mat = { region: REGION.plate, dorsal: 1, belly: 0 };
+  const P = new Vector3();
+  const at = (a: number, w: number, h: number, rim: number) =>
+    b.vertex(P.copy(c).addScaledVector(u, a * halfLen).addScaledVector(v, w * halfWid).addScaledVector(n, h), skin, mat, rim, w);
+  const sink = -0.3 * keel - 0.01;
+  const fl = at(-1, -1, sink, 1);
+  const fr = at(-1, 1, sink, 1);
+  const br = at(1, 1, sink, 1);
+  const bl = at(1, -1, sink, 1);
+  const kf = at(-0.9, 0, keel * 0.45, 0);
+  const kb = at(0.95, 0, keel, 0);
+  // Counter-clockwise seen from outside (u × v = n).
+  b.quad(fl, bl, kb, kf);
+  b.quad(kf, kb, br, fr);
+  b.tri(fl, kf, fr);
+  b.tri(bl, br, kb);
+}
+
 /**
  * Crocodilian armor down the ironback: a nuchal shield of big scutes behind the head, paired
  * transverse rows of keeled osteoderms down the neck and over the back (the saddle sits on bare
  * hide), and two rows of tall keeled crests down the tail, converging and shrinking toward the tip.
  */
-export function buildPlates(b: GeoBuilder, rig: RigDef, look: WyvernLook): void {
+export function buildPlates(b: GeoBuilder, rig: RigDef, look: WyvernLook, res: Res = RES[0]): void {
   const plan = rig.plan;
   const k = plan.keyS;
   const m = plan.marks;
@@ -552,7 +612,8 @@ export function buildPlates(b: GeoBuilder, rig: RigDef, look: WyvernLook): void 
     const st = plan.station(s);
     u.copy(st.tangent).addScaledVector(n, -st.tangent.dot(n)).normalize();
     v.crossVectors(n, u).normalize();
-    keeledScute(b, p, u, v, n, halfLen, halfWid, keel, chain.skin(s));
+    if (res.tack === 2) keeledScute(b, p, u, v, n, halfLen, halfWid, keel, chain.skin(s));
+    else lowScute(b, p, u, v, n, halfLen, halfWid, keel, chain.skin(s));
   };
   let s = sNeck0;
   while (s < sEnd) {
@@ -560,7 +621,9 @@ export function buildPlates(b: GeoBuilder, rig: RigDef, look: WyvernLook): void 
     const r = Math.max(0.05, Math.min(st.halfWidth, st.upper));
     const onTail = s > sTail + 0.1;
     // Rows about as long as the body is round here (a tighter pitch down the tail).
-    const pitch = clamp(r * (onTail ? 0.42 : 0.3), 0.1, 0.3 * scale);
+    // Coarser LODs lay fewer, longer rows (the same armour read from further away).
+    const coarse = res.tack === 2 ? 1 : res.tack === 1 ? 1.5 : 2.8;
+    const pitch = clamp(r * (onTail ? 0.42 : 0.3), 0.1, 0.3 * scale) * coarse;
     const inSaddle = s > g0 - extraGap && s < g1 + extraGap;
     if (!inSaddle) {
       if (onTail) {
@@ -571,18 +634,14 @@ export function buildPlates(b: GeoBuilder, rig: RigDef, look: WyvernLook): void 
         for (const sx of [1, -1]) place(s, th * sx, pitch * 0.42, r * 0.17, keel);
       } else if (s < sNuchal) {
         // Neck: paired rows, a smaller outer pair further down.
-        const cols = s > lerp(sNeck0, sNuchal, 0.5) ? [0.3, 0.78] : [0.32];
+        const cols = s > lerp(sNeck0, sNuchal, 0.5) && res.tack > 0 ? [0.3, 0.78] : [0.32];
         for (const th of cols) for (const sx of [1, -1]) place(s, th * sx, pitch * 0.42, r * (th < 0.5 ? 0.24 : 0.18), 0.05 * scale);
       } else if (s < k[m.chest]) {
         // Nuchal shield at the neck base: two rows of big scutes.
-        for (const th of [0.24, 0.66]) for (const sx of [1, -1]) place(s, th * sx, pitch * 0.46, r * 0.22, 0.07 * scale);
+        for (const th of res.tack > 0 ? [0.24, 0.66] : [0.3]) for (const sx of [1, -1]) place(s, th * sx, pitch * 0.46, r * 0.22, 0.07 * scale);
       } else {
         // Dorsal shield: three pairs across the back, the outer ones lower and smaller.
-        for (const [th, wid, keel] of [
-          [0.17, 0.15, 0.075],
-          [0.52, 0.15, 0.065],
-          [0.88, 0.12, 0.045],
-        ] as const)
+        for (const [th, wid, keel] of res.tack > 0 ? DORSAL_SHIELD : DORSAL_SHIELD_FAR)
           for (const sx of [1, -1]) place(s, th * sx, pitch * 0.42, r * wid, keel * scale);
       }
     }

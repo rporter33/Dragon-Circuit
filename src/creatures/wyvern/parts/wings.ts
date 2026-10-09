@@ -11,30 +11,106 @@
 // boundaries' bones, so the membrane folds like a fan when the fingers close.
 
 import { Vector3 } from 'three';
-import { GeoBuilder, MREGION, REGION, Skin } from '../builder';
-import { SIDE_SIGN, type RigDef } from '../rig';
+import { smoothstep } from '../../../core/math';
+import { GeoBuilder, MREGION, REGION, Skin, ellipsoid, tube } from '../builder';
+import { SIDE_SIGN, innerTrailRoot, type RigDef } from '../rig';
 import { bodyChain } from './body';
 import { SkinChain } from './chain';
-import { bezier3, spike } from './shape';
+import { bezier3, keyed, spike } from './shape';
+import { RES, sides, steps, type Res } from './res';
+
+/** Peak skin weight of the fold helper in the inner panel (sector C). */
+const FOLD_W = 0.55;
+/** Where the helper's weight has risen to full strength, out from the flank root (fraction of t). */
+const FOLD_ROOT = 0.18;
+/** Peak of smoothstep(0, FOLD_ROOT, t)·(1 − t)^0.7, so FOLD_W stays the peak weight. */
+const FOLD_PEAK = (() => {
+  let m = 0;
+  for (let i = 0; i <= 400; i++) {
+    const t = i / 400;
+    const x = Math.min(1, t / FOLD_ROOT);
+    m = Math.max(m, x * x * (3 - 2 * x) * Math.pow(1 - t, 0.7));
+  }
+  return m;
+})();
+/**
+ * Fold helper weight over sector C (t from the flank root line to finger 2, v from the arm to the
+ * trailing edge): strongest in the interior near the body, zero on every boundary, so the root
+ * stays glued along the flank (the panel pleats against the body rather than peeling off it), and
+ * the arm, finger and trailing edge keep their own bones.
+ */
+export const foldWeight = (t: number, v: number) => {
+  const x = Math.min(1, t / FOLD_ROOT);
+  return ((FOLD_W * Math.sin(Math.PI * v) * x * x * (3 - 2 * x)) / FOLD_PEAK) * Math.pow(1 - t, 0.7);
+};
+/** aExtra scratch (x AO open, y pleat valley; see builder.ts). */
+const _ext: [number, number, number, number] = [1, 0, 0, 0];
 
 /** How far below the flank's equator the membrane root runs half-way back (fraction of lower). */
 const ROOT_DROP = 0.3;
 const _line = new Vector3();
 const _dip = new Vector3();
 
+/** Humerus radius along the bone (× the arm scale k): the deltopectoral mass near the shoulder. */
+const HUMERUS_R: [number, number][] = [
+  [0, 0.345],
+  [0.25, 0.33],
+  [0.5, 0.26],
+  [0.75, 0.2],
+  [1, 0.17],
+];
+
+/** The arm's radius scale (m): every arm, hand and digit radius is a multiple of it. */
+export function armScale(rig: RigDef): number {
+  const S = rig.props.shape;
+  return 1.25 * Math.sqrt(S.torsoHalfWidth / 0.74) * (S.armBulk ?? 1);
+}
+
+/** Radius of the humerus where it leaves the shoulder (m). */
+export function humerusRootRadius(rig: RigDef): number {
+  return HUMERUS_R[0][1] * armScale(rig);
+}
+
+/**
+ * The fold helpers' rest blend, per side: the bones (and weights) the inner panel's interior is
+ * skinned to besides the helper, averaged over the panel by the helper's own weight. Holding a
+ * helper at this blend of bone transforms leaves the panel as it would be without the helper;
+ * the animator folds from there.
+ */
+export type FoldRest = [{ bone: number; weight: number }[], { bone: number; weight: number }[]];
+const foldRestCache = new WeakMap<RigDef, FoldRest>();
+
+/** The fold helpers' rest blend for a rig (see FoldRest). */
+export function foldRest(rig: RigDef): FoldRest {
+  let r = foldRestCache.get(rig);
+  if (!r) {
+    buildWings(new GeoBuilder(), rig, RES[2]);
+    r = foldRestCache.get(rig)!;
+  }
+  return r;
+}
+
 export interface WingInfo {
   /** Membrane area of one wing (m², bind pose), for checks against BreedStats.wingArea. */
   membraneArea: number;
 }
 
-export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
+export function buildWings(b: GeoBuilder, rig: RigDef, res: Res = RES[0]): WingInfo {
+  const humRings = res.lod === 0 ? 3 + res.limbRings : res.lod === 1 ? 3 : 1;
+  const foreRings = res.lod === 0 ? 4 : res.lod === 1 ? 2 : 1;
+  /** Membrane grid size for a base count (LOD0 ×1.5 ... LOD2 fans). */
+  const grid = (n: number, min: number) => (res.membrane > 0 ? Math.max(min, Math.round(n * res.membrane)) : min);
   const P = rig.props;
   const S = P.shape;
-  const k = 1.25 * Math.sqrt(S.torsoHalfWidth / 0.74);
+  const k = armScale(rig);
   let area = 0;
+  const rest: FoldRest = [[], []];
   for (let side = 0; side < 2; side++) {
+    // Fold-weighted bone shares of the inner panel (sampled on a fixed grid, any LOD alike).
+    const share = new Map<number, number>();
     const sx = SIDE_SIGN[side];
     const wi = rig.idx.wings[side];
+    const foldBone = rig.idx.fold[side];
     const m = (v: Vector3) => new Vector3(v.x * sx, v.y, v.z);
     const sh = new Vector3(P.shoulder[0] * sx, P.shoulder[1], P.shoulder[2]);
     const el = m(rig.elbow);
@@ -47,25 +123,35 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
     const pts: Vector3[] = [];
     const rad: [number, number][] = [];
     const sAt: number[] = [];
-    const push = (p: Vector3, r: number) => {
+    // Ring centre offsets (the deltopectoral crest) in the ring's (up, forward) frame.
+    const crest: number[] = [];
+    const push = (p: Vector3, r: number, dp = 0) => {
       sAt.push(pts.length ? sAt[sAt.length - 1] + p.distanceTo(pts[pts.length - 1]) : 0);
       pts.push(p);
-      rad.push([r, r * 0.82]);
+      rad.push([r, r * 0.68]);
+      crest.push(dp);
     };
+    // A flier's arm: a massive humerus flattened in the wing plane, with the deltopectoral crest
+    // (where the flight muscles insert) bulging toward the leading edge's underside near the
+    // shoulder, tapering to a stout forearm.
     const inBody = sh.clone().add(new Vector3(-0.45 * S.torsoHalfWidth * sx, -0.05, 0));
-    push(inBody, 0.3 * k);
-    push(sh.clone(), 0.27 * k);
-    for (let i = 1; i <= 3; i++) push(sh.clone().lerp(el, i / 4), (0.25 - 0.035 * i) * k);
-    push(el.clone(), 0.14 * k);
-    for (let i = 1; i <= 4; i++) push(el.clone().lerp(wr, i / 5), (0.12 - 0.01 * i) * k);
-    push(wr.clone(), 0.1 * k);
-    push(wr.clone().lerp(kn, 0.5), 0.075 * k);
-    push(kn.clone(), 0.085 * k);
-    push(kn.clone().add(new Vector3(0.05 * sx, 0, 0)), 0.06 * k);
-    const iSh = 1;
-    const iEl = 5;
-    const iWr = 10;
-    const iKn = 12;
+    push(inBody, 0.34 * k);
+    const iSh = pts.length;
+    push(sh.clone(), 0.345 * k);
+    for (let i = 1; i <= humRings; i++) {
+      const t = i / (humRings + 1);
+      push(sh.clone().lerp(el, t), keyed(HUMERUS_R, t) * k, t > 0.15 && t < 0.45 ? 0.06 * k * Math.sin((Math.PI * (t - 0.15)) / 0.3) : 0);
+    }
+    const iEl = pts.length;
+    push(el.clone(), 0.17 * k);
+    for (let i = 1; i <= foreRings; i++) push(el.clone().lerp(wr, i / (foreRings + 1)), (0.17 - (0.024 * i) / (foreRings + 1)) * k);
+    const iWr = pts.length;
+    // A load-bearing wrist and a stout hand: the wrist is a front foot.
+    push(wr.clone(), 0.15 * k);
+    if (res.lod < 2) push(wr.clone().lerp(kn, 0.5), 0.11 * k);
+    const iKn = pts.length;
+    push(kn.clone(), 0.1 * k);
+    push(kn.clone().add(new Vector3(0.05 * sx, 0, 0)), 0.07 * k);
     const chain = new SkinChain([
       { bone: rig.idx.chest, s0: -0.4, s1: sAt[iSh] },
       { bone: wi.humerus, s0: sAt[iSh], s1: sAt[iEl] },
@@ -80,7 +166,7 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
     const u = new Vector3();
     const w = new Vector3();
     const p = new Vector3();
-    const SEG = 10;
+    const SEG = res.armAround;
     for (let i = 0; i < pts.length; i++) {
       dir.subVectors(pts[Math.min(pts.length - 1, i + 1)], pts[Math.max(0, i - 1)]).normalize();
       u.set(0, 1, 0).addScaledVector(dir, -dir.y).normalize();
@@ -91,7 +177,9 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         const th = (q / SEG) * Math.PI * 2;
         const c = Math.cos(th);
         // A slight leading-edge ridge (the forearm's front is the wing's leading edge).
-        p.copy(pts[i]).addScaledVector(u, c * rad[i][1]).addScaledVector(w, Math.sin(th) * rad[i][0]);
+        p.copy(pts[i])
+          .addScaledVector(u, c * rad[i][1] - crest[i] * 0.7)
+          .addScaledVector(w, Math.sin(th) * rad[i][0] + crest[i] * 0.7 * sx);
         ring.push(b.vertex(p, skin, { region: REGION.skin, belly: Math.max(0, -c) * 0.7, dorsal: Math.max(0, c) }, 20 + sAt[i], Math.sin(th)));
       }
       rings.push(ring);
@@ -116,10 +204,11 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         { bone: fa, s0: 0, s1: la },
         { bone: fb, s0: la, s1: la + P.arm.fingers[f][1] },
       ]);
-      const N = 7;
+      const N = res.fingerRings;
       const fpts: Vector3[] = [];
       for (let i = 0; i <= N; i++) fpts.push(kn.clone().lerp(tips[f], i / N));
-      const r0 = (0.065 - 0.008 * f) * k;
+      // Stout finger struts, so the bone fan reads against the membrane from behind.
+      const r0 = 1.3 * (0.065 - 0.008 * f) * k;
       b.begin(0);
       spike(
         b,
@@ -127,7 +216,7 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         r0,
         (i) => fchain.skin((i / N) * (la + P.arm.fingers[f][1])),
         { region: REGION.skin, dorsal: 0.6 },
-        6,
+        res.fingerSides,
         new Vector3(0, 1, 0),
         0.8,
         0.75,
@@ -135,18 +224,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
       b.end();
     }
 
-    // --- Thumb claws at the wrist (the "hands" it walks on) -------------------------------------
-    const clawSkin = Skin.of(wi.claw);
-    for (let c = 0; c < 2; c++) {
-      const d = new Vector3((0.25 + 0.3 * c) * sx, -0.2 - 0.25 * c, 1).normalize();
-      const base = wr.clone().add(new Vector3(0.02 * sx, -0.02, 0.06 * k));
-      const len = (c === 0 ? 0.36 : 0.24) * k;
-      const c1 = base.clone().addScaledVector(d, len * 0.6).add(new Vector3(0, 0.06 * k, 0));
-      const c2 = base.clone().addScaledVector(d, len).add(new Vector3(0, -0.1 * k, 0));
-      b.begin(0);
-      spike(b, bezier3(base, c1, c2, 4), (c === 0 ? 0.06 : 0.045) * k, clawSkin, { region: REGION.claw }, 6, new Vector3(0, 1, 0), 0.8);
-      b.end();
-    }
+    // --- The hand it walks on: a sole pad and three clawed digits at the wrist -------------------
+    if (res.lod < 2) buildHand(b, rig, res, side, wr, k);
 
     // --- Membranes --------------------------------------------------------------------------------
     const fingerSkin = (f: number, t: number, out: Skin, weight: number) => {
@@ -168,6 +247,7 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
       edge: (t: number, v: number) => number,
       flutter: (t: number, v: number) => number,
       vOffset: number,
+      extra?: (t: number, v: number) => readonly [number, number, number, number],
     ) => {
       b.begin(1);
       const grid: number[][] = [];
@@ -177,7 +257,9 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         for (let j = 0; j <= nv; j++) {
           const v = j / nv;
           pos(t, v, p);
-          row.push(b.vertex(p, skin(t, v), { region: MREGION.wing, belly: thin(t, v), dorsal: edge(t, v), flutter: flutter(t, v) }, t, v + vOffset));
+          row.push(
+            b.vertex(p, skin(t, v), { region: MREGION.wing, belly: thin(t, v), dorsal: edge(t, v), flutter: flutter(t, v), extra: extra?.(t, v) }, t, v + vOffset),
+          );
         }
         grid.push(row);
       }
@@ -211,8 +293,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
       const depth = S.wing.scallop * tA.distanceTo(tB);
       const E = new Vector3();
       patch(
-        16,
-        8,
+        grid(16, 1),
+        grid(8, 2),
         (t, v, out) => {
           E.lerpVectors(tA, tB, v).addScaledVector(inward, depth * Math.sin(Math.PI * v));
           return out.lerpVectors(kn, E, t);
@@ -232,10 +314,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
 
     // C: arm + finger 2 ↔ flank.
     const body = bodyChain(rig);
-    const trailZ = S.wing.trailZ * S.torsoLength;
-    const sTrail = rig.plan.sAtZ(trailZ);
-    const stT = rig.plan.station(sTrail);
-    const trail = new Vector3(stT.halfWidth * 0.9 * sx, stT.center.y + 0.35 * stT.upper, trailZ);
+    const trail = m(innerTrailRoot(P, rig.plan));
+    const sTrail = rig.plan.sAtZ(trail.z);
     const bodyTrailSkin = body.skin(sTrail);
     const shAttach = sh.clone().add(new Vector3(-0.05 * sx, 0, -0.08));
     const armPts = [shAttach, el, wr, kn];
@@ -269,6 +349,17 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         .addScaledVector(rootCtl, 2 * v * (1 - v))
         .addScaledVector(trail, v * v)
         .sub(_line.lerpVectors(shAttach, trail, v));
+    /** The inner panel's skin without the fold helper. */
+    const innerSkin = (t: number, v: number) => {
+      const s = new Skin();
+      // Leading boundary follows the arm (the root follows the chest).
+      if (t < 0.02) s.add(rig.idx.chest, 1 - v);
+      else s.mix(chain.skin(armChainS(t)), 1 - v);
+      // Trailing boundary: flank at the root, finger 2 at the tip.
+      s.mix(bodyTrailSkin, v * (1 - t));
+      fingerSkin(2, 1, s, v * t);
+      return s;
+    };
     const tip2 = tips[2];
     const midC = trail.clone().lerp(tip2, 0.5);
     const inwardC = wr.clone().sub(midC);
@@ -278,8 +369,8 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
     const Lp = new Vector3();
     const Rp = new Vector3();
     patch(
-      16,
-      10,
+      grid(16, 2),
+      grid(10, 2),
       (t, v, out) => {
         armAt(t, Lp);
         Rp.lerpVectors(trail, tip2, t).addScaledVector(inwardC, depthC * Math.sin(Math.PI * t));
@@ -288,27 +379,49 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
         return w > 1e-4 ? out.addScaledVector(rootDip(v, _dip), w) : out;
       },
       (t, v) => {
-        const s = new Skin();
-        // Leading boundary follows the arm (the root follows the chest).
-        if (t < 0.02) s.add(rig.idx.chest, 1 - v);
-        else s.mix(chain.skin(armChainS(t)), 1 - v);
-        // Trailing boundary: flank at the root, finger 2 at the tip.
-        s.mix(bodyTrailSkin, v * (1 - t));
-        fingerSkin(2, 1, s, v * t);
-        return s;
+        const s = innerSkin(t, v);
+        // The fold helper takes the interior (most near the root, none on the boundaries), so
+        // the animator can contract and pleat the folded panel against the flank.
+        const wf = foldWeight(t, v);
+        return wf > 1e-4 ? new Skin().mix(s, 1 - wf).add(foldBone, wf) : s;
       },
       (t, v) => v * (0.35 + 0.65 * Math.sin(Math.PI * Math.min(1, t * 1.3))),
       (_t, v) => v,
       (t, v) => v * v * Math.sin(Math.PI * t),
       2,
+      (t, v) => {
+        // Pleat valleys: troughs of the uFold vertex pleats (sin(aUv2.y * 8π + aUv2.x * 3),
+        // aUv2.y = v + 2 here), where the folded sheet bunches, weighted like the fold helper.
+        const trough = 0.5 - 0.5 * Math.sin((v + 2) * 25.13 + t * 3);
+        _ext[1] = (foldWeight(t, v) / FOLD_W) * trough;
+        return _ext;
+      },
     );
+
+    {
+      // The rest blend: sample the panel's own skin (without the helper) on a fixed grid.
+      for (let i = 0; i <= 16; i++)
+        for (let j = 0; j <= 10; j++) {
+          const t = i / 16;
+          const v = j / 10;
+          const wf = foldWeight(t, v);
+          if (wf < 1e-4) continue;
+          const sk = innerSkin(t, v);
+          for (let q = 0; q < sk.bones.length; q++) share.set(sk.bones[q], (share.get(sk.bones[q]) ?? 0) + wf * sk.weights[q]);
+        }
+      let sum = 0;
+      for (const w of share.values()) sum += w;
+      for (const [bone, w] of share) if (w / sum > 0.01) rest[side].push({ bone, weight: w / sum });
+      const kept = rest[side].reduce((a, e) => a + e.weight, 0);
+      for (const e of rest[side]) e.weight /= kept;
+    }
 
     // D: leading-edge panel in front of the elbow.
     const lead0 = sh.clone().add(new Vector3(0, 0, 0.12));
     const fwd = new Vector3(0, 0, 1);
     patch(
-      10,
-      2,
+      grid(10, 2),
+      grid(2, 1),
       (t, v, out) => {
         armAt(t * (armLen[2] / armTotal), Lp);
         Rp.lerpVectors(lead0, wr, t).addScaledVector(fwd, 0.06 * Math.sin(Math.PI * t));
@@ -338,5 +451,84 @@ export function buildWings(b: GeoBuilder, rig: RigDef): WingInfo {
       area += B.sub(A).cross(C.sub(A)).length() / 2;
     }
   }
+  foldRestCache.set(rig, rest);
   return { membraneArea: area / 2 };
 }
+
+/**
+ * The wing-walker's hand (one side): a pale sole pad under the wrist and three short digits
+ * fanned forward (pterosaur-like), each jointed at a knuckle and ending in a recurved claw, all
+ * riding the claw bone. In the bind (flight) pose the digits point forward along the leading
+ * edge; standing, the animator plants the wrist WRIST_CLEARANCE * standHeight above the ground
+ * with the claw bone pitched down by GROUND_PITCH, and the digits are bent so their claws meet
+ * the ground there.
+ */
+function buildHand(b: GeoBuilder, rig: RigDef, res: Res, side: number, wr: Vector3, k: number): void {
+  const sx = SIDE_SIGN[side];
+  const skin = Skin.of(rig.idx.wings[side].claw);
+  const sh = rig.props.standHeight;
+  const ground = WRIST_CLEARANCE * sh;
+  // Sole pad: a broad, flat cushion under the wrist, a touch sunk into the ground when standing.
+  // Only its sole is pale (like the belly); the sides take the hide, so the wrist reads as one
+  // limb ending in a foot rather than a pale mitten.
+  const pr: [number, number, number] = [0.17 * k, 0.1 * k, 0.22 * k];
+  const padC = wr.clone().add(new Vector3(0.02 * k * sx, -ground + 0.08 * k, 0.04 * k));
+  b.begin(0);
+  ellipsoid(
+    b,
+    padC,
+    new Vector3(1, 0, 0),
+    new Vector3(0, 1, 0),
+    new Vector3(0, 0, 1),
+    pr,
+    () => skin,
+    (_p, nl) => ({ region: REGION.skin, belly: 0.75 * smoothstep(0.2, 0.8, -nl.y) }),
+    res.lod === 0 ? 5 : 3,
+    res.lod === 0 ? 8 : 5,
+  );
+  b.end();
+  const tilt = Math.tan(GROUND_PITCH);
+  for (let d = 0; d < 3; d++) {
+    const az = (d - 1) * 0.35 * sx;
+    const len = HAND_DIGITS[d] * k;
+    const r0 = 0.06 * k;
+    const fwd = new Vector3(Math.sin(az), 0, Math.cos(az));
+    const base = wr.clone().add(new Vector3(0.03 * k * sx, -0.03 * k, 0.08 * k)).addScaledVector(fwd, 0.06 * k);
+    // Proximal phalanx level with the claw bone; the distal one bends down so that, pitched by
+    // GROUND_PITCH when standing, the claw tip reaches the ground.
+    const L1 = 0.55 * len;
+    const L2 = 0.45 * len;
+    const drop = ground - 0.03 * k - L1 * Math.sin(GROUND_PITCH);
+    const a2 = Math.min(0.75, Math.max(0.08, Math.asin(Math.min(1, Math.max(0, drop / (L2 + 0.05 * k)))) - GROUND_PITCH));
+    const knuckle = base.clone().addScaledVector(fwd, L1);
+    const d2 = fwd.clone().multiplyScalar(Math.cos(a2)).add(new Vector3(0, -Math.sin(a2), 0));
+    const tip = knuckle.clone().addScaledVector(d2, L2);
+    b.begin(0);
+    if (res.joints) {
+      tube(b, {
+        points: [base, base.clone().lerp(knuckle, 0.5), knuckle, knuckle.clone().lerp(tip, 0.5), tip],
+        radii: [r0, r0 * 0.88, r0 * 1.02, r0 * 0.72, r0 * 0.5],
+        segments: 5,
+        hint: new Vector3(0, 1, 0),
+        skin: () => skin,
+        mat: () => ({ region: REGION.skin, dorsal: 0.5 }),
+        capEnd: true,
+      });
+    } else {
+      spike(b, [base, knuckle, tip], r0, skin, { region: REGION.skin, dorsal: 0.5 }, 4, new Vector3(0, 1, 0), 1, 0.5);
+    }
+    // Recurved claw: out of the digit, hooking down into the ground.
+    const c0 = tip.clone().addScaledVector(d2, -0.02 * k);
+    const c1 = c0.clone().addScaledVector(d2, 0.09 * k).add(new Vector3(0, 0.02 * k, 0));
+    const c2 = c0.clone().addScaledVector(fwd, 0.13 * k).add(new Vector3(0, -0.1 * k - tilt * 0.13 * k, 0));
+    spike(b, bezier3(c0, c1, c2, res.lod === 0 ? 3 : 1), 0.05 * k, skin, { region: REGION.claw }, res.lod === 0 ? 5 : 3, new Vector3(0, 1, 0), 0.8);
+    b.end();
+  }
+}
+
+/** The animator plants the wrist this far (× standHeight) above the ground (applyWingIK). */
+const WRIST_CLEARANCE = 0.07;
+/** ...with the claw bone's forward axis pitched down by this much (radians, atan 0.25). */
+const GROUND_PITCH = Math.atan(0.25);
+/** Hand digit lengths (× the arm scale k): inner, middle, outer. */
+const HAND_DIGITS = [0.3, 0.34, 0.28];

@@ -51,6 +51,8 @@ export interface BreedShape {
   shoulder: [number, number, number];
   hip: [number, number, number];
   wing: WingShape;
+  /** Bind-pose leg angles from vertical (radians, + = the lower end forward). */
+  legAngles: LegAngles;
   /** Leg ratios; the leg unit is solved from standHeight. */
   thigh: number;
   shin: number;
@@ -59,14 +61,26 @@ export interface BreedShape {
   toe: number;
   /** Thigh radius at the hip (m). */
   thighRadius: number;
+  /** Extra girth of the arm, hand and digits (the heavy-boned breed); 1 = none. */
+  armBulk?: number;
   /** Eye radius as a fraction of head length. */
   eye: number;
   /** Overlapping armor plates down the back (ironback). */
   plates: boolean;
 }
 
-/** Bind-pose leg angles from vertical (radians, + = the lower end forward). */
-export const LEG_ANGLES = { thigh: 30 * DEG, shin: -40 * DEG, meta: 24 * DEG } as const;
+export interface LegAngles {
+  thigh: number;
+  shin: number;
+  /** The metatarsus: steep on a runner, near flat on the plantigrade-leaning ironback. */
+  meta: number;
+}
+
+/**
+ * Bind-pose leg angles from vertical (radians, + = the lower end forward) of the default
+ * (harrier) leg. Each breed has its own in BreedShape.legAngles, which the leg IK should read.
+ */
+export const LEG_ANGLES: Readonly<LegAngles> = { thigh: 30 * DEG, shin: -40 * DEG, meta: 24 * DEG };
 
 const W = (w: Partial<WingShape>): WingShape => ({
   humerus: 0.22,
@@ -91,19 +105,20 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     torsoLength: 3.6,
     torsoHalfWidth: 0.8,
     torsoHalfHeight: 0.92,
-    keel: 0.22,
-    neckLength: 2.6,
-    neckBaseRadius: 0.58,
-    neckTopRadius: 0.3,
+    keel: 0.34,
+    neckLength: 2.25,
+    neckBaseRadius: 0.7,
+    neckTopRadius: 0.38,
     neckRise: 28 * DEG,
     headLength: 1.32,
     headHalfWidth: 0.44,
     headHalfHeight: 0.42,
-    tailLength: 6.3,
-    tailBaseRadius: 0.5,
+    tailLength: 4.4,
+    tailBaseRadius: 0.62,
     shoulder: [0.62, 0.28, 0.3],
-    hip: [0.6, -0.3, -0.33],
+    hip: [0.74, -0.3, -0.33],
     wing: W({}),
+    legAngles: { ...LEG_ANGLES },
     thigh: 0.36,
     shin: 0.38,
     meta: 0.26,
@@ -113,54 +128,59 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     plates: false,
   },
   skimmer: {
-    torsoLength: 2.6,
+    torsoLength: 2.3,
     torsoHalfWidth: 0.54,
     torsoHalfHeight: 0.62,
-    keel: 0.12,
-    neckLength: 2.3,
-    neckBaseRadius: 0.4,
-    neckTopRadius: 0.22,
+    keel: 0.2,
+    neckLength: 1.9,
+    neckBaseRadius: 0.46,
+    neckTopRadius: 0.28,
     neckRise: 30 * DEG,
-    headLength: 1.08,
+    headLength: 1.12,
     headHalfWidth: 0.35,
     headHalfHeight: 0.33,
-    tailLength: 5.4,
-    tailBaseRadius: 0.36,
-    shoulder: [0.62, 0.28, 0.3],
-    hip: [0.6, -0.3, -0.33],
+    tailLength: 3.2,
+    tailBaseRadius: 0.44,
+    // The short sprinter's torso puts the wing roots close to the rider's feet: the shoulder
+    // joints sit a little further forward in the girdle.
+    shoulder: [0.62, 0.28, 0.33],
+    hip: [0.74, -0.3, -0.33],
+    // A sprinter's broad, rounded bat-like hand-wing: short, even fingers fanned wide.
     wing: W({
       fingers: [
-        [0.23, 0.2],
+        [0.2, 0.17],
         [0.21, 0.18],
-        [0.18, 0.15],
+        [0.2, 0.17],
       ],
-      azFingers: [-8 * DEG, -40 * DEG, -76 * DEG],
+      azFingers: [0 * DEG, -42 * DEG, -88 * DEG],
       scallop: 0.2,
+      trailZ: -0.7,
     }),
+    legAngles: { ...LEG_ANGLES },
     thigh: 0.36,
     shin: 0.4,
-    meta: 0.28,
+    meta: 0.33,
     toe: 0.22,
     thighRadius: 0.33,
-    eye: 0.105,
+    eye: 0.12,
     plates: false,
   },
   galewing: {
     torsoLength: 3.1,
     torsoHalfWidth: 0.58,
     torsoHalfHeight: 0.68,
-    keel: 0.2,
-    neckLength: 3.0,
-    neckBaseRadius: 0.42,
-    neckTopRadius: 0.24,
+    keel: 0.26,
+    neckLength: 2.8,
+    neckBaseRadius: 0.5,
+    neckTopRadius: 0.29,
     neckRise: 24 * DEG,
-    headLength: 1.3,
-    headHalfWidth: 0.36,
+    headLength: 1.45,
+    headHalfWidth: 0.31,
     headHalfHeight: 0.34,
-    tailLength: 6.8,
-    tailBaseRadius: 0.38,
+    tailLength: 4.5,
+    tailBaseRadius: 0.44,
     shoulder: [0.62, 0.3, 0.3],
-    hip: [0.6, -0.3, -0.33],
+    hip: [0.74, -0.3, -0.33],
     wing: W({
       humerus: 0.18,
       forearm: 0.3,
@@ -176,6 +196,7 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
       trailZ: -0.3,
       scallop: 0.12,
     }),
+    legAngles: { ...LEG_ANGLES },
     thigh: 0.36,
     shin: 0.38,
     meta: 0.26,
@@ -186,20 +207,21 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
   },
   ironback: {
     torsoLength: 3.8,
-    torsoHalfWidth: 0.98,
-    torsoHalfHeight: 1.04,
-    keel: 0.24,
-    neckLength: 2.4,
-    neckBaseRadius: 0.76,
-    neckTopRadius: 0.44,
+    torsoHalfWidth: 1.1,
+    torsoHalfHeight: 1.16,
+    keel: 0.42,
+    neckLength: 2.0,
+    neckBaseRadius: 0.9,
+    neckTopRadius: 0.52,
     neckRise: 20 * DEG,
     headLength: 1.55,
-    headHalfWidth: 0.58,
+    headHalfWidth: 0.66,
     headHalfHeight: 0.54,
-    tailLength: 5.6,
-    tailBaseRadius: 0.66,
+    tailLength: 4.0,
+    tailBaseRadius: 0.84,
     shoulder: [0.6, 0.26, 0.3],
-    hip: [0.6, -0.28, -0.32],
+    hip: [0.8, -0.28, -0.32],
+    // A short, broad, heavy wing: the fingers swept back, a shallow trailing edge.
     wing: W({
       humerus: 0.23,
       forearm: 0.35,
@@ -208,15 +230,17 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
         [0.21, 0.18],
         [0.19, 0.16],
       ],
-      azFingers: [-10 * DEG, -48 * DEG, -88 * DEG],
-      trailZ: -0.5,
-      scallop: 0.14,
+      azFingers: [-12 * DEG, -44 * DEG, -80 * DEG],
+      trailZ: -0.6,
+      scallop: 0.1,
     }),
+    legAngles: { ...LEG_ANGLES, meta: 50 * DEG },
     thigh: 0.36,
     shin: 0.37,
-    meta: 0.25,
+    meta: 0.19,
     toe: 0.2,
-    thighRadius: 0.62,
+    thighRadius: 0.7,
+    armBulk: 1.25,
     eye: 0.078,
     plates: true,
   },
@@ -286,7 +310,8 @@ export function computeProportions(breed: BreedId): WyvernProportions {
   // Legs: the standing bind pose drops from the hip to the ground at standHeight.
   const sole = 0.045 * stats.standHeight;
   const drop = stats.standHeight + hip[1] - sole;
-  const per = s.thigh * Math.cos(LEG_ANGLES.thigh) + s.shin * Math.cos(LEG_ANGLES.shin) + s.meta * Math.cos(LEG_ANGLES.meta);
+  const A = s.legAngles;
+  const per = s.thigh * Math.cos(A.thigh) + s.shin * Math.cos(A.shin) + s.meta * Math.cos(A.meta);
   const legUnit = drop / per;
   const leg: LegLengths = {
     thigh: s.thigh * legUnit,
