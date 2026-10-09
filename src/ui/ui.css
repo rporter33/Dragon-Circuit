@@ -1085,11 +1085,12 @@
   }
 }
 
-/* Context prompt, bottom center. */
+/* Context prompt, bottom center: low enough to clear the wyvern's feet when it stands mounted
+   (the landed camera frames them down to ~85% of the height). */
 .dw-prompt {
   position: absolute;
   left: 50%;
-  bottom: 9.5vh;
+  bottom: 6.8vh;
   transform: translate(-50%, 0.4em);
   display: flex;
   align-items: center;
@@ -1146,7 +1147,7 @@
 .dw-pointer-hint {
   position: absolute;
   left: 50%;
-  bottom: 2.4vh;
+  bottom: 1.4vh;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -1312,7 +1313,7 @@
 .dw-tip {
   position: absolute;
   left: 2.2em;
-  bottom: calc(9.5vh + 1em);
+  bottom: calc(6.8vh + 1em);
   width: 21em;
   padding: 0.85em 1.15em 0.95em;
   border-radius: 0.6em;
