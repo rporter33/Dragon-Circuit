@@ -1,0 +1,207 @@
+{
+  "title": "Driftwing dragon audit — standard capture set",
+  "intro": "The wyverns as an expert reviewer needs to see them: portraits, flight poses, motion as labelled frame sequences (contact sheets), surface close-ups, light response, in-game views, distance/LOD, ghost and cosmetics, plus measurements. Showcase shots use ?view=wyvern with the real sky (sky=native), quality=high, clear weather and golden hour (tod 0.7) unless noted. Every staging uses fresh=1 (default look, animation restarted from rest) and blink=999 (any idle cue holds the random blinks, membrane sweeps and tongue flicks off, so stills repeat exactly; the head strips cue them on purpose). Strip frames are at a fixed simulated time step; frame labels give the strip time and the state that matters (flap phase, gait phase, mode/gait/height/airspeed/pitch/bank). Azimuths are relative to the wyvern's heading: 0 = in front, 90 = its left side, 180 = behind.",
+  "defaults": {
+    "base": "http://localhost:5420/",
+    "size": "1280x720",
+    "stripSize": "640x360",
+    "stage": "fresh=1&sky=native&tod=0.7&blink=999",
+    "settle": 2.0,
+    "ui": "hide"
+  },
+  "boots": {
+    "showcase": { "url": "?view=wyvern&play=1&manual=1&quality=high&weather=clear&pose=idle", "desc": "wyvern showcase, quality high" },
+    "showcase-low": { "url": "?view=wyvern&play=1&manual=1&quality=low&weather=clear&pose=idle", "desc": "wyvern showcase, quality low" },
+    "flight": { "url": "?play=1&manual=1&quality=high&weather=clear&tod=0.7&at=60,345,190&yaw=150&mode=flying&speed=24", "desc": "the real game, flying, chase camera" },
+    "foot": { "url": "?play=1&manual=1&quality=high&weather=clear&tod=0.7", "desc": "the real game on the Roost" },
+    "stable": { "url": "?view=ui-stable&play=1&manual=1&quality=high&weather=clear&tod=0.7&tab=0", "desc": "the Stable screen" },
+    "title": { "url": "?manual=1&quality=high&weather=clear", "desc": "the title screen" }
+  },
+  "consts": {
+    "TP_FLIGHT": "(()=>{const G=__dw.game;const p=G.player.wyvernPose.position.clone().set(60,345,190);G.player.teleport(p,150*Math.PI/180,'flying',24);G.cameraRig.snap(G.player);})()",
+    "TP_LAND": "(()=>{const G=__dw.game;const g=G.world.terrain.groundAt(6,40,1e6);const p=G.player.wyvernPose.position.clone().set(6,g.y+9,40);G.player.teleport(p,-Math.PI/2,'flying',18);G.cameraRig.snap(G.player);})()",
+    "TP_FOOT": "(()=>{const G=__dw.game;const g=G.world.terrain.groundAt(-34,40,1e6);const p=G.player.wyvernPose.position.clone().set(-34,g.y,40);G.player.teleport(p,200*Math.PI/180,'onFoot');G.cameraRig.snap(G.player);})()",
+    "TP_LANDED": "(()=>{const G=__dw.game;const g=G.world.terrain.groundAt(-34,40,1e6);const p=G.player.wyvernPose.position.clone().set(-34,g.y+G.player.breed.standHeight,40);G.player.teleport(p,200*Math.PI/180,'landed');G.cameraRig.snap(G.player);})()",
+    "STATE": "__cap.state()"
+  },
+  "vars": {
+    "breeds": [
+      { "breed": "harrier", "span": 13 },
+      { "breed": "skimmer", "span": 11.2 },
+      { "breed": "galewing", "span": 17.5 },
+      { "breed": "ironback", "span": 13.5 }
+    ],
+    "pair": [
+      { "breed": "harrier", "span": 13 },
+      { "breed": "ironback", "span": 13.5 }
+    ],
+    "goldNoon": [
+      { "name": "golden", "tod": 0.7 },
+      { "name": "noon", "tod": 0.5 }
+    ],
+    "tods": [
+      { "name": "dawn", "tod": 0.27 },
+      { "name": "noon", "tod": 0.5 },
+      { "name": "golden", "tod": 0.7 },
+      { "name": "dusk", "tod": 0.76 },
+      { "name": "night", "tod": 0.95 }
+    ],
+    "phases": [
+      { "n": "000", "v": 0 },
+      { "n": "025", "v": 0.25 },
+      { "n": "050", "v": 0.5 },
+      { "n": "075", "v": 0.75 }
+    ],
+    "dists": [
+      { "d": 20, "box": 0, "scale": 1 },
+      { "d": 60, "box": 320, "scale": 2 },
+      { "d": 150, "box": 160, "scale": 3 },
+      { "d": 400, "box": 96, "scale": 4 }
+    ]
+  },
+  "sections": [
+    {
+      "id": "a",
+      "dir": "a-portraits",
+      "title": "a. Breed portraits — standing idle on the Roost, golden hour",
+      "note": "Each breed from the left-rear three-quarter (az 120, el 14), the left side (az 90), the front (az 0) and a head close-up (cam=head preset, centred on the skull), then the breeds side by side and each breed with the rider standing beside its shoulder for scale.",
+      "items": [
+        { "id": "a-{b.breed}-three", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=idle&cam=three&camDist={=b.span*0.85}", "desc": "{b.breed}: standing idle on the Roost, left-rear three-quarter view" },
+        { "id": "a-{b.breed}-side", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=idle&cam=side&camDist={=b.span*0.8}", "desc": "{b.breed}: standing idle, left side profile (wing-walking stance, tail carriage)" },
+        { "id": "a-{b.breed}-front", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=idle&cam=front&camDist={=b.span*0.75}", "desc": "{b.breed}: standing idle, straight on from the front (stance width, folded wings, head)" },
+        { "id": "a-{b.breed}-head", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=idle&cam=head&focus=jaw", "desc": "{b.breed}: head close-up (horns, eye, jaw, neck scales)" },
+        { "id": "a-lineup-breeds-side", "stage": "lineup=breeds&pose=idle&cam=side", "desc": "all four breeds side by side, side view (skimmer, harrier, galewing, ironback): relative size and proportions" },
+        { "id": "a-lineup-breeds-three", "stage": "lineup=breeds&pose=idle&cam=three", "desc": "all four breeds side by side, three-quarter view" },
+        { "id": "a-size-{b.breed}", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=idle&cam=side&camDist={=b.span*0.75}&rider=beside", "desc": "{b.breed} with the rider standing beside its shoulder (size comparison, side view)" }
+      ]
+    },
+    {
+      "id": "b",
+      "dir": "b-flight",
+      "title": "b. Flight stills per breed — showcase poses over the cloud sea, golden hour",
+      "note": "Synthesized WyvernPoses held still (springs settled). The flap phase stills freeze the phase (phase=) so springs settle at that phase; the motion strips in section c show the real dynamic cycle.",
+      "items": [
+        { "id": "b-{b.breed}-glide-{c}", "each": { "b": "$breeds", "c": ["three", "under", "top", "side"] }, "stage": "breed={b.breed}&pose=glide&cam={c}", "desc": "{b.breed}: gliding, {c} view (planform, membrane, tail and leg carriage)" },
+        { "id": "b-{b.breed}-bankL-front", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=bankL&cam=front", "desc": "{b.breed}: 38° left bank, from the front (wing asymmetry, head held level)" },
+        { "id": "b-{b.breed}-tuck-side", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=tuck&cam=side", "desc": "{b.breed}: tucked dive at 55 m/s, side view (folded wings, streamlined body)" },
+        { "id": "b-{b.breed}-flare-front3q", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=flare&camAz=40&camEl=10", "desc": "{b.breed}: landing flare, front three-quarter (wings cupped forward, legs reaching)" },
+        { "id": "b-{b.breed}-stall-three", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=stall&cam=three", "desc": "{b.breed}: stall buffet, three-quarter view" },
+        { "id": "b-{b.breed}-hover-three", "each": { "b": "$breeds" }, "stage": "breed={b.breed}&pose=hover&cam=three", "desc": "{b.breed}: hovering (flapping, flared, 22° nose up), three-quarter view" },
+        { "id": "b-{b.breed}-flap-p{p.n}-side", "each": { "b": "$breeds", "p": "$phases" }, "stage": "breed={b.breed}&pose=flap&phase={p.v}&cam=side", "desc": "{b.breed}: flap cycle frozen at phase {p.v}, side view" }
+      ]
+    },
+    {
+      "id": "c",
+      "dir": "c-motion",
+      "title": "c. Motion strips — contact sheets at a fixed simulated time step",
+      "note": "The wingbeat strips run continuous time from rest for three beats, then capture one full beat in 12 frames (phase 0 at frame 0); the onion skin composites every frame's moving parts over the median background to show the wingtip and body arcs. Walk/run capture one gait cycle (period from the gait's own cycle length and speed). Takeoff, landing, turn and dive drive the REAL player and flight model (real=) with scripted input; their labels give mode/gait, height above ground, airspeed, pitch and bank. Light vs heavy: harrier and ironback.",
+      "items": [
+        { "id": "c-flap-{b.breed}-{v}", "kind": "strip", "each": { "b": "$breeds", "v": ["side", "front"] }, "stage": "breed={b.breed}&pose=flap&cam={v}", "settle": "=3/__dw.game.player.breed.flapRate", "frames": 12, "step": "=1/(12*__dw.game.player.breed.flapRate)", "label": "'phase '+__dw.game.player.wyvernPose.flapPhase.toFixed(3)", "onion": true, "desc": "{b.breed}: one full wingbeat in 12 frames, {v} view" },
+        { "id": "c-walk-{p.breed}-side", "kind": "strip", "each": { "p": "$pair" }, "stage": "breed={p.breed}&pose=walk&cam=side&camDist={=p.span*0.8}", "settle": 1.5, "frames": 12, "step": "=__cap.gaitPeriod()/12", "label": "'gait '+__dw.game.wyvern.animator.gait.phase.toFixed(2)", "desc": "{p.breed}: one walk cycle (wing-walking on wrists and hind feet) in 12 frames, side view" },
+        { "id": "c-run-{p.breed}-side", "kind": "strip", "each": { "p": "$pair" }, "stage": "breed={p.breed}&pose=run&cam=side&camDist={=p.span*0.8}", "settle": 1.2, "frames": 12, "step": "=__cap.gaitPeriod()/12", "label": "'gait '+__dw.game.wyvern.animator.gait.phase.toFixed(2)", "desc": "{p.breed}: one run (bound) cycle in 12 frames, side view" },
+        { "id": "c-takeoff-{p.breed}", "kind": "strip", "each": { "p": "$pair" }, "stage": "breed={p.breed}&real=takeoff&cam=side", "settle": 1.0, "frames": 16, "step": 0.15, "input": { "flight": { "flap": 1 } }, "label": "{STATE}", "desc": "{p.breed}: real takeoff from the Roost (flap held from frame 0: crouch, quad launch, climb), side view, 0.15 s apart" },
+        { "id": "c-landing-{p.breed}", "kind": "strip", "each": { "p": "$pair" }, "stage": "breed={p.breed}&real=landing&cam=side", "steps": [{ "eval": "{TP_LAND}" }], "settle": 0.6, "settleInput": { "flight": { "flare": 1 } }, "frames": 16, "step": 0.22, "input": { "flight": { "flare": 1 } }, "label": "{STATE}", "desc": "{p.breed}: real landing on open grass west of the plaza (9 m up at 18 m/s, flare held), side view, 0.22 s apart" },
+        { "id": "c-turn-{p.breed}", "kind": "strip", "each": { "p": "$pair" }, "stage": "breed={p.breed}&real=turn&cam=back", "settle": 0.5, "frames": 12, "step": 0.3, "inputs": [{ "at": 0, "input": { "flight": { "roll": 1 } } }, { "at": 0.6, "input": { "flight": { "roll": 0.2, "pitch": 1 } } }, { "at": 2.4, "input": { "flight": { "roll": -1 } } }, { "at": 3.0, "input": null }], "label": "{STATE}", "desc": "{p.breed}: real bank-in turn (roll in 0.6 s, pull 1.8 s, roll out), from behind, 0.3 s apart" },
+        { "id": "c-dive-{p.breed}", "kind": "strip", "each": { "p": "$pair" }, "stage": "breed={p.breed}&real=dive&cam=side", "settle": 0.5, "frames": 12, "step": 0.6, "inputs": [{ "at": 0, "input": { "flight": { "pitch": -1 } } }, { "at": 1.0, "input": { "flight": { "pitch": -0.4, "tuck": 1 } } }, { "at": 3.0, "input": { "flight": { "tuck": 1 } } }, { "at": 4.2, "input": { "flight": { "pitch": 1 } } }, { "at": 5.4, "input": { "flight": { "pitch": 0.6 } } }], "label": "{STATE}", "desc": "{p.breed}: real dive and pull-out (push over, tuck, hold, pull), side view, 0.6 s apart" },
+        { "id": "c-bask-{p.breed}", "kind": "strip", "each": { "p": "$pair" }, "stage": "breed={p.breed}&pose=idle&cam=three&camDist={=p.span*0.9}&bask=1.5", "settle": 1.5, "frames": 12, "step": 0.36, "label": "'bask '+__dw.game.wyvern.animator.baskU.toFixed(2)+' w '+__dw.game.wyvern.animator.baskW.toFixed(2)", "desc": "{p.breed}: stretch-and-bask from its start (neck stretch, gape, wings spread to the sun, fold), 0.36 s apart" },
+        { "id": "c-head-{p.breed}", "kind": "strip", "each": { "p": "$pair" }, "size": "800x450", "stage": "breed={p.breed}&pose=idle&focus=jaw&camAz=70&camEl=6&camDist={=p.span*0.24}&blink=2.0&nict=2.7&tongue=3.4", "settle": 1.5, "times": [0.3, 0.53, 0.58, 0.63, 0.69, 1.23, 1.28, 1.33, 1.42, 1.95, 2.02, 2.12, 2.24, 2.36, 2.45, 2.62], "label": "'lid '+__dw.game.wyvern.uniforms.uBlink.value.toFixed(2)+' nict '+__dw.game.wyvern.uniforms.uNictitate.value.toFixed(2)+' tongue '+__dw.game.wyvern.animator.tongueExt.toFixed(2)+'m'", "desc": "{p.breed}: head close-up catching a blink (t 0.5), a nictitating-membrane sweep (t 1.2) and a tongue flick (t 1.9)" },
+        { "id": "c-breath-{p.breed}-side", "kind": "strip", "each": { "p": "$pair" }, "stage": "breed={p.breed}&pose=idle&cam=side&camDist={=p.span*0.7}", "settle": 2.0, "frames": 12, "step": "=4/11", "diff": 6, "label": "'breath '+__dw.game.wyvern.animator.breathScale.toFixed(3)", "desc": "{p.breed}: idle breathing over 4 s (rib swell), side view" }
+      ]
+    },
+    {
+      "id": "d",
+      "dir": "d-surface",
+      "title": "d. Surface close-ups — harrier (ironback for osteoderms), golden hour and noon",
+      "items": [
+        { "id": "d-eye-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=idle&focus=head&camAz=85&camEl=4&camDist=2.0&tod={t.tod}", "desc": "eye and head scales in profile, {t.name}" },
+        { "id": "d-head34-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=idle&focus=jaw&camAz=40&camEl=10&camDist=3.2&tod={t.tod}", "desc": "head front three-quarter (horn placement, brow, nostrils, jawline), {t.name}" },
+        { "id": "d-tongue-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=idle&focus=jaw&camAz=25&camEl=4&camDist=2.8&tod={t.tod}&tongue=1.0", "settle": 1.12, "label": "'tongue '+__dw.game.wyvern.animator.tongueExt.toFixed(2)+'m'", "desc": "forked tongue flicked out (cued at its peak), head from the front three-quarter, {t.name}" },
+        { "id": "d-belly-ground-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=idle&focus=chest&camAz=25&camEl=-4&camDist=5.5&tod={t.tod}", "desc": "throat and chest ventral scutes from low in front, standing, {t.name}" },
+        { "id": "d-belly-air-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=glide&focus=breath&camAz=120&camEl=-55&camDist=4.5&tod={t.tod}", "desc": "belly scutes from below in flight, {t.name}" },
+        { "id": "d-dorsal-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=idle&focus=spine&camAz=150&camEl=50&camDist=4.5&tod={t.tod}", "desc": "keeled dorsal scales and spines along the back, from above and behind, {t.name}" },
+        { "id": "d-osteoderms-{t.name}", "each": { "t": "$goldNoon" }, "stage": "breed=ironback&pose=idle&focus=spine&camAz=140&camEl=40&camDist=5.5&tod={t.tod}", "desc": "ironback crocodilian osteoderms along the back, {t.name}" },
+        { "id": "d-osteoderms-flank-{t.name}", "each": { "t": "$goldNoon" }, "stage": "breed=ironback&pose=idle&focus=spine&camAz=80&camEl=8&camDist=4.5&tod={t.tod}", "desc": "ironback flank and osteoderm rows from the side, {t.name}" },
+        { "id": "d-membrane-sun-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=glide&cam=sun&camDist=10&tod={t.tod}", "desc": "wing membranes backlit, looking toward the sun (cam=sun), {t.name}" },
+        { "id": "d-fingers-ground-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=idle&focus=clawL&camAz=45&camEl=8&camDist=2.6&tod={t.tod}", "desc": "wing wrist, thumb claw and folded fingers as a front foot, {t.name}" },
+        { "id": "d-fingers-air-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=glide&focus=finger0aL&camAz=110&camEl=35&camDist=5&tod={t.tod}", "desc": "spread wing fingers, struts and membrane panels in flight, from above, {t.name}" },
+        { "id": "d-feet-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=idle&focus=toesL&camAz=70&camEl=12&camDist=2.6&tod={t.tod}", "desc": "hind foot: toes, claws, scales, ground contact, {t.name}" },
+        { "id": "d-saddle-{t.name}", "each": { "t": "$goldNoon" }, "stage": "pose=idle&focus=saddle&camAz=110&camEl=20&camDist=3.5&tod={t.tod}", "desc": "saddle with the rider mounted, behind the shoulder girdle, {t.name}" }
+      ]
+    },
+    {
+      "id": "e",
+      "dir": "e-time-of-day",
+      "title": "e. Times of day — harrier, glide three-quarter (plus standing on the Roost)",
+      "items": [
+        { "id": "e-glide-{t.name}", "each": { "t": "$tods" }, "stage": "pose=glide&cam=three&tod={t.tod}", "desc": "harrier gliding, three-quarter view, {t.name} (tod {t.tod})" },
+        { "id": "e-idle-{t.name}", "each": { "t": "$tods" }, "stage": "pose=idle&cam=three&camDist=11&tod={t.tod}", "desc": "harrier standing on the Roost, three-quarter view, {t.name} (tod {t.tod})" }
+      ]
+    },
+    {
+      "id": "f",
+      "dir": "f-in-game",
+      "title": "f. In-game views — the real camera rigs (play, chase camera, on foot, Stable, title)",
+      "note": "No showcase: the real game with scripted input (?play=1&manual=1). The HUD is hidden except where noted. Labels in brackets give mode/gait, height, airspeed, pitch and bank at the shot.",
+      "items": [
+        { "id": "f-chase-glide", "boot": "flight", "steps": [{ "eval": "{TP_FLIGHT}" }], "settle": 2.5, "label": "{STATE}", "desc": "chase camera: straight glide over the cloud sea" },
+        { "id": "f-chase-glide-hud", "boot": "flight", "ui": "show", "steps": [{ "eval": "{TP_FLIGHT}" }], "settle": 2.5, "label": "{STATE}", "desc": "chase camera with the HUD as a player sees it (first flight: discovery banner, tips)" },
+        { "id": "f-chase-flap", "boot": "flight", "kind": "strip", "size": "960x540", "steps": [{ "eval": "{TP_FLIGHT}" }], "settle": 1.0, "settleInput": { "flight": { "flap": 1 } }, "frames": 8, "step": "=1/(8*__dw.game.player.breed.flapRate)", "input": { "flight": { "flap": 1 } }, "label": "{STATE}", "desc": "chase camera: one wingbeat while flapping (flap held), 8 frames" },
+        { "id": "f-chase-bank", "boot": "flight", "steps": [{ "eval": "{TP_FLIGHT}" }, { "advance": 1.0 }], "settle": 0.7, "settleInput": { "flight": { "roll": 1 } }, "label": "{STATE}", "desc": "chase camera: rolling hard into a right bank" },
+        { "id": "f-chase-turn", "boot": "flight", "steps": [{ "eval": "{TP_FLIGHT}" }, { "advance": 1.0 }, { "advance": 0.6, "input": { "flight": { "roll": 1 } } }], "settle": 1.2, "settleInput": { "flight": { "roll": 0.2, "pitch": 1 } }, "label": "{STATE}", "desc": "chase camera: hard banked turn, pulling" },
+        { "id": "f-chase-dive", "boot": "flight", "steps": [{ "eval": "{TP_FLIGHT}" }, { "advance": 1.0 }, { "advance": 1.0, "input": { "flight": { "pitch": -1 } } }], "settle": 1.5, "settleInput": { "flight": { "pitch": -0.3, "tuck": 1 } }, "label": "{STATE}", "desc": "chase camera: tucked dive" },
+        { "id": "f-chase-pullout", "boot": "flight", "steps": [{ "eval": "{TP_FLIGHT}" }, { "advance": 1.0 }, { "advance": 1.0, "input": { "flight": { "pitch": -1 } } }, { "advance": 1.5, "input": { "flight": { "pitch": -0.3, "tuck": 1 } } }], "settle": 1.0, "settleInput": { "flight": { "pitch": 1 } }, "label": "{STATE}", "desc": "chase camera: pulling out of the dive" },
+        { "id": "f-chase-landing", "boot": "flight", "kind": "strip", "size": "960x540", "steps": [{ "eval": "{TP_LAND}" }], "settle": 0.6, "settleInput": { "flight": { "flare": 1 } }, "frames": 10, "step": 0.36, "input": { "flight": { "flare": 1 } }, "label": "{STATE}", "desc": "chase camera: landing on the Roost (flare held), 10 frames 0.36 s apart" },
+        { "id": "f-foot-beside", "boot": "foot", "steps": [{ "eval": "{TP_FOOT}" }], "settle": 2.5, "label": "{STATE}", "desc": "on foot: the rider with the wyvern waiting beside them (on-foot camera)" },
+        { "id": "f-foot-follow", "boot": "foot", "kind": "strip", "size": "960x540", "steps": [{ "eval": "{TP_FOOT}" }, { "advance": 1.0 }, { "advance": 4.0, "input": { "foot": { "moveY": 1 } } }, { "advance": 0.05, "input": { "pressed": { "interact": true } } }], "settle": 0.1, "frames": 10, "step": 0.4, "inputs": [{ "at": 0, "input": { "lookX": 1, "lookIsRate": true, "lookActive": true } }, { "at": 1.0, "input": null }], "label": "{STATE}", "desc": "on foot: the rider walks off and calls; the camera turns back to the wyvern walking over to them, 0.4 s apart" },
+        { "id": "f-mount", "boot": "foot", "kind": "strip", "size": "960x540", "steps": [{ "eval": "{TP_FOOT}" }, { "advance": 1.0 }], "settle": 0, "frames": 8, "step": 0.15, "inputs": [{ "at": 0, "input": { "pressed": { "interact": true } } }, { "at": 0.02, "input": null }], "label": "__dw.game.player.mode", "desc": "mounting (interact next to the wyvern), 0.15 s apart" },
+        { "id": "f-landed", "boot": "foot", "steps": [{ "eval": "{TP_LANDED}" }], "settle": 2.5, "label": "{STATE}", "desc": "mounted on the ground: the landed camera over the shoulder" },
+        { "id": "f-dismount", "boot": "foot", "kind": "strip", "size": "960x540", "steps": [{ "eval": "{TP_LANDED}" }, { "advance": 2.0 }], "settle": 0, "frames": 8, "step": 0.15, "inputs": [{ "at": 0, "input": { "pressed": { "interact": true } } }, { "at": 0.02, "input": null }], "label": "__dw.game.player.mode", "desc": "dismounting, 0.15 s apart" },
+        { "id": "f-stable-breed", "boot": "stable", "ui": "show", "settle": 1.0, "desc": "the Stable screen, Breed tab (wyvern preview on the right)" },
+        { "id": "f-stable-horns", "boot": "stable", "ui": "show", "steps": [{ "eval": "__dw.game.ui.topPanel.selectTab(3)" }], "settle": 0.5, "desc": "the Stable screen, Horns & Tail tab" },
+        { "id": "f-title-hero", "boot": "title", "ui": "show", "settle": 3.0, "desc": "the title screen hero shot with its menu" },
+        { "id": "f-title-hero-clean", "boot": "title", "settle": 0.2, "desc": "the title hero shot without the UI" }
+      ]
+    },
+    {
+      "id": "g",
+      "dir": "g-distance",
+      "title": "g. LOD and distance — harrier gliding, three-quarter, at 20 / 60 / 150 / 400 m, quality high and low",
+      "note": "The wyvern has a single LOD (one skinned mesh at every distance; see the measurements). The crops enlarge the wyvern's neighbourhood with nearest-neighbour scaling to judge silhouette and aliasing.",
+      "items": [
+        { "id": "g-high-{d.d}m", "each": { "d": "$dists" }, "stage": "pose=glide&cam=three&camDist={d.d}", "crop": { "box": "{d.box}", "scale": "{d.scale}" }, "desc": "harrier gliding at {d.d} m, quality high" },
+        { "id": "g-low-{d.d}m", "boot": "showcase-low", "each": { "d": "$dists" }, "stage": "pose=glide&cam=three&camDist={d.d}", "crop": { "box": "{d.box}", "scale": "{d.scale}" }, "desc": "harrier gliding at {d.d} m, quality low" },
+        { "id": "g-low-portrait", "boot": "showcase-low", "stage": "pose=idle&cam=three&camDist=11", "desc": "harrier standing on the Roost at quality low (compare a-harrier-three)" }
+      ]
+    },
+    {
+      "id": "h",
+      "dir": "h-ghost-cosmetics",
+      "title": "h. Race ghost and cosmetics",
+      "note": "Lineups are the showcase's own (all options side by side across the view); the grids put one close shot per option side by side at the same camera.",
+      "items": [
+        { "id": "h-ghost-glide-three", "stage": "ghost=1&pose=glide&cam=three", "desc": "race ghost material, gliding, three-quarter view" },
+        { "id": "h-ghost-flap-side", "stage": "ghost=1&pose=flap&phase=0.3&cam=side", "desc": "race ghost material, mid-downstroke, side view" },
+        { "id": "h-ghost-dusk", "stage": "ghost=1&pose=glide&cam=three&tod=0.76", "desc": "race ghost at dusk (readability in low light)" },
+        { "id": "h-lineup-pattern", "stage": "lineup=pattern&pose=idle&cam=three", "desc": "lineup of every pattern (plain, saddleback, stripes, dapple, ember, starfield, gilded)" },
+        { "id": "h-lineup-horns", "stage": "lineup=horns&pose=idle&cam=front", "desc": "lineup of every horn style, from the front" },
+        { "id": "h-lineup-frill", "stage": "lineup=frill&pose=idle&cam=three", "desc": "lineup of every frill" },
+        { "id": "h-lineup-tail", "stage": "lineup=tail&pose=idle&cam=side", "desc": "lineup of every tail tip, side view" },
+        { "id": "h-lineup-saddle", "stage": "lineup=saddle&pose=idle&cam=three", "desc": "lineup of every saddle" },
+        { "id": "h-grid-pattern", "kind": "grid", "stage": "pose=idle&cam=three&camDist=11&camEl=24", "cells": [{ "label": "plain", "stage": "pattern=plain" }, { "label": "saddleback", "stage": "pattern=saddleback" }, { "label": "stripes", "stage": "pattern=stripes" }, { "label": "dapple", "stage": "pattern=dapple" }, { "label": "ember", "stage": "pattern=ember" }, { "label": "starfield", "stage": "pattern=starfield" }, { "label": "gilded", "stage": "pattern=gilded" }], "desc": "every pattern on the harrier, same camera" },
+        { "id": "h-grid-horns", "kind": "grid", "stage": "pose=idle&focus=jaw&camAz=40&camEl=12&camDist=3.6", "cells": [{ "label": "swept", "stage": "horns=swept" }, { "label": "none", "stage": "horns=none" }, { "label": "ram", "stage": "horns=ram" }, { "label": "crown", "stage": "horns=crown" }, { "label": "antler", "stage": "horns=antler" }, { "label": "unicorn (lancehorn)", "stage": "horns=unicorn" }], "desc": "every horn style, head front three-quarter" },
+        { "id": "h-grid-frill", "kind": "grid", "stage": "pose=idle&focus=neck3&camAz=75&camEl=12&camDist=6.5", "cells": [{ "label": "none", "stage": "frill=none" }, { "label": "spines", "stage": "frill=spines" }, { "label": "sail", "stage": "frill=sail" }, { "label": "mane", "stage": "frill=mane" }, { "label": "fan", "stage": "frill=fan" }], "desc": "every frill, head and neck from the side" },
+        { "id": "h-grid-tail", "kind": "grid", "stage": "pose=idle&focus=tail9&camAz=100&camEl=25&camDist=4.5", "cells": [{ "label": "spade", "stage": "tail=spade" }, { "label": "blade", "stage": "tail=blade" }, { "label": "plume", "stage": "tail=plume" }, { "label": "club", "stage": "tail=club" }, { "label": "ribbon", "stage": "tail=ribbon" }], "desc": "every tail tip, close" },
+        { "id": "h-grid-saddle", "kind": "grid", "stage": "pose=idle&focus=saddle&camAz=110&camEl=22&camDist=4.5&rider=0", "cells": [{ "label": "rider", "stage": "saddle=rider" }, { "label": "racing", "stage": "saddle=racing" }, { "label": "nomad", "stage": "saddle=nomad" }, { "label": "royal", "stage": "saddle=royal" }], "desc": "every saddle without the rider, close" }
+      ]
+    },
+    {
+      "id": "m",
+      "dir": "measure",
+      "title": "Measurements",
+      "items": [
+        { "id": "m-high", "kind": "measure", "measure": { "iterations": 600, "allocIterations": 300 }, "desc": "per-breed triangles/bones/draw calls/materials/textures, CPU ms and allocations per frame (quality high)" },
+        { "id": "m-low", "kind": "measure", "boot": "showcase-low", "measure": { "breeds": ["harrier"], "iterations": 600, "allocIterations": 300 }, "desc": "the same at quality low (harrier; rider cloth detail drops with quality)" }
+      ]
+    }
+  ]
+}

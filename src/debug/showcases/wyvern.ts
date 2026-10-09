@@ -3,7 +3,7 @@ import type { BreedId, WyvernLook, WyvernPose } from '../../core/types';
 import type { Showcase } from '../showcase';
 import type { Game } from '../../game/Game';
 import { BREEDS } from '../../flight/breeds';
-import { BREED_DEFAULT_COLORS, cosmeticsFor } from '../../cosmetics/catalog';
+import { BREED_DEFAULT_COLORS, DEFAULT_WYVERN, cosmeticsFor } from '../../cosmetics/catalog';
 import { Wyvern } from '../../creatures/wyvern/Wyvern';
 import { createWyvernPose } from '../../player/poses';
 import { globalUniforms } from '../../render/uniforms';
@@ -26,6 +26,18 @@ import { smoothstep } from '../../core/math';
  *   real=takeoff|landing|turn|dive|walk|cliff   drive the REAL player (flight model + state
  *                        machine) from a staged start; scripted input comes from the shot steps.
  *                        The camera tracks with the same cam= presets.
+ *
+ * For deterministic captures (scripts/dragon-capture.mjs):
+ *   fresh=1              start from the default look (not the save) and restart the main wyvern's
+ *                        animation from rest, so a re-staging never depends on the one before
+ *   bask=s               start the stretch-and-bask (pose.ruffle rises) at showcase time s
+ *   blink=s nict=s tongue=s   cue a blink / nictitating-membrane sweep / tongue flick at time s
+ *                        (comma lists allowed); any cue holds the natural idle events off
+ *   focus=<bone>|saddle  aim the camera at a wyvern bone by name (jaw, neck3, chest, spine,
+ *                        breath, pelvis, clawL, finger0aL, toesL, tail9, ...), the seat (saddle) or
+ *                        head (the snout, like cam=head) instead of the body centre
+ *   rider=beside         the rider stands on foot beside the wyvern's left shoulder, facing the
+ *                        camera (size comparison)
  */
 
 const FLIGHT = new Set(['glide', 'flap', 'tuck', 'flare', 'stall', 'bankL', 'bankR', 'hover', 'landing']);
@@ -56,6 +68,11 @@ const _v = new Vector3();
 const _cam = new Vector3();
 const _tgt = new Vector3();
 const _focus = new Vector3();
+const UP = new Vector3(0, 1, 0);
+type IdleCue = 'blink' | 'nictitate' | 'tongue';
+/** Cued idle events (showcase seconds), in time order; `nextCue` is the first not yet fired. */
+let cues: { t: number; event: IdleCue }[] = [];
+let nextCue = 0;
 
 function num(name: string, fallback: number): number {
   const v = params.get(name);
@@ -63,7 +80,8 @@ function num(name: string, fallback: number): number {
 }
 
 function lookFrom(game: Game, breed: BreedId): WyvernLook {
-  const look: WyvernLook = { ...game.save.data.wyvern, breed, ...BREED_DEFAULT_COLORS[breed] };
+  const base = params.get('fresh') === '1' ? DEFAULT_WYVERN : game.save.data.wyvern;
+  const look: WyvernLook = { ...base, breed, ...BREED_DEFAULT_COLORS[breed] };
   for (const k of ['pattern', 'horns', 'frill', 'tail', 'saddle'] as const) {
     const v = params.get(k);
     if (v) look[k] = v;
@@ -220,6 +238,30 @@ function synth(p: WyvernPose, name: string, t: number, breed: BreedId, at: Vecto
 }
 
 
+/** What the camera looks at on the main wyvern: focus=<bone>|saddle|head, cam=head, or the body. */
+function focusPoint(game: Game): Vector3 {
+  const f = params.get('focus') ?? (camName === 'head' ? 'head' : null);
+  if (f === 'head') return game.wyvern.getHead(_focus);
+  const o = f ? game.wyvern.group.getObjectByName(f) : undefined;
+  return o ? o.getWorldPosition(_focus) : _focus.copy(game.player.wyvernPose.position);
+}
+
+/** rider=beside: the rider on foot by the wyvern's left shoulder, facing the camera. */
+function standBeside(game: Game, breed: BreedId): void {
+  const w = game.player.wyvernPose;
+  const sh = BREEDS[breed].standHeight;
+  const r = game.player.riderPose;
+  _v.set(0.55 * sh + 1.3, 0, 0.25 * sh).applyAxisAngle(UP, heading).add(w.position);
+  const g = game.world.terrain.groundAt(_v.x, _v.z, _v.y);
+  r.mounted = false;
+  r.position.set(_v.x, g ? g.y : (w.groundY ?? w.position.y - sh), _v.z);
+  r.yaw = heading + (camAngles(game)[0] * Math.PI) / 180;
+  r.velocity.set(0, 0, 0);
+  r.action = 'idle';
+  r.lean = r.crouch = r.brace = 0;
+  r.airflow.set(0, 0, 0);
+}
+
 /** Camera azimuth (deg, relative to the heading), elevation (deg) and distance for cam=. */
 function camAngles(game: Game): [number, number, number] {
   const breed = (params.get('breed') as BreedId) ?? 'harrier';
@@ -346,8 +388,16 @@ const wyvernShowcase: Showcase = {
     }
     if (p.has('tod')) game.debug.tod = Number(p.get('tod'));
     else if (game.debug.tod === undefined) game.debug.tod = 0.7;
+    cues = [];
+    nextCue = 0;
+    for (const [k, event] of [['blink', 'blink'], ['nict', 'nictitate'], ['tongue', 'tongue']] as const)
+      for (const v of (p.get(k) ?? '').split(',')) if (v !== '' && Number.isFinite(Number(v))) cues.push({ t: Number(v), event });
+    cues.sort((a, b) => a.t - b.t);
+    game.player.wyvernPose.ruffle = 0;
     if (realScene) {
       stageReal(game, realScene, breed);
+      if (p.get('fresh') === '1') game.wyvern.resetAnimation();
+      if (cues.length) game.wyvern.cueIdle(null, 1e4);
       lights = { sun: null, hemi: null };
       game.scene.traverse((o) => {
         if (o instanceof DirectionalLight && !lights.sun) lights.sun = o;
@@ -404,6 +454,8 @@ const wyvernShowcase: Showcase = {
       actors.push({ wyvern: w, pose: createWyvernPose(), offset: new Vector3(), breed });
     } else {
       game.setWyvernLook(lookFrom(game, breed));
+      if (p.get('fresh') === '1') game.wyvern.resetAnimation();
+      if (cues.length) game.wyvern.cueIdle(null, 1e4);
       if (p.get('rider') === '0') game.rider.group.visible = false;
     }
     lights = { sun: null, hemi: null };
@@ -425,6 +477,9 @@ const wyvernShowcase: Showcase = {
     time += dt;
     if (params.get('sky') !== 'native') applyLight(game);
     const breed = (params.get('breed') as BreedId) ?? 'harrier';
+    // Cued idle events and the stretch-and-bask (the main wyvern, staged or real).
+    while (nextCue < cues.length && time >= cues[nextCue].t) game.wyvern.cueIdle(cues[nextCue++].event);
+    if (params.has('bask')) game.player.wyvernPose.ruffle = time >= num('bask', 0) ? 1 : 0;
     if (realScene) {
       // Track the real wyvern by its heading (horizon stays level).
       const w = game.player.wyvernPose;
@@ -442,6 +497,7 @@ const wyvernShowcase: Showcase = {
     if (useMain) {
       const pose = game.player.wyvernPose;
       synth(pose, poseName, time, breed, anchor, heading, game);
+      if (params.get('rider') === 'beside') standBeside(game, breed);
     }
     for (const a of actors) {
       synth(a.pose, poseName, time, a.breed, _v.copy(anchor).add(a.offset), heading, game);
@@ -457,7 +513,7 @@ const wyvernShowcase: Showcase = {
     }
 
     // Camera: orbit around the subject relative to its heading.
-    const focus = useMain ? (camName === 'head' ? game.wyvern.getHead(_focus) : game.player.wyvernPose.position) : _tgt.copy(anchor);
+    const focus = useMain ? focusPoint(game) : _tgt.copy(anchor);
     const span = BREEDS[breed].wingspan;
     const lineLen = actors.length > 1 ? (actors.length - 1) * (params.get('lineup') === 'breeds' ? 17 : 12) : 0;
     let [az, el, dist] = camAngles(game);
