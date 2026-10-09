@@ -38,6 +38,7 @@ import { RiderFoot } from './foot';
 import { Companion } from './companion';
 import { PLAYER_TUNING as P } from './tuning';
 import { FixedHome, type HomeAnchor } from './home';
+import { boundaryPush01 } from '../sky/windField';
 
 export interface PlayerDeps {
   terrain: Terrain;
@@ -53,6 +54,11 @@ export interface PlayerDeps {
   seat?: (out: Vector3) => Vector3 | null;
   /** Where home (the stable, the last-resort respawn) is. Defaults to the Roost. */
   home?: HomeAnchor;
+  /**
+   * 0..1 how much sun there is (1 = full day, 0 = night), for basking: a wyvern resting in the
+   * sun is Sun-warmed a little sooner. Absent = treated as night (the plain Rested timing).
+   */
+  daylight?: () => number;
 }
 
 // Scratch.
@@ -65,6 +71,10 @@ const _q = new Quaternion();
 const _seat = new Vector3();
 const UP = new Vector3(0, 1, 0);
 const NEUTRAL: FlightInput = { pitch: 0, roll: 0, yaw: 0, flap: 0, tuck: 0, flare: 0 };
+
+/** The Rested bonus, announced the first few times: basking by day, a rest by night. */
+const SUN_WARMED_TOAST = { text: 'Sun-warmed — your wyvern spreads its wings to the sun', sub: 'Its stamina lasts longer for a while', icon: 'info' } as const;
+const RESTED_TOAST = { text: 'Rested — your wyvern shakes out its wings', sub: 'Its stamina lasts longer for a while', icon: 'info' } as const;
 
 /** Seat (where the rider's hips rest) in body space, as a fraction of standHeight. */
 const SEAT_UP = 0.5;
@@ -204,7 +214,9 @@ export class Player implements PlayerSystem {
   get wyvernDistance(): number {
     const a = this.riderPos;
     const b = this.model.state.position;
-    return Math.hypot(a.x - b.x, a.z - b.z);
+    const dx = a.x - b.x;
+    const dz = a.z - b.z;
+    return Math.sqrt(dx * dx + dz * dz);
   }
 
   /** Seconds the mounted wyvern has been standing still on the ground. */
@@ -266,6 +278,44 @@ export class Player implements PlayerSystem {
     this.setMode('onFoot');
     this.syncRiderFromFoot();
     this.snapInterpolation();
+  }
+
+  /**
+   * The Stable is opening with the rider on foot and the wyvern left far away (at a new game it
+   * waits across the plaza): bring it to a stall beside the stable, so the Stable frames wyvern
+   * and rider together instead of gliding the camera across the island. True if it moved.
+   */
+  settleAtStable(): boolean {
+    if (this.mode !== 'onFoot') return false;
+    const c = this.companion;
+    if ((c.state !== 'idle' && c.state !== 'follow') || this.wyvernDistance <= P.stableSettleRange) return false;
+    const t = this.deps.terrain;
+    const w = c.walker;
+    const sh = this.breed.standHeight;
+    for (let i = 0; i < this.home.stallCount; i++) {
+      const yaw = this.home.stableStall(i, _v);
+      w.position.set(_v.x, _v.y + 3, _v.z);
+      w.yaw = yaw;
+      w.speed = 0;
+      if (!w.settle(t, sh, _v.y + 3) || w.normal.y < P.maxSlopeY) continue;
+      // Clear of the walls, posts and planters (it would only be pushed aside).
+      _v2.copy(w.position);
+      w.resolveWalls(t, sh, 0);
+      if (w.position.distanceToSquared(_v2) > 0.01) continue;
+      c.standStill();
+      c.called = false;
+      c.leash = P.followDistance;
+      this.syncModelFromCompanion();
+      const s = this.model.state;
+      this.position.copy(s.position);
+      this.prevPosition.copy(s.position);
+      this.prevWyPos.copy(s.position);
+      this.prevWyQuat.copy(s.orientation);
+      this.lookFresh = true;
+      this.update(0, 1);
+      return true;
+    }
+    return false;
   }
 
   teleport(position: Vector3, yaw: number, mode: 'flying' | 'landed' | 'onFoot', speed?: number): void {
@@ -424,6 +474,7 @@ export class Player implements PlayerSystem {
       const flying = this.model.state.airspeed > 0.9 * this.model.derived.vCruise;
       if (f.flare > 0.1 || f.tuck > 0.1 || (flying && this.airTime > P.launchCommit)) this.launchHold = 0;
     }
+    this.boundaryAssist(f);
     const launch = this.launchHold > 0 ? 1 : 0;
     const hold = this.deps.settings?.().holdToFlap ?? true;
     if (hold) {
@@ -445,6 +496,31 @@ export class Player implements PlayerSystem {
       if (this.model.beats !== this.beatsAtQueue || this.queueAge > 1.2) this.flapQueued = 0;
     }
     fi.flap = Math.max(this.flapQueued, launch);
+  }
+
+  /**
+   * The storm at the world's edge turns the wyvern back toward the islands: a phantom rudder
+   * toward the centre, and a lean into that turn while the player leaves the roll alone (their
+   * own stick always wins). It grows with the storm's push, so it is gentle at the edge.
+   */
+  private boundaryAssist(f: FlightInput): void {
+    const s = this.model.state;
+    const p = s.position;
+    const push = boundaryPush01(Math.sqrt(p.x * p.x + p.z * p.z), this.deps.terrain.layout.boundaryRadius);
+    if (push <= 0) return;
+    const fi = this.flightIn;
+    // + when the way home lies to the left (a larger yaw).
+    const err = clamp(angleDelta(Math.atan2(s.velocity.x, s.velocity.z), Math.atan2(-p.x, -p.z)) * 1.2, -1, 1);
+    fi.yaw = clamp(fi.yaw - P.boundaryRudder * push * err, -1, 1);
+    const free = 1 - smoothstep(0.1, 0.4, Math.abs(f.roll));
+    if (free > 0) {
+      _up.set(0, 1, 0).applyQuaternion(s.orientation);
+      _left.set(1, 0, 0).applyQuaternion(s.orientation);
+      const bank = Math.atan2(_left.y, _up.y);
+      // Positive bank is to the right; home to the left wants a left (negative) bank.
+      const want = -P.boundaryBank * push * err;
+      fi.roll = clamp(fi.roll + free * push * clamp((want - bank) * 2, -1, 1), -1, 1);
+    }
   }
 
   private copyFlightAnim(): void {
@@ -514,7 +590,7 @@ export class Player implements PlayerSystem {
     w.normal.copy(g.normal);
     w.surface = g.surface;
     w.islandId = g.islandId;
-    const hs = Math.hypot(s.velocity.x, s.velocity.z);
+    const hs = Math.sqrt(s.velocity.x * s.velocity.x + s.velocity.z * s.velocity.z);
     w.yaw = hs > 2 ? Math.atan2(s.velocity.x, s.velocity.z) : yawOf(_fwd.set(0, 0, 1).applyQuaternion(s.orientation));
     w.speed = Math.min(hs, P.landSpeed);
     w.turnRate = 0;
@@ -742,7 +818,7 @@ export class Player implements PlayerSystem {
     // Where the rider will be when the wyvern arrives, and the body position under that seat.
     const tc = P.catchDelay;
     const v = this.foot.velocity;
-    const yaw = Math.hypot(v.x, v.z) > 0.5 ? Math.atan2(v.x, v.z) : this.foot.yaw;
+    const yaw = Math.sqrt(v.x * v.x + v.z * v.z) > 0.5 ? Math.atan2(v.x, v.z) : this.foot.yaw;
     const pred = _v.copy(fp).addScaledVector(v, tc);
     pred.y -= 0.5 * P.footGravity * tc * tc;
     this.bodyUnderSeat(pred, yaw, _v2);
@@ -776,7 +852,7 @@ export class Player implements PlayerSystem {
 
   private catchRider(): void {
     const v = this.foot.velocity;
-    const yaw = Math.hypot(v.x, v.z) > 0.5 ? Math.atan2(v.x, v.z) : this.foot.yaw;
+    const yaw = Math.sqrt(v.x * v.x + v.z * v.z) > 0.5 ? Math.atan2(v.x, v.z) : this.foot.yaw;
     const body = this.bodyUnderSeat(this.foot.position, yaw, _v2);
     _fwd.set(Math.sin(yaw), 0, Math.cos(yaw));
     const vel = _v.copy(v).addScaledVector(_fwd, this.model.derived.vStall * 0.9);
@@ -875,7 +951,9 @@ export class Player implements PlayerSystem {
     if (this.mode === 'flying' && this.airTime > P.restFlight) this.flownSinceRest = true;
     if (grounded) {
       this.groundTime += dt;
-      if (this.groundTime >= P.restTime && this.flownSinceRest) this.grantRested();
+      // Basking: in sunlight the wyvern warms up a little sooner (never slower at night).
+      const restTime = lerp(P.restTime, P.restTimeSun, clamp01(this.daylight()));
+      if (this.groundTime >= restTime && this.flownSinceRest) this.grantRested();
     } else this.groundTime = 0;
     this.restedLeft = Math.max(0, this.restedLeft - dt / P.restedDuration);
     const bonus = smoothstep(0, P.restedFade, this.restedLeft);
@@ -894,8 +972,15 @@ export class Player implements PlayerSystem {
     this.ruffleT = 0;
     if (this.restedToasts < P.restedToasts) {
       this.restedToasts++;
-      this.deps.events.emit('toast', { text: 'Rested — your wyvern shakes out its wings', sub: 'Its stamina lasts longer for a while', icon: 'info' });
+      // Wyverns are reptiles: by day the rest is basking in the sun, wings spread to it.
+      const sun = this.daylight() > 0.5;
+      this.deps.events.emit('toast', sun ? SUN_WARMED_TOAST : RESTED_TOAST);
     }
+  }
+
+  /** 0..1 how much sun there is (0 without a sky). */
+  private daylight(): number {
+    return this.deps.daylight?.() ?? 0;
   }
 
   // --- Shared helpers ---------------------------------------------------------------------------

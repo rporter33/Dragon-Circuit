@@ -43,8 +43,10 @@ export const PLAYER_TUNING = {
    * short pause), so a landing tops it up in about two seconds.
    */
   groundRefill: 0.7,
-  /** Seconds on the ground after a flight before the wyvern is Rested. */
+  /** Seconds on the ground after a flight before the wyvern is Rested (at night)... */
   restTime: 2,
+  /** ...and in full sun, where it basks (Sun-warmed) a little sooner. */
+  restTimeSun: 1.4,
   /** A flight counts (and earns the next rest) after this long in the air (s). */
   restFlight: 4,
   /** How long Rested lasts (s), the extra stamina capacity it gives, and its regen bonus. */
@@ -108,8 +110,18 @@ export const PLAYER_TUNING = {
   followStop: 8,
   /** A called wyvern comes closer than that: right up to its rider, facing them. */
   calledStop: 3.5,
+  /** Opening the Stable, a wyvern further than this from its rider comes to a stall beside it. */
+  stableSettleRange: 15,
   /** Seconds a wave (calling the wyvern) lasts. */
   waveTime: 1.4,
+
+  // --- The world's edge ----------------------------------------------------------------------
+  /**
+   * In the boundary storm the wyvern is turned back toward the islands: a phantom rudder of up
+   * to this deflection and a lean of up to this bank (rad), both × how hard the storm pushes.
+   */
+  boundaryRudder: 0.8,
+  boundaryBank: 30 * DEG,
 
   // --- Respawn -------------------------------------------------------------------------------
   fadeOut: 0.6,

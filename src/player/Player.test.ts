@@ -29,11 +29,19 @@ interface Rig {
   count(type: keyof GameEvents): number;
 }
 
-function rig(breed: BreedId = 'harrier', opts: { holdToFlap?: boolean; wind?: Vector3 } = {}): Rig {
+function rig(breed: BreedId = 'harrier', opts: { holdToFlap?: boolean; wind?: Vector3; daylight?: number } = {}): Rig {
   const events = new EventBus<GameEvents>();
   const settings = { ...DEFAULT_SETTINGS, holdToFlap: opts.holdToFlap ?? true };
   const wind = opts.wind ?? new Vector3();
-  const player = new Player({ terrain, env: { windAt: (_p, o) => o.copy(wind), terrain }, events, breed, settings: () => settings });
+  const daylight = opts.daylight;
+  const player = new Player({
+    terrain,
+    env: { windAt: (_p, o) => o.copy(wind), terrain },
+    events,
+    breed,
+    settings: () => settings,
+    daylight: daylight === undefined ? undefined : () => daylight,
+  });
   const r: Rig = {
     player,
     events,
@@ -334,6 +342,30 @@ describe('landing and resting', () => {
     expect(r.player.model.capacity).toBe(1);
   });
 
+  it('by day the rest is basking: Sun-warmed a little sooner, with its own toast', () => {
+    const rest = (daylight: number) => {
+      const r = rig('harrier', { daylight });
+      const toasts: GameEvents['toast'][] = [];
+      r.events.on('toast', (t) => toasts.push(t));
+      r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 24);
+      r.run(6);
+      r.player.teleport(new Vector3(0, 250, -60), 0, 'landed');
+      let t = 0;
+      while (r.player.rested === 0 && t < 5) {
+        r.run(0.05);
+        t += 0.05;
+      }
+      return { t, text: toasts[0]?.text ?? '' };
+    };
+    const day = rest(1);
+    const night = rest(0);
+    expect(day.text).toMatch(/^Sun-warmed/);
+    expect(night.text).toMatch(/^Rested/);
+    expect(day.t).toBeLessThan(night.t - 0.4);
+    // Same bonus either way; night never waits longer than the plain rest.
+    expect(night.t).toBeLessThan(P.restTime + 0.2);
+  });
+
   it('is not Rested without a flight first (no ruffle at a new game)', () => {
     const r = rig();
     r.player.placeAtSpawn();
@@ -483,6 +515,29 @@ describe('respawn', () => {
   });
 });
 
+describe("the world's edge (PLAY-16)", () => {
+  it('the boundary storm turns a hands-off wyvern back toward the islands', () => {
+    const r = rig();
+    const R = LAYOUT.boundaryRadius;
+    // Out past the edge, flying straight outward along +x (yaw +90°).
+    r.player.teleport(new Vector3(R + 150, 900, 0), Math.PI / 2, 'flying', 24);
+    r.run(14);
+    const v = r.player.flight.velocity;
+    const p = r.player.position;
+    // Now heading back in: the velocity points toward the centre, not away from it.
+    const inward = -(v.x * p.x + v.z * p.z) / (Math.hypot(v.x, v.z) * Math.hypot(p.x, p.z));
+    expect(inward).toBeGreaterThan(0.6);
+  });
+
+  it('well inside the archipelago nothing steers', () => {
+    const r = rig();
+    r.player.teleport(new Vector3(800, 900, 0), Math.PI / 2, 'flying', 24);
+    r.run(6);
+    const v = r.player.flight.velocity;
+    expect(Math.abs(Math.atan2(v.x, v.z) - Math.PI / 2)).toBeLessThan(3 * DEG);
+  });
+});
+
 describe('input handling', () => {
   it('tap-to-flap: one beat per press', () => {
     const r = rig('harrier', { holdToFlap: false });
@@ -617,6 +672,15 @@ describe('prompts', () => {
     r.player.model.state.stamina = 0.1;
     r.run(0.5, (inp) => (inp.flight.flap = 1));
     expect(computePrompt(r.player, LAYOUT)).toEqual({ action: 'rest', text: 'Low on stamina — glide or land to rest' });
+  });
+
+  it('returns the same prompt object frame after frame (no per-frame allocation)', () => {
+    const r = rig();
+    r.player.teleport(new Vector3(0, 250, 60), 0, 'landed');
+    const a = computePrompt(r.player, LAYOUT);
+    r.run(DT);
+    expect(a).not.toBeNull();
+    expect(computePrompt(r.player, LAYOUT)).toBe(a);
   });
 
   it('offers the stable door on foot away from the wyvern', () => {

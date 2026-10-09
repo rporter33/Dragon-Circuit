@@ -98,7 +98,7 @@ export class RiderFoot {
     const accel = this.grounded ? P.footAccel : P.airAccel;
     const tx = _dir.x * wish - this.velocity.x;
     const tz = _dir.z * wish - this.velocity.z;
-    const tl = Math.hypot(tx, tz);
+    const tl = Math.sqrt(tx * tx + tz * tz);
     const dv = Math.min(tl, accel * dt);
     if (tl > 1e-6) {
       this.velocity.x += (tx / tl) * dv;
@@ -129,7 +129,7 @@ export class RiderFoot {
       // Blocked: cancel the uphill part of the velocity (the slope's horizontal normal points downhill).
       const hx = g.normal.x;
       const hz = g.normal.z;
-      const hl = Math.hypot(hx, hz) || 1;
+      const hl = Math.sqrt(hx * hx + hz * hz) || 1;
       const into = (this.velocity.x * hx + this.velocity.z * hz) / hl;
       if (into < 0) {
         this.velocity.x -= (into * hx) / hl;
@@ -188,7 +188,7 @@ export class RiderFoot {
       }
     }
 
-    this.speed = Math.hypot(this.velocity.x, this.velocity.z);
+    this.speed = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.z * this.velocity.z);
     if (this.grounded && this.speed > 0.3) {
       this.stride += this.speed * dt;
       // Longer strides at speed: ~0.9 m strolling, ~1.5 m jogging, ~2.3 m sprinting.
@@ -207,7 +207,7 @@ export class RiderFoot {
     for (const h of WALL_PROBES) {
       _hip.set(this.position.x, this.position.y + h, this.position.z);
       if (!terrain.collideSphere(_hip, P.riderRadius, _push, _n, _info) || _info.soft) continue;
-      const hl = Math.hypot(_push.x, _push.z);
+      const hl = Math.sqrt(_push.x * _push.x + _push.z * _push.z);
       // A purely vertical push is a ceiling or the top of a step: not a wall.
       if (hl < 1e-4) continue;
       this.position.x += _push.x;

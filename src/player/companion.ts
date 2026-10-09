@@ -125,7 +125,7 @@ export class Companion {
     const sh = breed.standHeight;
     const dx = rider.x - w.position.x;
     const dz = rider.z - w.position.z;
-    const dist = Math.hypot(dx, dz);
+    const dist = Math.sqrt(dx * dx + dz * dz);
 
     switch (this.state) {
       case 'idle':
@@ -188,7 +188,7 @@ export class Companion {
         const e = this.state === 'swoop' ? t * t * (3 - 2 * t) : smoothstep(0, 1, t);
         bezier(this.p0, this.p1, this.p2, e, w.position, _tan);
         if (_tan.lengthSq() < 1e-6) _tan.set(Math.sin(w.yaw), 0, Math.cos(w.yaw));
-        const flatLen = Math.hypot(_tan.x, _tan.z);
+        const flatLen = Math.sqrt(_tan.x * _tan.x + _tan.z * _tan.z);
         const pitch = clamp(Math.atan2(_tan.y, flatLen), -0.9, 0.7);
         if (flatLen > 0.05) w.yaw = Math.atan2(_tan.x, _tan.z);
         if (this.state === 'hop' && t > 0.8) w.yaw = lerp(w.yaw, this.landYaw, smoothstep(0.8, 1, t));

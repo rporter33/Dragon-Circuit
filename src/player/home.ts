@@ -14,6 +14,12 @@ export interface HomeAnchor {
   nearStable(p: Vector3): boolean;
   /** The stable door on the ground (world). */
   stableDoor(out: Vector3): Vector3;
+  /**
+   * Spots beside the stable where the wyvern stands while its rider is in the Stable (ground
+   * points, best first; candidate i of `count`); returns the facing yaw.
+   */
+  stableStall(i: number, out: Vector3): number;
+  readonly stallCount: number;
   /** Where the rider starts a new game (a point on the ground); returns the facing yaw. */
   riderStart(out: Vector3): number;
   /** Where the wyvern waits at a new game (a point on the ground); returns the facing yaw. */
@@ -25,6 +31,19 @@ export interface HomeAnchor {
   respawn(out: Vector3): number;
 }
 
+/**
+ * Stall spots in the stable's frame [x (left of the door), z (out from the door), facing relative
+ * to the stable]: on the plaza beside the door, turned toward the stable, where the Stable's
+ * camera frames wyvern and rider together.
+ */
+const STALLS: readonly (readonly [number, number, number])[] = [
+  [11, 8, Math.PI - 0.5],
+  [-11, 8, Math.PI + 0.5],
+  [13, 15, Math.PI - 0.7],
+  [-13, 15, Math.PI + 0.7],
+  [0, 16, Math.PI],
+];
+
 /** The Roost: home as the layout places it (it never moves). */
 export class FixedHome implements HomeAnchor {
   constructor(
@@ -34,7 +53,9 @@ export class FixedHome implements HomeAnchor {
 
   nearStable(p: Vector3): boolean {
     const st = this.layout.stable;
-    return Math.hypot(p.x - st.x, p.z - st.z) < st.interactRadius;
+    const dx = p.x - st.x;
+    const dz = p.z - st.z;
+    return dx * dx + dz * dz < st.interactRadius * st.interactRadius;
   }
 
   stableDoor(out: Vector3): Vector3 {
@@ -56,6 +77,18 @@ export class FixedHome implements HomeAnchor {
 
   respawn(out: Vector3): number {
     return this.wyvernStart(out);
+  }
+
+  readonly stallCount = STALLS.length;
+
+  stableStall(i: number, out: Vector3): number {
+    const st = this.layout.stable;
+    const [lx, lz, face] = STALLS[Math.min(i, STALLS.length - 1)];
+    // The stable's frame: door at the origin, +z out toward the plaza, +x to the door's left.
+    const c = Math.cos(st.yaw);
+    const s = Math.sin(st.yaw);
+    this.ground(st.x + c * lx + s * lz, st.z - s * lx + c * lz, out);
+    return st.yaw + face;
   }
 
   private ground(x: number, z: number, out: Vector3): Vector3 {

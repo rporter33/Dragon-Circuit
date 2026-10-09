@@ -173,7 +173,9 @@ export class GroundWalker {
     // Walls, trunks, posts: pushed back out and along them (sliding), the pace following
     // whatever ground was actually covered.
     if (this.resolveWalls(terrain, standHeight, dt)) {
-      const moved = Math.hypot(this.position.x - x0, this.position.z - z0) / dt;
+      const mx = this.position.x - x0;
+      const mz = this.position.z - z0;
+      const moved = Math.sqrt(mx * mx + mz * mz) / dt;
       this.speed = Math.min(this.speed, moved + 0.5);
       const gw = terrain.groundAt(this.position.x, this.position.z, this.groundY + 2.5);
       if (gw && Math.abs(gw.y - this.groundY) < P.edgeDrop) {
@@ -199,7 +201,7 @@ export class GroundWalker {
     for (const [h, fwd, r] of BODY_PROBES) {
       _probe.set(this.position.x + s * fwd * standHeight, this.groundY + h * standHeight, this.position.z + c * fwd * standHeight);
       if (!terrain.collideSphere(_probe, r * standHeight, _push, _n, _info) || _info.soft) continue;
-      const hl = Math.hypot(_push.x, _push.z);
+      const hl = Math.sqrt(_push.x * _push.x + _push.z * _push.z);
       // A purely vertical push (an eave overhead, a step underfoot) isn't a wall.
       if (hl < 1e-4) continue;
       this.position.x += _push.x;
