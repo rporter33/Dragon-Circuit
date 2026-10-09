@@ -42,6 +42,7 @@ import {
 import type { WyvernUniforms } from '../materials';
 import type { WyvernAnimator } from '../animator';
 import { FWD, type AnimFrame } from './frame';
+import { FOLDED } from './groundPoses';
 
 const _v = new Vector3();
 
@@ -74,6 +75,13 @@ const RESETTLE_DOWN = 0.8;
 const RESETTLE_EL = 4;
 /** Rising air at a wingtip loads that wing (load per m/s): a thermal's edge lifts one tip first. */
 const GUST_LOAD = 0.12;
+/**
+ * The launch (B6): over the first LAUNCH_UNFOLD s after the wrists leave the ground (frame.launchT,
+ * C6) the wings sweep out of the fold into the first downstroke, and the first LAUNCH_BEATS beats
+ * are labored (the deepest strokes, the tips low past the ground).
+ */
+const LAUNCH_UNFOLD = 0.12;
+const LAUNCH_BEATS = 2;
 
 /** The tail's rudder at full yaw (rad per segment), and its spring (overshoots about 0.25 s). */
 const RUDDER = 0.12;
@@ -137,6 +145,12 @@ export class FlightLayer {
   private rollInit = 0;
   private glideLoad = 0;
   private beatLoad = 0;
+  /** The beat as the wing is posed (flapPoseAt's input): the phase, and the labor (fatigue or launch). */
+  private readonly beat = { phase: 0, fatigue: 0 };
+  /** Launch beats still to labor through, and last frame's launch clock and beat phase. */
+  private launchBeats = 0;
+  private prevLaunchT = 99;
+  private prevPhase = 0;
 
   constructor(a: WyvernAnimator) {
     this.a = a;
@@ -247,6 +261,22 @@ export class FlightLayer {
     this.resettle = r * RESETTLE_EL * DEG * w;
   }
 
+  /**
+   * The launch: a launch (frame.launchT restarting, C6) is followed by LAUNCH_BEATS labored beats,
+   * counted as the beat's phase wraps; the posed beat's labor is the larger of that and fatigue.
+   */
+  private launch(): void {
+    const f = this.f;
+    const lt = f.launchT;
+    if (lt < LAUNCH_UNFOLD && lt < this.prevLaunchT) this.launchBeats = LAUNCH_BEATS;
+    if (this.launchBeats > 0 && f.phase < this.prevPhase - 0.5) this.launchBeats--;
+    if (!f.airborne && lt >= LAUNCH_UNFOLD) this.launchBeats = 0;
+    this.prevLaunchT = lt;
+    this.prevPhase = f.phase;
+    this.beat.phase = f.phase;
+    this.beat.fatigue = this.launchBeats > 0 ? 1 : f.fatigue;
+  }
+
   /** Heave, chest lift and lean, the flare's trunk pitch, and this frame's wing prelude. */
   flightTrunk(): void {
     const f = this.f;
@@ -291,6 +321,8 @@ export class FlightLayer {
     this.controls();
     // The living glide (B4).
     this.glide();
+    // The launch strokes (B6).
+    this.launch();
     // Hover (B7): none yet.
     f.hover = 0;
   }
@@ -304,7 +336,7 @@ export class FlightLayer {
     blendPose(GLIDE, TUCK, tuck, out);
     blendPose(out, FLARE, flare * (1 - tuck), out);
     if (flap > 0.001) {
-      const fp = flapPoseAt(f, this.flapSide, this.style);
+      const fp = flapPoseAt(this.beat, this.flapSide, this.style);
       // The outer wing of a turn takes the bigger stroke.
       const amp = clamp(1 + 0.3 * asym, 0.72, 1.32);
       fp[W.humEl] *= amp;
@@ -319,7 +351,7 @@ export class FlightLayer {
       }
       // ...and over the last metres to the ground they are backwing strokes, beating against the
       // sink in front of the body.
-      if (backW > 0.001) blendPose(fp, flapPoseAt(f, this.flapBack, this.backStyle), backW, fp);
+      if (backW > 0.001) blendPose(fp, flapPoseAt(this.beat, this.flapBack, this.backStyle), backW, fp);
       blendPose(out, fp, flap, out);
     }
     // The living glide: each wing trims on its own, the tips most; the resettle lifts both.
@@ -371,6 +403,10 @@ export class FlightLayer {
     const load = this.loadSpring[side].step(loadT, f.dt);
     this.wingLoad[side] = load;
     loadPose(out, load * f.spreadAir);
+    // Launch: the wrists have just left the ground, and the wings sweep out of the fold into the
+    // first downstroke (not before: they stay folded through the crouch and the vault).
+    const lt = f.launchT;
+    if (lt < LAUNCH_UNFOLD) blendPose(FOLDED, out, smoothstep(0, LAUNCH_UNFOLD, lt), out);
   }
 
   /** Leg weights in the air: tucked, reaching, pushing off; the dangling legs' swing. */

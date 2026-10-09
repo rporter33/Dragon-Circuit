@@ -16,7 +16,7 @@ import { strokeForce } from '../../flight/FlightModel';
 import { createWyvernPose } from '../../player/poses';
 import { Wyvern } from './Wyvern';
 import { FLAP_STYLES, W, bodyClock, flapPose, strokeLoad, strokePhase, strokeTravel, strokeWarp } from './wingPoses';
-import { beat, gliding, look } from './wyvern.testkit';
+import { beat, gliding, look, standing } from './wyvern.testkit';
 
 const _p = new Vector3();
 const _q = new Vector3();
@@ -669,5 +669,61 @@ describe('landing (B5: a height-driven flare, backwing beats, legs reaching)', {
       // of rise and fall than a flaring beat up high.
       expect(low.plane, b).toBeGreaterThan(1.3 * high.plane);
     }
+  });
+});
+
+describe('the launch stroke (B6: after the vault, out of the fold into labored beats)', { timeout: 60000 }, () => {
+  /** A takeoff: the wrists leave the ground at t = 0 (frame.launchT, which C6 writes; set here). */
+  function launch(breed: BreedId, sample: (t: number, w: Wyvern) => void) {
+    const w = new Wyvern(look(breed));
+    const frame = (w as unknown as { animator: { frame: { launchT: number } } }).animator.frame;
+    const p = standing(breed);
+    for (let i = 0; i < 60; i++) w.update(1 / 60, p);
+    p.airborne = true;
+    p.gait = 'takeoff';
+    p.flapStrength = 1;
+    p.wingSpread = 1;
+    p.velocity.set(0, 4, 6);
+    const rate = BREEDS[breed].flapRate;
+    for (let i = 0; i < 3 * 60; i++) {
+      const t = i / 60;
+      p.flapPhase = (t * rate) % 1;
+      p.gaitTime = t;
+      p.position.y += 4 / 60;
+      frame.launchT = t;
+      w.update(1 / 60, p);
+      sample(t, w);
+    }
+    w.dispose();
+  }
+
+  it('stays folded at the wrist release and has unfolded by 0.12 s, without a pop', () => {
+    for (const b of BREED_ORDER) {
+      const spans: number[] = [];
+      launch(b, (_t, w) => {
+        w.getWingtips(_p, _q);
+        spans.push(_p.distanceTo(_q));
+      });
+      const span = BREEDS[b].wingspan;
+      // Folded (well under half the span tip to tip) on the first frame, open by 0.15 s.
+      expect(spans[0], b).toBeLessThan(0.5 * span);
+      expect(spans[9], b).toBeGreaterThan(0.6 * span);
+      // No frame-to-frame jump bigger than a fifth of the span.
+      for (let i = 1; i < spans.length; i++) expect(Math.abs(spans[i] - spans[i - 1]), `${b} frame ${i}`).toBeLessThan(0.2 * span);
+    }
+  });
+
+  it('labors the first two beats: they reach deeper than the next ones', () => {
+    const b = 'harrier';
+    const rate = BREEDS[b].flapRate;
+    const low = [Infinity, Infinity, Infinity];
+    launch(b, (t, w) => {
+      const beat = Math.floor(t * rate);
+      if (beat > 2) return;
+      w.getWingtips(_p, _q);
+      const sh = w.skinnedMesh!.skeleton.bones.find((x) => x.name === 'humerusL')!.getWorldPosition(new Vector3());
+      low[beat] = Math.min(low[beat], (Math.atan2(_p.y - sh.y, _p.x - sh.x) * 180) / Math.PI);
+    });
+    expect(low[1]).toBeLessThan(low[2] - 2);
   });
 });
