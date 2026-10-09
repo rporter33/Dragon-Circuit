@@ -2244,10 +2244,10 @@
 .dw-pause-build {
   margin-top: 0.7em;
   text-align: center;
-  font-size: 0.68em;
-  letter-spacing: 0.08em;
+  font-size: 0.74em;
+  letter-spacing: 0.06em;
   color: var(--parch-3);
-  opacity: 0.6;
+  opacity: 0.8;
   font-variant-numeric: tabular-nums;
   user-select: text;
 }
