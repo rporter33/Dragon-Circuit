@@ -75,7 +75,8 @@ export const CREATURE_LIGHT_BLOCK = /* glsl */ `
           dwLit += dwFillAlb * dwTint * (dwStr * 1.6 * ${f(CREATURE_LIGHT.fill)} * dwFillScale) * dwWrap;
           // Rim: a true fresnel edge, strongest with the sun behind the wyvern (contre-jour), in
           // the skin's hue at a fixed value so pale skin does not flare.
-          float dwFres = pow(1.0 - dwNV, 3.0);
+          float dwF1 = 1.0 - dwNV;
+          float dwFres = dwF1 * dwF1 * dwF1;
           vec3 dwVw = normalize(vDwWorldPos - cameraPosition);
           float dwBack = 0.35 + 0.65 * smoothstep(-0.1, 0.7, dot(dwVw, uSunDir));
           vec3 dwHue = diffuseColor.rgb / max(0.3, dwAlb) * 0.35;
@@ -144,14 +145,21 @@ struct ToonMaterial {
 float dwThin = 0.0;
 float dwToonRamp(float x) {
   float w = max(0.015, 1.5 * fwidth(x));
+#if defined(DW_DETAIL) && DW_DETAIL < 1
+  // Far (LOD2) and 'low': shadow, terminator and full light only.
+  return ${f(RAMP.shadow)} + ${f(RAMP.steps[0][1] + RAMP.steps[1][1])} * smoothstep(${f(RAMP.steps[0][0])} - w, ${f(RAMP.steps[0][0])} + w, x) + ${f(1 - RAMP.shadow - RAMP.steps[0][1] - RAMP.steps[1][1])} * smoothstep(${f(RAMP.steps[2][0])} - w, ${f(RAMP.steps[3][0])} + w, x);
+#else
   return ${f(RAMP.shadow)} + ${rampGlsl()};
+#endif
 }
 void RE_Direct_Toon(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight) {
   float dotNL = dot(geometryNormal, directLight.direction);
   vec3 irradiance = directLight.color * dwToonRamp(dotNL * 0.5 + 0.5);
+#if !defined(DW_DETAIL) || DW_DETAIL >= 1
   // Subsurface terminator: a warm red band where the light wraps into thin skin.
   float t = (dotNL - 0.05) / 0.16;
   irradiance += directLight.color * vec3(1.0, 0.42, 0.28) * (0.22 * dwThin * exp(-t * t));
+#endif
   reflectedLight.directDiffuse += irradiance * BRDF_Lambert(material.diffuseColor);
 }
 void RE_IndirectDiffuse_Toon(const in vec3 irradiance, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight) {

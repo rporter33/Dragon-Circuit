@@ -298,10 +298,12 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   // mean as its features shrink toward a pixel, so nothing sparkles and nothing drifts in value.
   vec3 bpw = fwidth(bp);
   float fp = length(bpw);
-  float n1 = dwVnoise(bp * 2.3);
 #if DW_DETAIL >= 1
+  float n1 = dwVnoise(bp * 2.3);
   float n2 = dwVnoise(bp * 6.1 + 3.1);
 #else
+  // Far (LOD2) and 'low': no value noise at all (16 hashes a fragment); its mean instead.
+  float n1 = 0.5;
   float n2 = 0.5;
 #endif
   float n1f = 1.0 - smoothstep(0.12, 0.3, fp);
@@ -840,8 +842,8 @@ function creatureLight(frag: string): string {
  *   2  everything: the keeled and granular scales and their relief, macro scutes, the detail
  *      ladder, both octaves of the cellular patterns;
  *   1  mid distance (LOD1): no fine scales or relief (they are faded out there anyway);
- *   0  far and quality 'low' (LOD2): also no fine grain noise, macro scutes, ladder bands or
- *      second pattern octaves: countershading, mantle, markings and the first pattern octave.
+ *   0  far and quality 'low' (LOD2): also no value noise, macro scutes, ladder bands or second
+ *      pattern octaves: countershading, mantle, markings and the first pattern octave.
  * Each level is its own program: create every material a wyvern may use at construction, so the
  * boot shader warm-up compiles them.
  */
