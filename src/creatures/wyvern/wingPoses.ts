@@ -296,6 +296,11 @@ const breedStyle = (id: BreedId, s: Omit<FlapStyle, 'down' | 'warp'>) => flapSty
  * never fully folds and the flexing tips do the work (an albatross, not a bat); the ironback
  * drives a deep, heavy downstroke on stiff tips.
  *
+ * The galewing's tips bend 16° (24° before A13): its span is in the wingtip finger's outer phalanx
+ * (3.5 m, was 2.3 at B8's 20.5 m span), which bends its tip as far for less angle; at 24° the
+ * long lagging tip dragged the stroke's elevation late (the wing 0.39 into its travel at the
+ * power stroke's peak, wyvern.flight.test.ts).
+ *
  * The skimmer's raised wing passes closest to a seated rider: on the smallest body the rider's
  * boots hang at the flank's equator, just above the inner membrane's root, and its stroke reaches
  * highest. So its arm sits a little further back at the top (tiltBack 0.3) and its pronation flip,
@@ -306,7 +311,7 @@ const breedStyle = (id: BreedId, s: Omit<FlapStyle, 'down' | 'warp'>) => flapSty
 export const FLAP_STYLES: Readonly<Record<BreedId, FlapStyle>> = {
   skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05, tiltBack: 0.3, pronOut: 0.13, pronIn: 0.14 }),
   harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
-  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.093, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
+  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 16, tipLag: 0.2, lead: 0.093, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
   ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
 };
 

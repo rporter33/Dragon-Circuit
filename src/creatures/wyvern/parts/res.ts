@@ -6,6 +6,8 @@
 //   LOD2  far: ~1.5k triangles, the membranes as fans, no claws, teeth or tongue
 // Detail that only reads up close is gated by the flags, not just thinned.
 
+import type { BreedId } from '../../../core/types';
+
 export type Lod = 0 | 1 | 2;
 
 export interface Res {
@@ -141,3 +143,14 @@ export const sides = (res: Res, n: number) => Math.max(3, Math.round(n * res.spi
 export const steps = (res: Res, n: number) => Math.max(1, Math.round(n * res.spikeSteps));
 /** A count designed as `n` at LOD0 for tack and cosmetic panels (at least `min`). */
 export const tackN = (res: Res, n: number, min = 1) => Math.max(min, Math.round(n * (res.tack === 2 ? 1 : res.tack === 1 ? 0.5 : 0.3)));
+
+/**
+ * Triangle budgets per breed and LOD (the dragon quality bar Q15): LOD0 at most 24k (the plated
+ * ironback 30k), LOD1 6k, LOD2 1.5k.
+ */
+export const LOD_BUDGET: Record<BreedId, Record<Lod, number>> = {
+  harrier: { 0: 24000, 1: 6000, 2: 1500 },
+  skimmer: { 0: 24000, 1: 6000, 2: 1500 },
+  galewing: { 0: 24000, 1: 6000, 2: 1500 },
+  ironback: { 0: 30000, 1: 6000, 2: 1500 },
+};

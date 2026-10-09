@@ -3,24 +3,48 @@
 // LOD (see the dragon quality bar Q2-Q5, Q15). Shared poses and helpers: wyvern.testkit.ts.
 
 import { describe, expect, it, vi } from 'vitest';
-import { Vector3 } from 'three';
+import { Quaternion, Vector3 } from 'three';
 import type { BreedId } from '../../core/types';
 import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { COSMETICS, cosmeticsFor } from '../../cosmetics/catalog';
 import { Wyvern } from './Wyvern';
 import { buildRig, rigFor } from './rig';
+import { computeProportions } from './proportions';
 import { buildWyvernGeometry } from './geometry';
 import { humerusRootRadius } from './parts/wings';
-import type { Lod } from './parts/res';
+import { LOD_BUDGET, type Lod } from './parts/res';
 import { PATTERN_IDS } from './materials';
 import { STAND_ROOT_PITCH } from './animator';
-import { boneWorld, look, standing } from './wyvern.testkit';
+import { TACK, tackClearance } from './parts/saddle';
+import { Hide } from './parts/body';
+import { REGION, ZONE } from './builder';
+import { DEG } from '../../core/math';
+import { boneWorld, gliding, look, standing } from './wyvern.testkit';
 
 describe('proportions', { timeout: 30000 }, () => {
   it('honors the true wingspan (bind pose, tip to tip)', () => {
     for (const breed of BREED_ORDER) {
       const rig = buildRig(breed);
       expect(rig.fingerTips[0].x * 2).toBeCloseTo(BREEDS[breed].wingspan, 3);
+    }
+  });
+
+  it('sizes the wing to the body and finds its span in the wingtip finger (A13)', () => {
+    // B8's bigger spans scaled the whole wing 16-19%, and the longer folded forearm put the elbow
+    // into the haunch. The arm, the hand and the inner fingers are the body's (WingShape.armLength):
+    // only the wingtip finger's outer phalanx, which folds back along the flank, carries the span.
+    for (const breed of BREED_ORDER) {
+      const P = computeProportions(breed);
+      const W = P.shape.wing;
+      const unit = W.armLength / (W.humerus + W.forearm);
+      expect(P.arm.humerus + P.arm.forearm, breed).toBeCloseTo(W.armLength, 6);
+      expect(P.arm.humerus / P.arm.forearm, breed).toBeCloseTo(W.humerus / W.forearm, 6);
+      expect(P.arm.hand, breed).toBeCloseTo(W.hand * unit, 6);
+      expect(P.arm.fingers[0][0], breed).toBeCloseTo(W.fingers[0][0] * unit, 6);
+      for (const f of [1, 2]) for (const k of [0, 1]) expect(P.arm.fingers[f][k], breed).toBeCloseTo(W.fingers[f][k] * unit, 6);
+      // The outer phalanx: longer than the inner one (a wing finger), but no whip (1.5-1.9x).
+      expect(P.arm.fingers[0][1] / P.arm.fingers[0][0], breed).toBeGreaterThan(1);
+      expect(P.arm.fingers[0][1] / P.arm.fingers[0][0], breed).toBeLessThan(2.2);
     }
   });
 
@@ -82,7 +106,7 @@ describe('model budget and cosmetics', { timeout: 60000 }, () => {
         // The bone texture stays 16x16; LOD0 within its budget (Q15).
         expect(s.bones).toBeLessThanOrEqual(64);
         expect(s.triangles).toBeGreaterThan(9000);
-        expect(s.triangles).toBeLessThanOrEqual(breed === 'ironback' ? 30000 : 24000);
+        expect(s.triangles).toBeLessThanOrEqual(LOD_BUDGET[breed][0]);
         const g = w.skinnedMesh!.geometry;
         const pos = g.getAttribute('position').array;
         let finite = true;
@@ -134,6 +158,11 @@ describe('model budget and cosmetics', { timeout: 60000 }, () => {
       // Visual membranes cover most of the physical wing area (the rest is body and arm).
       expect(a / BREEDS[b].wingArea).toBeGreaterThan(0.35);
       expect(a / BREEDS[b].wingArea).toBeLessThan(1.1);
+      // ...and track it: B8 grew the flight model's area 8-9% for 16-19% more span (a slimmer
+      // wing), so the membranes keep their share of it (0.42-0.60; scaling the whole wing with
+      // the span made it 0.50-0.74, the visual wing a third bigger than the one that flies).
+      expect(a / BREEDS[b].wingArea, b).toBeGreaterThan(0.4);
+      expect(a / BREEDS[b].wingArea, b).toBeLessThan(0.65);
     }
   });
 });
@@ -203,17 +232,23 @@ describe('seat', () => {
         // Within a couple of cm (breathing moves the body a hair).
         expect(seat.distanceTo(anchor)).toBeLessThan(0.025);
         expect(seat.y).toBeGreaterThan(0.5);
-        expect(seat.z).toBeGreaterThan(0);
+        // Over the middle of the torso (the standing pitch leans the raised seat back a little).
+        expect(Math.abs(seat.z), `${breed} ${saddle}`).toBeLessThan(0.12 * w.rigDef.props.shape.torsoLength);
         w.dispose();
       }
     }
     expect(STAND_ROOT_PITCH).toBeLessThan(0);
   });
 
-  it('raises a narrow seat on a frame: a horse-width straddle, knees clear of the back, grip on the pommel', () => {
-    // A9: the seat is a narrow block 0.22-0.28 m (plus the rider's hips) above the back on every
-    // breed, the thighs grip 0.28 m out, and the barrel the legs wrap is only as wide as the
-    // flaps at the top of the back but as wide as the body at its equator.
+  it('raises a narrow seat on a frame as tall as the straddle needs: knees in, thighs near vertical, hands up front', () => {
+    // A9 + A12: the seat is a narrow block on a raised frame; it stands as tall above the back as
+    // the rider's straddle needs on each breed (TACK.straddle: knees 0.30 m from the midline,
+    // thighs within 35 degrees of vertical), so the knee clears the blanketed hide. The barrel the
+    // legs wrap (SaddleFlank) is the blanketed hide itself.
+    const D = TACK.straddle;
+    const dx = D.kneeX - D.hipX;
+    const dy = Math.sqrt(D.thigh ** 2 - dx ** 2 - D.kneeFwd ** 2);
+    expect(Math.atan2(Math.hypot(dx, D.kneeFwd), dy) / DEG).toBeLessThanOrEqual(35);
     for (const breed of BREED_ORDER) {
       for (const saddle of ['rider', 'racing', 'royal', 'nomad']) {
         const w = new Wyvern(look(breed, { saddle }));
@@ -221,15 +256,17 @@ describe('seat', () => {
         const st = rig.plan.station(rig.plan.sAtZ(rig.seat.z));
         const topY = st.center.y + st.upper;
         const seat = (w as unknown as { info: { saddle: { seat: Vector3 } } }).info.saddle.seat;
-        expect(seat.y - topY, `${breed} ${saddle} seat height`).toBeGreaterThanOrEqual(0.22 - 1e-9);
-        expect(seat.y - topY, `${breed} ${saddle} seat height`).toBeLessThanOrEqual(0.4);
+        expect(seat.y - topY, `${breed} ${saddle} seat height`).toBeGreaterThanOrEqual(0.3);
+        expect(seat.y - topY, `${breed} ${saddle} seat height`).toBeLessThanOrEqual(0.62);
         expect(w.saddle.userData.halfWidth).toBeCloseTo(0.28, 6);
         const flank = w.saddle.userData.flank as { cy: number; rx: number; ry: number; sq: number };
         const width = (y: number) => {
           const t = Math.abs(y - flank.cy) / flank.ry;
           return t >= 1 ? 0 : flank.rx * Math.pow(1 - Math.pow(t, flank.sq), 1 / flank.sq);
         };
-        expect(width(topY - seat.y), `${breed} ${saddle} flank at the knees`).toBeLessThanOrEqual(0.3);
+        // The straddle's knee (its radius in) clears the barrel; the barrel keeps the body's width.
+        const kneeY = -(D.hipDrop + dy);
+        expect(width(kneeY), `${breed} ${saddle} flank at the knees`).toBeLessThanOrEqual(D.kneeX - D.legR);
         expect(width(st.center.y - seat.y), `${breed} ${saddle} flank at the equator`).toBeGreaterThan(st.halfWidth);
         // Hands on the pommel (racing: the neck handles): up and forward of the hips.
         const g = w.saddle.userData.gripOffset as Vector3;
@@ -376,7 +413,7 @@ describe('predator proportions (Q4)', () => {
 // Builds every breed x catalog id x LOD (~300 meshes): give a loaded shared machine headroom.
 describe('levels of detail (Q15)', { timeout: 120000 }, () => {
   const slots = { wyvernHorns: 'horns', wyvernFrill: 'frill', wyvernTail: 'tail', saddle: 'saddle', wyvernPattern: 'pattern' } as const;
-  const budget = (breed: BreedId, lod: Lod) => (lod === 0 ? (breed === 'ironback' ? 30000 : 24000) : lod === 1 ? 6000 : 1500);
+  const budget = (breed: BreedId, lod: Lod) => LOD_BUDGET[breed][lod];
 
   it('builds all three LODs of every breed and catalog id within budget, on the same skeleton', () => {
     for (const breed of BREED_ORDER) {
@@ -452,6 +489,60 @@ describe('the folded wing contracts (Q3, A2 rig side)', () => {
       expect(maxW).toBeGreaterThan(0.45);
       expect(maxW).toBeLessThan(0.6);
       expect(pleated).toBeGreaterThan(20);
+      g.dispose();
+    }
+  });
+});
+
+describe('the inner membrane folds and beats like a sheet hinged on the flank (A2)', () => {
+  it('skins it by lever arm: the rows by the root ride the body, the trailing edge passes from the flank to finger 2', () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      const g = buildWyvernGeometry(rig, look(breed), 0).geometry;
+      const uv = g.getAttribute('aUv2');
+      const mat = g.getAttribute('aMat');
+      const pos = g.getAttribute('position');
+      const si = g.getAttribute('skinIndex');
+      const sw = g.getAttribute('skinWeight');
+      const idx = g.index!.array;
+      const g1 = g.groups[1];
+      const arm = new Set([rig.idx.wings[0].humerus, rig.idx.wings[0].forearm, rig.idx.wings[0].hand]);
+      const finger2 = new Set(rig.idx.wings[0].fingers[2]);
+      const share = (v: number, set: Set<number>) => {
+        let w = 0;
+        for (let k = 0; k < 4; k++) if (set.has(si.getComponent(v, k))) w += sw.getComponent(v, k);
+        return w;
+      };
+      const seen = new Set<number>();
+      let rootRows = 0;
+      let edge = 0;
+      for (let i = g1.start; i < g1.start + g1.count; i++) {
+        const v = idx[i];
+        if (seen.has(v) || Math.round(mat.getX(v)) !== 0 || pos.getX(v) <= 0) continue;
+        seen.add(v);
+        const t = uv.getX(v);
+        const pv = uv.getY(v) - 2;
+        if (pv < 0 || pv > 1) continue;
+        // Interior rows next to the root (away from the arm's own edge): little on the arm.
+        if (t > 0.02 && t <= 0.08 && pv >= 0.4) {
+          expect(share(v, arm), `${breed} root row t=${t.toFixed(2)} v=${pv.toFixed(2)}`).toBeLessThan(0.15);
+          rootRows++;
+        }
+        // The trailing edge passes linearly from the flank to finger 2 (C3's trailRoll rolls finger 2
+        // so the edge's midpoint, half on each, lies half-way across; A13 returned it from the
+        // (1 − t)^1.5 fall-off, which put 0.65 on finger 2 there and turned the folded panel's
+        // middle 20-37 cm into the flank).
+        if (Math.abs(pv - 1) < 1e-4 && t >= 0.1) {
+          expect(share(v, finger2), `${breed} trailing edge t=${t.toFixed(2)}`).toBeCloseTo(t, 1);
+          edge++;
+        }
+      }
+      expect(rootRows).toBeGreaterThan(5);
+      expect(edge).toBeGreaterThan(3);
+      // Pleat geometry: rows enough across the panel for the fold's eight pleats (four per pleat).
+      const vs = new Set<number>();
+      for (const v of seen) if (uv.getY(v) >= 2 && uv.getY(v) <= 3) vs.add(Math.round((uv.getY(v) - 2) * 1000));
+      expect(vs.size, breed).toBeGreaterThanOrEqual(33);
       g.dispose();
     }
   });
@@ -631,5 +722,324 @@ describe('breeds by silhouette (Q5, A8)', () => {
       return r.fingerTips[0].distanceTo(r.fingerTips[2]) / (BREEDS[b].wingspan / 2);
     };
     for (const b of ['harrier', 'galewing', 'ironback'] as const) expect(chord('skimmer'), b).toBeGreaterThan(chord(b));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The tack (A12, Q16): the expert's Y yoke round the front, its stem and anchor, the neck rope
+// ---------------------------------------------------------------------------------------------
+
+/** A coarse spatial hash of points (for nearest-distance queries over thousands of vertices). */
+class PointGrid {
+  private cells = new Map<string, Vector3[]>();
+  constructor(
+    pts: Vector3[],
+    private cell = 0.15,
+  ) {
+    for (const p of pts) {
+      const k = this.key(Math.floor(p.x / cell), Math.floor(p.y / cell), Math.floor(p.z / cell));
+      let c = this.cells.get(k);
+      if (!c) this.cells.set(k, (c = []));
+      c.push(p);
+    }
+  }
+  private key(x: number, y: number, z: number) {
+    return `${x},${y},${z}`;
+  }
+  /** Distance to the nearest point, if within one cell (else Infinity). */
+  near(p: Vector3): number {
+    const c = this.cell;
+    const x = Math.floor(p.x / c);
+    const y = Math.floor(p.y / c);
+    const z = Math.floor(p.z / c);
+    let d = Infinity;
+    for (let i = -1; i <= 1; i++)
+      for (let j = -1; j <= 1; j++)
+        for (let k = -1; k <= 1; k++) for (const q of this.cells.get(this.key(x + i, y + j, z + k)) ?? []) d = Math.min(d, q.distanceTo(p));
+    return d;
+  }
+}
+
+describe('the tack (A12, Q16)', { timeout: 240000 }, () => {
+  type Info = { saddle: { straps: { name: string; line: number[] }[]; tackRange: [number, number]; holds: Record<string, { pos: Vector3; bone: number }> } };
+  const infoOf = (w: Wyvern) => (w as unknown as { info: Info }).info.saddle;
+
+  /** Wing vertices (membranes, and the arm and finger tubes) of a wyvern's mesh. */
+  function wingVerts(w: Wyvern, skip: [number, number]): number[] {
+    const mesh = w.skinnedMesh!;
+    const geo = mesh.geometry;
+    const idx = geo.index!.array;
+    const g1 = geo.groups[1];
+    const out = new Set<number>();
+    for (let i = g1.start; i < g1.start + g1.count; i++) out.add(idx[i]);
+    const wingBones = new Set<number>();
+    mesh.skeleton.bones.forEach((b, i) => {
+      if (/humerus|forearm|hand|finger|claw/.test(b.name)) wingBones.add(i);
+    });
+    const si = geo.getAttribute('skinIndex');
+    const sw = geo.getAttribute('skinWeight');
+    for (let v = 0; v < si.count; v++) {
+      if (v >= skip[0] && v < skip[1]) continue;
+      let ww = 0;
+      for (let k = 0; k < 4; k++) if (wingBones.has(si.getComponent(v, k))) ww += sw.getComponent(v, k);
+      if (ww > 0.5) out.add(v);
+    }
+    return [...out];
+  }
+
+  const X = new Vector3(1, 0, 0);
+  const Y = new Vector3(0, 1, 0);
+  /** The neck's full range (local rotations on neck0..neck5, degrees): beyond any posture the animator uses. */
+  const NECK_ROM: [Vector3, number[]][] = [
+    [X, [-30, -15, -8, 0, 0, 0]],
+    [X, [25, 20, 10, 0, 0, 0]],
+    [Y, [12, 12, 12, 8, 0, 0]],
+    [Y, [-12, -12, -12, -8, 0, 0]],
+  ];
+
+  for (const breed of BREED_ORDER) {
+    it(`harnesses round the front (${breed}): no strap crosses the wings or stretches over the stroke, the fold and the neck's full range`, () => {
+      const w = new Wyvern(look(breed));
+      const mesh = w.skinnedMesh!;
+      const geo = mesh.geometry;
+      const tack = infoOf(w);
+      const [t0, t1] = tack.tackRange;
+      expect(t1 - t0).toBeGreaterThan(500);
+      const names = tack.straps.map((s) => s.name);
+      for (const n of ['yokeL', 'yokeR']) expect(names).toContain(n);
+      expect(names.some((n) => n.startsWith('stem'))).toBe(true);
+      const wing = wingVerts(w, [t0, t1]);
+      const bindLen = (line: number[]) => {
+        let L = 0;
+        const a = new Vector3();
+        const b = new Vector3();
+        for (let i = 1; i < line.length; i++) L += a.fromBufferAttribute(geo.getAttribute('position'), line[i - 1]).distanceTo(b.fromBufferAttribute(geo.getAttribute('position'), line[i]));
+        return L;
+      };
+      const L0 = tack.straps.map((s) => bindLen(s.line));
+      const a = new Vector3();
+      const b = new Vector3();
+      let worstGap = Infinity;
+      let tuckGap = Infinity;
+      let worstStretch = 0;
+      let worstName = '';
+      const check = (label: string) => {
+        const tp: Vector3[] = [];
+        for (let v = t0; v < t1; v++) tp.push(mesh.getVertexPosition(v, new Vector3()));
+        const grid = new PointGrid(tp);
+        for (const v of wing) {
+          const d = grid.near(mesh.getVertexPosition(v, a));
+          if (label === 'tuck') tuckGap = Math.min(tuckGap, d);
+          else worstGap = Math.min(worstGap, d);
+        }
+        tack.straps.forEach((s, i) => {
+          let L = 0;
+          for (let j = 1; j < s.line.length; j++) L += mesh.getVertexPosition(s.line[j - 1], a).distanceTo(mesh.getVertexPosition(s.line[j], b));
+          const r = Math.abs(L / L0[i] - 1);
+          // The load-bearing yoke rides the trunk rigidly; the belly and rump straps ride the hide
+          // under them (it breathes and flexes with the beat), within twice the yoke's allowance.
+          const k = s.name.startsWith('yoke') ? 1 : 0.5;
+          if (r * k > worstStretch) {
+            worstStretch = r * k;
+            worstName = `${s.name} ${label} ${(r * 100).toFixed(1)}%`;
+          }
+        });
+      };
+      // The folded stance, then the neck through its full range from it.
+      const pose = standing(breed);
+      for (let i = 0; i < 120; i++) w.update(1 / 60, pose);
+      check('stand');
+      const bones = mesh.skeleton.bones;
+      const q = new Quaternion();
+      for (const [axis, degs] of NECK_ROM) {
+        w.update(1 / 60, pose);
+        w.rigDef.idx.neck.forEach((ni, i) => bones[ni].quaternion.multiply(q.setFromAxisAngle(axis, degs[i] * DEG)));
+        w.group.updateMatrixWorld(true);
+        check('neck');
+      }
+      // A full wingbeat, the flare and the dive tuck.
+      w.resetAnimation();
+      const g = gliding();
+      g.flapStrength = 1;
+      const rate = BREEDS[breed].flapRate;
+      const cycle = Math.round(60 / rate);
+      for (let f = 0; f < 90 + cycle; f++) {
+        g.flapPhase = ((f / 60) * rate) % 1;
+        g.position.z += 0.4;
+        g.lookTarget.z += 0.4;
+        w.update(1 / 60, g);
+        if (f >= 90 && f % 3 === 0) check('flap');
+      }
+      for (const kind of ['flare', 'tuck'] as const) {
+        w.resetAnimation();
+        const p = gliding();
+        if (kind === 'flare') p.flare = 1;
+        else p.wingSpread = 0.1;
+        for (let f = 0; f < 90; f++) {
+          p.position.z += 0.4;
+          p.lookTarget.z += 0.4;
+          w.update(1 / 60, p);
+        }
+        check(kind);
+      }
+      // Nothing crosses or pins the membrane: 5 cm or more between the tack and the wing over the
+      // stroke, the fold, the flare and the neck's range (the galewing's folded wingtip spar lies
+      // over the hips about 8 cm above the rump straps). In the dive tuck the wings close over the
+      // flanks and the rump, and the membrane may rest on the straps there (never through).
+      expect(worstGap, `${breed} wing-tack gap`).toBeGreaterThan(0.05);
+      expect(tuckGap, `${breed} wing-tack gap in the tuck`).toBeGreaterThan(0.003);
+      // The tack follows the trunk: at most 3% stretch anywhere.
+      expect(worstStretch, `${breed} ${worstName}`).toBeLessThanOrEqual(0.03);
+      w.dispose();
+    });
+  }
+
+  it('lays the yoke on the trunk ahead of the wing roots, the neck rope ahead of the yoke, the stem along the belly', () => {
+    for (const breed of BREED_ORDER) {
+      const w = new Wyvern(look(breed));
+      const rig = w.rigDef;
+      const geo = w.skinnedMesh!.geometry;
+      const pos = geo.getAttribute('position');
+      const tack = infoOf(w);
+      const sh = rig.props.shoulder;
+      const humR = humerusRootRadius(rig);
+      const p = new Vector3();
+      for (const s of tack.straps) {
+        if (!s.name.startsWith('yoke')) continue;
+        const sx = s.name === 'yokeL' ? 1 : -1;
+        let lowest = Infinity;
+        for (const v of s.line) {
+          p.fromBufferAttribute(pos, v);
+          expect(p.x * sx, `${breed} ${s.name} stays on its side`).toBeGreaterThan(-0.05);
+          // Beside the shoulder joint and below its top, the strap runs ahead of the humerus root.
+          if (Math.abs(p.x) > 0.3 * rig.props.shape.torsoHalfWidth && p.y < sh[1] + 0.7 * humR) expect(p.z, `${breed} ${s.name}`).toBeGreaterThan(sh[2] + humR);
+          lowest = Math.min(lowest, p.y);
+        }
+        // It reaches down the chest to the sternum plate.
+        expect(lowest, breed).toBeLessThan(sh[1] - 0.4 * rig.props.shape.torsoHalfHeight);
+      }
+      for (const s of tack.straps) {
+        if (!s.name.startsWith('stem')) continue;
+        for (const v of s.line) expect(Math.abs(p.fromBufferAttribute(pos, v).x), `${breed} ${s.name} on the midline`).toBeLessThan(0.02);
+      }
+      w.dispose();
+    }
+  });
+
+  it('puts hand and foot holds on the tack (ropeL/R on the neck rope, grab, stirrups) that follow the body', () => {
+    for (const breed of BREED_ORDER) {
+      for (const saddle of ['rider', 'racing', 'royal', 'nomad']) {
+        const w = new Wyvern(look(breed, { saddle }));
+        const pose = standing(breed);
+        for (let i = 0; i < 30; i++) w.update(1 / 60, pose);
+        const mesh = w.skinnedMesh!;
+        const geo = mesh.geometry;
+        const tack = infoOf(w);
+        const leather: Vector3[] = [];
+        const mat = geo.getAttribute('aMat');
+        for (let v = 0; v < mat.count; v++) if (Math.round(mat.getX(v)) === REGION.leather) leather.push(mesh.getVertexPosition(v, new Vector3()).applyMatrix4(mesh.matrixWorld));
+        const grid = new PointGrid(leather);
+        for (const name of ['ropeL', 'ropeR', 'grab'] as const) {
+          const h = w.socket(name, new Vector3())!;
+          expect(h, `${breed} ${saddle} ${name}`).not.toBeNull();
+          // On the rope, strap or handle (its centre line): within its radius plus a centimetre.
+          expect(grid.near(h), `${breed} ${saddle} ${name}`).toBeLessThan(0.045);
+        }
+        const seat = w.socket('seat', new Vector3())!;
+        const rope = w.socket('ropeL', new Vector3())!;
+        expect(rope.z - seat.z, `${breed} ${saddle} rope in reach`).toBeGreaterThan(0.2);
+        expect(rope.distanceTo(seat), `${breed} ${saddle} rope in reach`).toBeLessThan(1.0);
+        // The two hand holds either side of the grip (E's rider reads gripSpread).
+        const spread = w.saddle.userData.gripSpread as number;
+        expect(spread).toBeGreaterThan(0.05);
+        expect(spread).toBeLessThan(0.7);
+        for (const [name, sx] of [
+          ['stirrupL', 1],
+          ['stirrupR', -1],
+        ] as const) {
+          const st = w.socket(name, new Vector3())!;
+          // Under the straddling rider: below and outside the knees, above the wing roots.
+          expect((st.x - seat.x) * sx, `${breed} ${saddle} ${name}`).toBeGreaterThan(TACK.straddle.kneeX);
+          expect(seat.y - st.y, `${breed} ${saddle} ${name}`).toBeGreaterThan(0.5);
+          expect(seat.y - st.y, `${breed} ${saddle} ${name}`).toBeLessThan(TACK.straddle.thigh + TACK.straddle.shin + 0.25);
+        }
+        // The holds move with the body.
+        const before = w.socket('grab', new Vector3())!;
+        pose.position.x += 2;
+        w.update(1 / 60, pose);
+        expect(w.socket('grab', new Vector3())!.x - before.x).toBeCloseTo(2, 1);
+        w.dispose();
+      }
+    }
+  });
+
+  it("writes D's leather contract: tack regions, across-strap coordinate and quilted padding", () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      const info = buildWyvernGeometry(rig, look(breed), 0);
+      const g = info.geometry;
+      const mat = g.getAttribute('aMat');
+      const ex = g.getAttribute('aExtra');
+      const [t0, t1] = info.saddle.tackRange;
+      const regions = new Set<number>();
+      let quilt = 0;
+      for (let v = t0; v < t1; v++) {
+        const r = Math.round(mat.getX(v));
+        regions.add(r);
+        const w = ex.getW(v);
+        expect(w).toBeGreaterThanOrEqual(0);
+        expect(w).toBeLessThanOrEqual(1);
+        if (Math.round(ex.getZ(v)) === ZONE.quilt) quilt++;
+      }
+      for (const r of regions) expect([REGION.leather, REGION.metal]).toContain(r);
+      expect(regions.has(REGION.metal)).toBe(true);
+      expect(quilt).toBeGreaterThan(200);
+      // The yoke's centre lines read 1 across, its edges 0.
+      const yoke = info.saddle.straps.find((s) => s.name === 'yokeL')!;
+      for (const v of yoke.line) expect(ex.getW(v)).toBeCloseTo(1, 5);
+      // The blanket is woven cloth.
+      let cloth = 0;
+      for (let v = 0; v < t0; v++) if (Math.round(mat.getX(v)) === REGION.cloth) cloth++;
+      expect(cloth).toBeGreaterThan(50);
+      g.dispose();
+    }
+  });
+
+  it('keeps the dorsal frill low by the pommel and where the neck rope crosses (TACK.frillClear)', () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      const info = buildWyvernGeometry(rig, look(breed, { frill: 'spines' }), 0);
+      const g = info.geometry;
+      const pos = g.getAttribute('position');
+      const mat = g.getAttribute('aMat');
+      const centres = tackClearance(rig);
+      const hide = new Hide(rig);
+      const p = new Vector3();
+      const top = new Vector3();
+      let n = 0;
+      for (let v = 0; v < info.saddle.tackRange[0]; v++) {
+        if (Math.round(mat.getX(v)) !== REGION.horn) continue;
+        p.fromBufferAttribute(pos, v);
+        // Along the withers from the pommel's reach to the rope's crossing, where the hands and the
+        // rein bight run.
+        if (Math.abs(p.x) > 0.2 || p.z > centres[1].z || p.z < centres[0].z - TACK.frillClear.radius) continue;
+        hide.point(rig.plan.sAtZ(p.z), 0, top);
+        expect(p.y - top.y, `${breed} spine by the tack`).toBeLessThan(TACK.frillClear.height + 0.03);
+        n++;
+      }
+      void n;
+      g.dispose();
+    }
+  });
+
+  it('builds the tack lighter at LOD1 and none at LOD2', () => {
+    const rig = rigFor('harrier');
+    const n = [0, 1, 2].map((lod) => {
+      const info = buildWyvernGeometry(rig, look('harrier'), lod as Lod);
+      info.geometry.dispose();
+      return info.saddle.tackRange[1] - info.saddle.tackRange[0];
+    });
+    expect(n[1]).toBeLessThan(n[0] * 0.3);
+    expect(n[2]).toBe(0);
   });
 });
