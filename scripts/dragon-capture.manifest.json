@@ -244,5 +244,19 @@
         {"id": "gpu-race-high", "kind": "gpu", "boot": "race-30", "size": "1920x1080", "settle": 0.3, "gpu": {"frames": 10, "warm": 3}, "desc": "a real race at 1080p 'high': the player and the ghost 30 m ahead"}
       ]
     }
+    ,{
+      "id": "r2-a",
+      "title": "Round 2, stream A: the tack (A12) and the folded wing",
+      "dir": "r2-a",
+      "note": "The expert's Y yoke round the front (shoulder straps over the withers, ahead of the wing roots, to a padded sternum plate), the stem down the belly to a ventral plate under the rump with straps round the hindquarters behind the membrane's root, the neck rope and its rein bight, the grab strap and the stirrups.",
+      "items": [
+        {"id": "a2-tack-front-{b.breed}", "each": {"b": "$breeds"}, "stage": "breed={b.breed}&pose=idle&cam=front&focus=chest&camEl=8&camDist={=b.span*0.5}", "desc": "{b.breed}: the yoke, sternum plate and neck rope from the front"},
+        {"id": "a2-tack-34-{b.breed}", "each": {"b": "$breeds"}, "stage": "breed={b.breed}&pose=idle&focus=chest&camAz=40&camEl=14&camDist={=b.span*0.55}", "desc": "{b.breed}: the tack from the front-left three-quarter view"},
+        {"id": "a2-tack-back-{b.breed}", "each": {"b": "$breeds"}, "stage": "breed={b.breed}&pose=idle&focus=saddle&camAz=150&camEl=35&camDist={=b.span*0.5}", "desc": "{b.breed}: the saddle, the shoulder straps over the withers, the rump straps, from behind and above"},
+        {"id": "a2-tack-under-harrier", "stage": "breed=harrier&pose=glide&cam=under", "desc": "harrier gliding, from below: the stem along the belly midline and the ventral plate"},
+        {"id": "a2-tack-up-{b.breed}", "each": {"b": "$pair"}, "stage": "breed={b.breed}&pose=flap&phase=0&cam=front&focus=chest&camDist={=b.span*0.6}", "desc": "{b.breed}: the top of the upstroke from the front: the humerus heads beside the withers, the yoke ahead of them"},
+        {"id": "a2-tack-down-{b.breed}", "each": {"b": "$pair"}, "stage": "breed={b.breed}&pose=flap&phase=0.5&camAz=60&camEl=10&focus=chest&camDist={=b.span*0.6}", "desc": "{b.breed}: the bottom of the downstroke, front three-quarter: the yoke clear of the wing roots"}
+      ]
+    }
   ]
 }

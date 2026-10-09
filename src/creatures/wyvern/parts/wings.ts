@@ -13,7 +13,7 @@
 import { Vector3 } from 'three';
 import { smoothstep } from '../../../core/math';
 import { GeoBuilder, MREGION, REGION, Skin, ellipsoid, tube } from '../builder';
-import { SIDE_SIGN, innerTrailRoot, type RigDef } from '../rig';
+import { HUMERUS_R, SIDE_SIGN, armScale, innerTrailRoot, type RigDef } from '../rig';
 import { bodyChain } from './body';
 import { SkinChain } from './chain';
 import { bezier3, keyed, spike } from './shape';
@@ -51,25 +51,7 @@ const ROOT_DROP = 0.3;
 const _line = new Vector3();
 const _dip = new Vector3();
 
-/** Humerus radius along the bone (× the arm scale k): the deltopectoral mass near the shoulder. */
-const HUMERUS_R: [number, number][] = [
-  [0, 0.345],
-  [0.25, 0.33],
-  [0.5, 0.26],
-  [0.75, 0.2],
-  [1, 0.17],
-];
-
-/** The arm's radius scale (m): every arm, hand and digit radius is a multiple of it. */
-export function armScale(rig: RigDef): number {
-  const S = rig.props.shape;
-  return 1.25 * Math.sqrt(S.torsoHalfWidth / 0.74) * (S.armBulk ?? 1);
-}
-
-/** Radius of the humerus where it leaves the shoulder (m). */
-export function humerusRootRadius(rig: RigDef): number {
-  return HUMERUS_R[0][1] * armScale(rig);
-}
+export { armScale, humerusRootRadius } from '../rig';
 
 /**
  * The fold helpers' rest blend, per side: the bones (and weights) the inner panel's interior is

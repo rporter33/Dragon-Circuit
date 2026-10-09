@@ -10,8 +10,10 @@
 //                 y  crease or pleat mask: on the inner wing panel, 1 in the troughs of the fold
 //                    pleats (in phase with the uFold vertex pleats); skin-fold creases (A10)
 //                 z  zone id (ZONE): 1 lip row, 2 eye ring, 3 nostril, 4 ear, 5 scutate scales
-//                    (front of the metatarsus and the toe tops)
-//                 w  spare
+//                    (front of the metatarsus and the toe tops), 6 quilted padding (the tack's yoke
+//                    and plates)
+//                 w  on the tack (leather straps, padding, the rope): the across-strap coordinate,
+//                    0 at an edge … 1 on the centre line (edge burnishing, stitch lines); 0 elsewhere
 // Two index lists are kept: group 0 for the opaque body, group 1 for membranes.
 
 import { BufferAttribute, BufferGeometry, Float32BufferAttribute, Uint16BufferAttribute, Vector3 } from 'three';
@@ -41,6 +43,7 @@ export const ZONE = {
   nostril: 3,
   ear: 4,
   scutate: 5,
+  quilt: 6,
 } as const;
 
 /** aExtra for a vertex in a zone (open, no crease). */

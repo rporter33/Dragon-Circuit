@@ -7,7 +7,8 @@ import { clamp, lerp, smoothstep } from '../../../core/math';
 import type { WyvernLook } from '../../../core/types';
 import { GeoBuilder, MREGION, REGION, Skin, tube } from '../builder';
 import type { RigDef } from '../rig';
-import { bodyChain } from './body';
+import { Hide, bodyChain } from './body';
+import { TACK, tackClearance } from './saddle';
 import type { HeadInfo } from './head';
 import { bezier3, bezier4, leaf, spike, strip } from './shape';
 import { RES, sides as nsides, steps, type Res } from './res';
@@ -193,7 +194,9 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
   const plan = rig.plan;
   const k = plan.keyS;
   const m = plan.marks;
-  const chain = bodyChain(rig);
+  // Dorsal attachments ride the hide's own weights (the neck's base rides the trunk; Hide.skin).
+  const hide = new Hide(rig);
+  const chain = { skin: (s: number) => hide.skin(s, 0) };
   const S = rig.props.shape;
   const L = S.headLength;
   const scale = S.torsoHalfHeight / 0.92;
@@ -203,9 +206,12 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
     case 'none':
       return;
     case 'sail': {
-      // Webbed crest from the back of the skull down the neck, held up by spines.
+      // Webbed crest from the back of the skull down the neck, held up by spines; it ends ahead of
+      // the neck rope's crossing (TACK.frillClear).
       const s0 = k[m.neckTop] - 0.05;
-      const s1 = k[m.neckBase] + 0.1;
+      const ropeTop = tackClearance(rig)[1];
+      let s1 = k[m.neckBase] + 0.1;
+      while (s1 > s0 + 0.5 && Math.hypot(dorsal(rig, s1, 0, p).z - ropeTop.z, p.y - ropeTop.y) < TACK.frillClear.radius) s1 -= 0.05;
       const N = Math.max(7, steps(res, 26));
       const pts: Vector3[] = [];
       const sides: Vector3[] = [];
@@ -287,7 +293,7 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
             sides.push(side);
             widths.push(0.075 * scale * Math.sin(Math.PI * (0.15 + 0.85 * f)) + 0.01);
           }
-          const sk = chain.skin(s);
+          const sk = hide.skin(s, th);
           strip(b, pts, sides, widths, () => sk, (i, f) => ({ region: MREGION.feather, belly: 0.7, dorsal: f, flutter: f * f * 0.8 }), res.lod === 0 ? 2 : 1);
         }
       }
@@ -345,6 +351,10 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
       const sStart = k[m.neckTop] - 0.02;
       const sEnd = lerp(k[m.tailBase], plan.length, 0.82);
       const step = 0.34 * scale;
+      // The tack's clearance (TACK.frillClear): low nubs by the pommel and where the neck rope
+      // crosses the neck, so the rider's hands and the rope's rein bight run free.
+      const clear = tackClearance(rig);
+      const C = TACK.frillClear;
       b.begin(0);
       const hasRoyal = saddle === 'royal' || saddle === 'nomad';
       let nth = 0;
@@ -355,10 +365,13 @@ export function buildFrill(b: GeoBuilder, rig: RigDef, head: HeadInfo, id: strin
         dorsal(rig, s, -0.06, p, up);
         const along = (s - sStart) / (sEnd - sStart);
         // A bold dorsal row (x1.4): a silhouette feature along the neck and back, not dots.
-        const h = 1.4 * (0.22 + 0.16 * Math.sin(Math.PI * clamp(along * 1.4, 0, 1))) * scale * (1 - 0.6 * smoothstep(0.7, 1, along));
+        let h = 1.4 * (0.22 + 0.16 * Math.sin(Math.PI * clamp(along * 1.4, 0, 1))) * scale * (1 - 0.6 * smoothstep(0.7, 1, along));
+        // Along the back (horizontally) from the pommel or the rope's crossing.
+        const near = Math.min(...clear.map((c) => Math.hypot(c.x - p.x, c.z - p.z)));
+        if (near < C.radius) h = Math.min(h, C.height);
         const tip = p.clone().addScaledVector(up, h).addScaledVector(st.tangent, h * 0.55);
         const mid = p.clone().addScaledVector(up, h * 0.55).addScaledVector(st.tangent, h * 0.12);
-        spike(b, res.lod === 0 ? [p.clone(), mid, tip] : [p.clone(), tip], 1.4 * 0.07 * scale * (1 - 0.4 * along), chain.skin(s), { region: REGION.horn }, nsides(res, 5), st.tangent, 0.45);
+        spike(b, res.lod === 0 ? [p.clone(), mid, tip] : [p.clone(), tip], Math.min(1.4 * 0.07 * scale * (1 - 0.4 * along), 0.45 * h), chain.skin(s), { region: REGION.horn }, nsides(res, 5), st.tangent, 0.45);
       }
       b.end();
       void head;
@@ -593,7 +606,7 @@ export function buildPlates(b: GeoBuilder, rig: RigDef, look: WyvernLook, res: R
   const plan = rig.plan;
   const k = plan.keyS;
   const m = plan.marks;
-  const chain = bodyChain(rig);
+  const hide = new Hide(rig);
   const [g0, g1] = saddleGap(rig);
   const extraGap = look.saddle === 'royal' || look.saddle === 'nomad' ? 0.4 : 0.12;
   const S = rig.props.shape;
@@ -612,8 +625,8 @@ export function buildPlates(b: GeoBuilder, rig: RigDef, look: WyvernLook, res: R
     const st = plan.station(s);
     u.copy(st.tangent).addScaledVector(n, -st.tangent.dot(n)).normalize();
     v.crossVectors(n, u).normalize();
-    if (res.tack === 2) keeledScute(b, p, u, v, n, halfLen, halfWid, keel, chain.skin(s));
-    else lowScute(b, p, u, v, n, halfLen, halfWid, keel, chain.skin(s));
+    if (res.tack === 2) keeledScute(b, p, u, v, n, halfLen, halfWid, keel, hide.skin(s, th));
+    else lowScute(b, p, u, v, n, halfLen, halfWid, keel, hide.skin(s, th));
   };
   let s = sNeck0;
   while (s < sEnd) {
