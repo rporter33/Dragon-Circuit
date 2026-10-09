@@ -131,20 +131,29 @@ const EASE_UP_X1 = 0.55;
 const EASE_UP_X2 = 0.9;
 
 /**
- * Stroke plane tilt: the shoulder sweeps back at the top of the stroke and forward at the
- * bottom by this fraction of the elevation range, so the downstroke drives down AND forward and
- * the wingtip traces a tilted loop in side view (about 23° from the body's vertical), not a hinge.
+ * Stroke plane tilt: over the downstroke the shoulder sweeps forward by this fraction of the
+ * elevation range, so the wing drives down AND forward and the wingtip traces a tilted loop in
+ * side view (about 23° from the body's vertical), not a hinge. TILT_BACK of that sweep lies
+ * behind the shoulder's neutral (the raised wing at the top), the rest ahead of it (the reach at
+ * the bottom): the raised wing stays clear of the rider's legs and out of the chase camera's line
+ * to the rider.
  */
 const STROKE_TILT = 0.54;
+const TILT_BACK = 0.25;
 
 /**
  * Leading-edge twist of the arm (degrees, + pronated): pronated through the downstroke so the
  * wing bites as it drives down, flipped to supination within the first 15 % of the recovery
- * (the quick flip at the bottom), held while the wing rises, and turned back over the last
- * 40 % of the recovery ready for the next downstroke.
+ * (the quick flip at the bottom), held while the wing rises, and flipped back to pronation
+ * through the top reversal: from the last PRON_OUT of the recovery to the first PRON_IN of the
+ * downstroke. The arm passes the top near neutral rather than already pronated, so the raised
+ * wing root doesn't roll its trailing edge up into the rider's legs.
  */
 const PRONATE = 15;
 const SUPINATE = -22;
+const SUP_FLIP = 0.15;
+const PRON_OUT = 0.2;
+const PRON_IN = 0.1;
 
 /** Samples of a style's strokeWarp over one beat (the hot path reads these, see flapPose). */
 const WARP_N = 256;
@@ -223,8 +232,9 @@ export interface FlapStyle {
   readonly tipLag: number;
   /**
    * How far (phase) the arm runs ahead of the beat's clock. The bend runs out along the wing, so
-   * the tip reaches the bottom after the shoulder does; leading the arm by that much puts the
-   * wingtip's lowest point on the 'flap' event, when the flight model's power stroke ends.
+   * the tip reaches the bottom after the shoulder does; leading the arm by that much centres the
+   * wingtip's short dwell at the bottom on the 'flap' event, when the flight model's power stroke
+   * ends (measured on the rig with the chest's beat pitch: wyvern.flight.test.ts).
    */
   readonly lead: number;
   /** strokeWarp(i / WARP_N, down) for i = 0..WARP_N (derived; built by flapStyle). */
@@ -248,10 +258,10 @@ const breedStyle = (id: BreedId, s: Omit<FlapStyle, 'down' | 'warp'>) => flapSty
  * drives a deep, heavy downstroke on stiff tips.
  */
 export const FLAP_STYLES: Readonly<Record<BreedId, FlapStyle>> = {
-  skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.034 }),
-  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.037 }),
-  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.084 }),
-  ironback: breedStyle('ironback', { humTop: 32, humBot: -42, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.03 }),
+  skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05 }),
+  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064 }),
+  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.093 }),
+  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056 }),
 };
 
 /**
@@ -301,15 +311,19 @@ export function flapPose(beatPhase: number, labor: number, out: WingPose, style:
     let p = base - 0.04 * i;
     p -= Math.floor(p);
     let tw = PRONATE;
-    if (p >= D) {
-      const r = (p - D) / (1 - D);
-      if (r < 0.6) {
-        const t = Math.min(1, r / 0.15);
-        tw = PRONATE + (SUPINATE - PRONATE) * t * t * (3 - 2 * t);
-      } else {
-        const t = (r - 0.6) / 0.4;
-        tw = SUPINATE + (PRONATE - SUPINATE) * t * t * (3 - 2 * t);
-      }
+    const r = p >= D ? (p - D) / (1 - D) : -1;
+    if (r >= 0 && r < SUP_FLIP) {
+      // The supination flip at the bottom.
+      const t = r / SUP_FLIP;
+      tw = PRONATE + (SUPINATE - PRONATE) * t * t * (3 - 2 * t);
+    } else if (r >= 0 && r < 1 - PRON_OUT) {
+      tw = SUPINATE;
+    } else if (r >= 0 || p < PRON_IN * D) {
+      // The pronation flip through the top: time from the top, the recovery counted negative.
+      const q = r >= 0 ? p - 1 : p;
+      const q0 = -PRON_OUT * (1 - D);
+      const t = (q - q0) / (PRON_IN * D - q0);
+      tw = SUPINATE + (PRONATE - SUPINATE) * t * t * (3 - 2 * t);
     }
     _tw[i] = tw;
   }
@@ -324,10 +338,10 @@ export function flapPose(beatPhase: number, labor: number, out: WingPose, style:
   const bottom = style.humBot - 4 * labor;
   out.fill(0);
   out[W.humEl] = (top + (bottom - top) * s) * DEG;
-  // Sweep: the tilted stroke plane (back at the top, forward at the bottom), plus a forward reach
+  // Sweep: the tilted stroke plane (a little back at the top, forward at the bottom), plus a forward reach
   // late in the downstroke and a draw back through the recovery: a loop, not a hinge.
   const loop = w0 < 0.5 ? style.sweepDown * Math.sin(Math.PI * Math.pow(s, 1.94)) : style.sweepUp * Math.sin(Math.PI * s);
-  out[W.humSw] = (STROKE_TILT * (0.5 - s) * (style.humTop - style.humBot) + loop) * DEG;
+  out[W.humSw] = (STROKE_TILT * (TILT_BACK - s) * (style.humTop - style.humBot) + loop) * DEG;
   out[W.humTw] = _tw[0] * DEG;
   const sw = Math.sin(2 * Math.PI * _w[6]);
   out[W.foreEl] = k * (12 - 22 * (wf < 0.5 ? 2 * wf : 2 - 2 * wf)) * DEG;

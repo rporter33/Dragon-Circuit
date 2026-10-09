@@ -64,12 +64,20 @@ export class FlightLayer {
   flightTrunk(): void {
     const f = this.f;
     const { flap, airW, phase, heft, sh, flare, tuck, om } = f;
-    // Heave: the downstroke lifts the chest and saddle, the recovery lets them sink. The body is
-    // highest just after the bottom of the stroke (the lift lags the force).
+    // The beat's shared clock (wingPoses.strokePhase, inlined): 0 at the top of the stroke, 0.5 at
+    // the bottom (phase D, the 'flap' event), linear within each half. The flight model's power
+    // stroke peaks at 0.25 on it, and so do the membrane load and the chest's pitch, whatever the
+    // breed's downstroke fraction: the surge is felt while the wing is visibly half way down.
+    const D = this.style.down;
+    const p = phase - Math.floor(phase);
+    const sp = p < D ? (0.5 * p) / D : 0.5 + (0.5 * (p - D)) / (1 - D);
+    // Heave: the downstroke lifts the chest and saddle, the recovery lets them sink. The body
+    // rises fastest just after the power peak and is highest just after the bottom of the stroke
+    // (the lift lags the force).
     const heaveAmp = (0.05 + 0.035 * heft) * sh;
-    f.heave = flap * airW * heaveAmp * -Math.cos((phase - 0.08) * TAU);
+    f.heave = flap * airW * heaveAmp * -Math.cos((sp - 0.08) * TAU);
     // The wings drive the chest: it pitches up on the downstroke and leads the roll into a turn.
-    const chestLift = -flap * airW * (0.05 + 0.03 * heft) * Math.sin((phase - 0.02) * TAU);
+    const chestLift = -flap * airW * (0.05 + 0.03 * heft) * Math.sin((sp - 0.02) * TAU);
     f.chestLift = chestLift;
     f.lean = clamp(f.bank * 0.1 + om.z * 0.06, -0.14, 0.14) * airW;
     f.spineAir = chestLift - flare * 0.06 * airW;

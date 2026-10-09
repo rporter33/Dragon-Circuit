@@ -339,6 +339,10 @@ describe('the beat’s shared clock', () => {
       // Pronated through the downstroke, flipped to supination early in the recovery.
       expect(flapPose(0.5 * st.down - st.lead, 0, new Float32Array(26), st)[W.humTw], b).toBeGreaterThan(0.2);
       expect(flapPose(st.down + 0.2 * (1 - st.down) - st.lead, 0, new Float32Array(26), st)[W.humTw], b).toBeLessThan(-0.3);
+      // The pronation flip runs through the top reversal: the arm passes the top near neutral
+      // (not already pronated, which rolls the raised wing root up into the rider's legs).
+      expect(Math.abs(top[W.humTw]), b).toBeLessThan(0.17);
+      expect(flapPose(0.15 * st.down - st.lead, 0, new Float32Array(26), st)[W.humTw], b).toBeGreaterThan(0.25);
     }
     expect(FLAP_STYLES.galewing.fold).toBeLessThan(FLAP_STYLES.harrier.fold);
   });
