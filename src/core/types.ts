@@ -324,6 +324,12 @@ export interface WyvernPose {
   groundSpeed: number;
   /** Seconds since mode/gait changed, for one-shot animations (takeoff leap, landing crouch). */
   gaitTime: number;
+  /**
+   * 0..1 position in the ground gait cycle (four foot contacts per cycle, the timing of
+   * creatures/wyvern/gait.ts). The player emits a footstep at each contact on this clock, so an
+   * animation that follows it puts every foot down on its sound. Absent: animate freely.
+   */
+  gaitPhase?: number;
   /** Where the head wants to look (world space), e.g. toward the camera's view or next ring. */
   lookTarget: Vector3;
   /** Ground height directly below the body (for leg placement and landing poses); null over open air. */
@@ -500,6 +506,11 @@ export interface GameEvents {
   tuckEnd: {};
   /** Hit terrain while flying. impulse in m/s of velocity lost. */
   terrainHit: { impulse: number; point: Vector3; normal: Vector3 };
+  /**
+   * Flew (body or a wing) through foliage: it brushed and slowed the wyvern, no bounce or stun.
+   * At most a few per second while in contact; speed is the wyvern's speed (m/s).
+   */
+  foliageBrush: { position: Vector3; speed: number };
   touchdown: { impact: number; position: Vector3; surface: SurfaceKind };
   takeoff: { position: Vector3 };
   footstep: { position: Vector3; surface: SurfaceKind; heavy: boolean };

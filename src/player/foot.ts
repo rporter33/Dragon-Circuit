@@ -3,7 +3,7 @@
 // is sampled directly, so what you see is what you stand on.
 
 import { Vector3 } from 'three';
-import type { SurfaceKind, TerrainQuery } from '../core/types';
+import type { ContactInfo, SurfaceKind, TerrainQuery } from '../core/types';
 import { angleDelta, clamp } from '../core/math';
 import { PLAYER_TUNING as P } from './tuning';
 
@@ -29,6 +29,9 @@ const _dir = new Vector3();
 const _push = new Vector3();
 const _n = new Vector3();
 const _hip = new Vector3();
+const _info: ContactInfo = { soft: false };
+/** Heights (m above the feet) of the body probes that keep the rider out of walls: knee, hip, chest. */
+const WALL_PROBES = [0.55, P.riderHip, 1.4];
 
 export class RiderFoot {
   /** Between the feet, on the ground when grounded. */
@@ -95,7 +98,7 @@ export class RiderFoot {
     const accel = this.grounded ? P.footAccel : P.airAccel;
     const tx = _dir.x * wish - this.velocity.x;
     const tz = _dir.z * wish - this.velocity.z;
-    const tl = Math.hypot(tx, tz);
+    const tl = Math.sqrt(tx * tx + tz * tz);
     const dv = Math.min(tl, accel * dt);
     if (tl > 1e-6) {
       this.velocity.x += (tx / tl) * dv;
@@ -126,7 +129,7 @@ export class RiderFoot {
       // Blocked: cancel the uphill part of the velocity (the slope's horizontal normal points downhill).
       const hx = g.normal.x;
       const hz = g.normal.z;
-      const hl = Math.hypot(hx, hz) || 1;
+      const hl = Math.sqrt(hx * hx + hz * hz) || 1;
       const into = (this.velocity.x * hx + this.velocity.z * hz) / hl;
       if (into < 0) {
         this.velocity.x -= (into * hx) / hl;
@@ -136,18 +139,6 @@ export class RiderFoot {
     } else {
       this.position.x = nx;
       this.position.z = nz;
-    }
-
-    // Walls (arch legs, spires, cliff rims from below): push out at hip height, horizontally.
-    _hip.set(this.position.x, this.position.y + P.riderHip, this.position.z);
-    if (terrain.collideSphere(_hip, P.riderRadius, _push, _n)) {
-      this.position.x += _push.x;
-      this.position.z += _push.z;
-      const vn = this.velocity.x * _n.x + this.velocity.z * _n.z;
-      if (vn < 0) {
-        this.velocity.x -= vn * _n.x;
-        this.velocity.z -= vn * _n.z;
-      }
     }
 
     // Vertical.
@@ -184,7 +175,20 @@ export class RiderFoot {
       this.surface = g.surface;
     }
 
-    this.speed = Math.hypot(this.velocity.x, this.velocity.z);
+    // Walls (buildings, trunks, arch legs, spires, cliff rims from below): probes at knee, hip and
+    // chest push the rider out horizontally, and the velocity into the wall goes, so the rider
+    // slides along it. Probed after the step up/down so a curb or a stair is climbed, not hit.
+    if (this.resolveWalls(terrain) && this.grounded) {
+      const gw = terrain.groundAt(this.position.x, this.position.z, this.position.y + P.stepUp);
+      if (gw && Math.abs(this.position.y - gw.y) <= P.stepDown) {
+        this.position.y = gw.y;
+        this.groundY = gw.y;
+        this.normal.copy(gw.normal);
+        this.surface = gw.surface;
+      }
+    }
+
+    this.speed = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.z * this.velocity.z);
     if (this.grounded && this.speed > 0.3) {
       this.stride += this.speed * dt;
       // Longer strides at speed: ~0.9 m strolling, ~1.5 m jogging, ~2.3 m sprinting.
@@ -195,5 +199,28 @@ export class RiderFoot {
       }
     }
     return r;
+  }
+
+  /** Push the rider out of solid walls (foliage is walked through). True if anything pushed. */
+  private resolveWalls(terrain: TerrainQuery): boolean {
+    let pushed = false;
+    for (const h of WALL_PROBES) {
+      _hip.set(this.position.x, this.position.y + h, this.position.z);
+      if (!terrain.collideSphere(_hip, P.riderRadius, _push, _n, _info) || _info.soft) continue;
+      const hl = Math.sqrt(_push.x * _push.x + _push.z * _push.z);
+      // A purely vertical push is a ceiling or the top of a step: not a wall.
+      if (hl < 1e-4) continue;
+      this.position.x += _push.x;
+      this.position.z += _push.z;
+      const nx = _push.x / hl;
+      const nz = _push.z / hl;
+      const vn = this.velocity.x * nx + this.velocity.z * nz;
+      if (vn < 0) {
+        this.velocity.x -= vn * nx;
+        this.velocity.z -= vn * nz;
+      }
+      pushed = true;
+    }
+    return pushed;
   }
 }

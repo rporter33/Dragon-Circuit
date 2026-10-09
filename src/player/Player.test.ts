@@ -8,6 +8,8 @@ import { DEFAULT_SETTINGS } from '../game/settings';
 import { LAYOUT } from '../world/layout';
 import { Terrain } from '../world/terrain';
 import { BREED_ORDER, BREEDS } from '../flight/breeds';
+import { yawQuat } from '../flight/telemetry';
+import { DEG } from '../core/math';
 import { Player } from './Player';
 import { RiderFoot } from './foot';
 import { computePrompt } from './prompts';
@@ -27,11 +29,19 @@ interface Rig {
   count(type: keyof GameEvents): number;
 }
 
-function rig(breed: BreedId = 'harrier', opts: { holdToFlap?: boolean; wind?: Vector3 } = {}): Rig {
+function rig(breed: BreedId = 'harrier', opts: { holdToFlap?: boolean; wind?: Vector3; daylight?: number } = {}): Rig {
   const events = new EventBus<GameEvents>();
   const settings = { ...DEFAULT_SETTINGS, holdToFlap: opts.holdToFlap ?? true };
   const wind = opts.wind ?? new Vector3();
-  const player = new Player({ terrain, env: { windAt: (_p, o) => o.copy(wind), terrain }, events, breed, settings: () => settings });
+  const daylight = opts.daylight;
+  const player = new Player({
+    terrain,
+    env: { windAt: (_p, o) => o.copy(wind), terrain },
+    events,
+    breed,
+    settings: () => settings,
+    daylight: daylight === undefined ? undefined : () => daylight,
+  });
   const r: Rig = {
     player,
     events,
@@ -113,10 +123,17 @@ describe('new game', () => {
     expect(r.player.riderPosition.distanceTo(rider0)).toBeLessThan(0.01);
     expect(r.player.position.distanceTo(w0)).toBeLessThan(0.01);
     expect(r.player.wyvernPose.gait).toBe('idle');
-    // Call it (interact away from the wyvern and the stable): the rider waves, it comes over.
-    r.run(12, pressAt(r.t + 0.1, 'interact'));
-    expect(r.player.wyvernDistance).toBeLessThan(P.followStop + 1);
+    // Call it (interact away from the wyvern and the stable): the rider waves, it comes over,
+    // right up to its rider and facing them, so the next press mounts (PLAY-09).
+    r.run(14, pressAt(r.t + 0.1, 'interact'));
+    expect(r.player.wyvernDistance).toBeLessThan(P.mountRange);
     expect(r.count('footstep')).toBeGreaterThan(3);
+    expect(computePrompt(r.player, LAYOUT)?.action).toBe('mount');
+    const w = r.player.companion.walker;
+    const toRider = Math.atan2(r.player.riderPosition.x - w.position.x, r.player.riderPosition.z - w.position.z);
+    expect(Math.abs(Math.atan2(Math.sin(toRider - w.yaw), Math.cos(toRider - w.yaw)))).toBeLessThan(0.4);
+    r.run(1, pressAt(r.t + 0.1, 'interact'));
+    expect(['mounting', 'landed']).toContain(r.player.mode);
   });
 });
 
@@ -131,6 +148,20 @@ describe('takeoff and landing', () => {
       expect(r.modes()).toEqual(['flying']);
       expect(r.count('takeoff')).toBe(1);
       expect(r.player.position.y - g0).toBeGreaterThan(10);
+    });
+  }
+
+  for (const id of BREED_ORDER) {
+    it(`${id}: one press of take off climbs away instead of hopping (PLY-04)`, () => {
+      const r = rig(id);
+      r.player.teleport(new Vector3(0, 250, -40), 0, 'landed');
+      const g0 = groundAt(0, -40).y;
+      r.log.length = 0;
+      // A 0.1 s press, then hands off.
+      r.run(5, (inp, t) => (inp.flight.flap = t < 0.1 ? 1 : 0));
+      expect(r.player.mode).toBe('flying');
+      expect(r.count('touchdown')).toBe(0);
+      expect(r.player.position.y - g0 - BREEDS[id].standHeight).toBeGreaterThan(4);
     });
   }
 
@@ -195,11 +226,176 @@ describe('takeoff and landing', () => {
     const r = rig();
     r.player.teleport(new Vector3(0, 250, 0), 0, 'landed');
     const x0 = r.player.position.x;
-    // Camera facing +X (yaw 90°): stick forward means east.
-    r.run(3, (inp) => (inp.foot.moveY = 1), Math.PI / 2);
+    // Camera facing +X (yaw 90°): stick forward (a full pad stick) means east.
+    r.run(3, (inp) => {
+      inp.device = 'gamepad';
+      inp.foot.moveY = 1;
+    }, Math.PI / 2);
     expect(r.player.position.x - x0).toBeGreaterThan(8);
     expect(r.player.wyvernPose.gait).toBe('run');
     expect(r.count('footstep')).toBeGreaterThan(2);
+  });
+
+  it('on the keyboard W walks the mounted wyvern and Shift gallops (PLY-03)', () => {
+    const speed = (sprint: boolean) => {
+      const r = rig();
+      r.player.teleport(new Vector3(0, 250, 0), 0, 'landed');
+      r.run(3, (inp) => {
+        inp.foot.moveY = 1;
+        inp.foot.sprint = sprint;
+      }, Math.PI / 2);
+      return { speed: r.player.wyvernPose.groundSpeed, gait: r.player.wyvernPose.gait };
+    };
+    const walk = speed(false);
+    const gallop = speed(true);
+    expect(walk.gait).toBe('walk');
+    expect(walk.speed).toBeLessThan(BREEDS.harrier.groundSpeed * 0.55);
+    expect(gallop.gait).toBe('run');
+    expect(gallop.speed).toBeGreaterThan(BREEDS.harrier.groundSpeed * 0.9);
+  });
+
+  it('footsteps land per foot on the gait clock: four contacts a cycle, hind feet heavy', () => {
+    const r = rig();
+    r.player.teleport(new Vector3(0, 250, 0), 0, 'landed');
+    const steps: GameEvents['footstep'][] = [];
+    const bodyAt: Vector3[] = [];
+    r.events.on('footstep', (p) => {
+      steps.push(p);
+      bodyAt.push(r.player.model.state.position.clone());
+    });
+    r.run(1); // settle
+    steps.length = 0;
+    bodyAt.length = 0;
+    const x0 = r.player.position.x;
+    r.run(4, (inp) => (inp.foot.moveY = 1), Math.PI / 2);
+    const walked = r.player.position.x - x0;
+    // Walking: one cycle per 1.55 standHeights, four feet each.
+    const cycles = walked / (1.55 * BREEDS.harrier.standHeight);
+    expect(steps.length).toBeGreaterThan(cycles * 4 - 3);
+    expect(steps.length).toBeLessThan(cycles * 4 + 4);
+    expect(steps.filter((p) => p.heavy).length).toBeGreaterThan(steps.length * 0.35);
+    expect(steps.filter((p) => !p.heavy).length).toBeGreaterThan(steps.length * 0.35);
+    // Each on the ground beside the body, not at its center.
+    steps.forEach((p, i) => {
+      const body = bodyAt[i];
+      expect(body.y - p.position.y).toBeCloseTo(BREEDS.harrier.standHeight, 0);
+      const off = Math.hypot(p.position.x - body.x, p.position.z - body.z);
+      expect(off).toBeGreaterThan(BREEDS.harrier.standHeight * 0.3);
+      expect(off).toBeLessThan(BREEDS.harrier.standHeight * 1.2);
+    });
+    expect(r.player.wyvernPose.gaitPhase).toBeGreaterThanOrEqual(0);
+    expect(r.player.wyvernPose.gaitPhase).toBeLessThan(1);
+  });
+});
+
+describe('landing and resting', () => {
+  it('following the prompt (flare from the "Flare now" height) lands cleanly: no crash, no bounce (PLY-02)', () => {
+    for (const id of BREED_ORDER) {
+      const r = rig(id);
+      const g = groundAt(0, -60);
+      r.player.teleport(new Vector3(0, g.y + BREEDS[id].standHeight + 22, -110), 0, 'flying', r.player.model.derived.vCruise);
+      r.log.length = 0;
+      let flaring = false;
+      r.run(16, (inp) => {
+        const p = computePrompt(r.player, LAYOUT);
+        if (p?.text === 'Flare now') flaring = true;
+        // A hands-off glide in, then a full flare when the prompt says so.
+        if (flaring) inp.flight.flare = 1;
+      });
+      expect(flaring, id).toBe(true);
+      expect(r.player.mode, id).toBe('landed');
+      expect(r.count('terrainHit'), id).toBe(0);
+      const td = r.log.find((e) => e.type === 'touchdown')!.payload as GameEvents['touchdown'];
+      expect(td.impact, id).toBeLessThan(P.landSinkFlared);
+    }
+  });
+
+  it('landing refills the meter in about two seconds and a moment of rest makes the wyvern Rested', () => {
+    const r = rig();
+    const toasts: GameEvents['toast'][] = [];
+    r.events.on('toast', (t) => toasts.push(t));
+    const g = groundAt(0, -60);
+    // A long flight first (rest is earned by flying), down to an empty meter.
+    r.player.teleport(new Vector3(0, g.y + 400, -60), 0, 'flying', 24);
+    r.run(16, (inp) => (inp.flight.flap = 1));
+    expect(r.player.flight.stamina).toBeLessThan(0.05);
+    expect(r.player.rested).toBe(0);
+    r.player.teleport(new Vector3(0, 250, -60), 0, 'landed');
+    r.run(2.1);
+    expect(r.player.flight.stamina).toBeGreaterThan(0.99);
+    // Rested: the bonus is full, the wings shake out over ~1.4 s, one unobtrusive toast.
+    expect(r.player.rested).toBeGreaterThan(0.99);
+    expect(r.player.wyvernPose.ruffle!).toBeGreaterThan(0);
+    r.run(0.7);
+    expect(r.player.wyvernPose.ruffle!).toBeGreaterThan(0.3);
+    expect(r.player.wyvernPose.ruffle!).toBeLessThan(0.8);
+    r.run(1);
+    expect(r.player.wyvernPose.ruffle).toBe(0);
+    expect(toasts.length).toBe(1);
+    expect(toasts[0].text).toMatch(/Rested/);
+    // It lasts (40% more capacity), then fades over its 90 s.
+    expect(r.player.model.capacity).toBeCloseTo(1 + P.restedCapacity, 3);
+    r.run(30);
+    expect(r.player.rested).toBeGreaterThan(0.5);
+    r.run(70);
+    expect(r.player.rested).toBe(0);
+    expect(r.player.model.capacity).toBe(1);
+  });
+
+  it('by day the rest is basking: Sun-warmed a little sooner, with its own toast', () => {
+    const rest = (daylight: number) => {
+      const r = rig('harrier', { daylight });
+      const toasts: GameEvents['toast'][] = [];
+      r.events.on('toast', (t) => toasts.push(t));
+      r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 24);
+      r.run(6);
+      r.player.teleport(new Vector3(0, 250, -60), 0, 'landed');
+      let t = 0;
+      while (r.player.rested === 0 && t < 5) {
+        r.run(0.05);
+        t += 0.05;
+      }
+      return { t, text: toasts[0]?.text ?? '' };
+    };
+    const day = rest(1);
+    const night = rest(0);
+    expect(day.text).toMatch(/^Sun-warmed/);
+    expect(night.text).toMatch(/^Rested/);
+    expect(day.t).toBeLessThan(night.t - 0.4);
+    // Same bonus either way; night never waits longer than the plain rest.
+    expect(night.t).toBeLessThan(P.restTime + 0.2);
+  });
+
+  it('is not Rested without a flight first (no ruffle at a new game)', () => {
+    const r = rig();
+    r.player.placeAtSpawn();
+    r.run(5);
+    expect(r.player.rested).toBe(0);
+    expect(r.player.wyvernPose.ruffle ?? 0).toBe(0);
+  });
+
+  it('Rested makes the flapping last longer in the air', () => {
+    const flapFor = (rested: boolean) => {
+      const r = rig();
+      if (rested) {
+        r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 24);
+        r.run(6);
+        r.player.teleport(new Vector3(0, 250, -60), 0, 'landed');
+        r.run(2.5);
+        expect(r.player.rested).toBeGreaterThan(0.9);
+      }
+      r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 24);
+      r.player.model.state.stamina = 1;
+      let t = 0;
+      while (r.player.flight.stamina > 0.01 && t < 40) {
+        r.run(0.1, (inp) => (inp.flight.flap = 1));
+        t += 0.1;
+      }
+      return t;
+    };
+    const plain = flapFor(false);
+    const rested = flapFor(true);
+    expect(rested / plain).toBeGreaterThan(1.3);
   });
 });
 
@@ -319,6 +515,29 @@ describe('respawn', () => {
   });
 });
 
+describe("the world's edge (PLAY-16)", () => {
+  it('the boundary storm turns a hands-off wyvern back toward the islands', () => {
+    const r = rig();
+    const R = LAYOUT.boundaryRadius;
+    // Out past the edge, flying straight outward along +x (yaw +90°).
+    r.player.teleport(new Vector3(R + 150, 900, 0), Math.PI / 2, 'flying', 24);
+    r.run(14);
+    const v = r.player.flight.velocity;
+    const p = r.player.position;
+    // Now heading back in: the velocity points toward the centre, not away from it.
+    const inward = -(v.x * p.x + v.z * p.z) / (Math.hypot(v.x, v.z) * Math.hypot(p.x, p.z));
+    expect(inward).toBeGreaterThan(0.6);
+  });
+
+  it('well inside the archipelago nothing steers', () => {
+    const r = rig();
+    r.player.teleport(new Vector3(800, 900, 0), Math.PI / 2, 'flying', 24);
+    r.run(6);
+    const v = r.player.flight.velocity;
+    expect(Math.abs(Math.atan2(v.x, v.z) - Math.PI / 2)).toBeLessThan(3 * DEG);
+  });
+});
+
 describe('input handling', () => {
   it('tap-to-flap: one beat per press', () => {
     const r = rig('harrier', { holdToFlap: false });
@@ -424,7 +643,7 @@ describe('prompts', () => {
     // The wyvern stands 4.5 m away, so mounting wins over the stable door.
     expect(computePrompt(r.player, LAYOUT)?.action).toBe('mount');
     r.player.teleport(new Vector3(0, 250, 60), 0, 'landed');
-    expect(computePrompt(r.player, LAYOUT)?.action).toBe('flap');
+    expect(computePrompt(r.player, LAYOUT)).toEqual({ action: 'flap', text: 'Take off (hold to climb)' });
     r.run(2);
     expect(computePrompt(r.player, LAYOUT)?.action).toBe('dismount');
     const g = groundAt(0, -60);
@@ -432,13 +651,36 @@ describe('prompts', () => {
     r.run(1);
     // Not straight after taking off / teleporting...
     expect(computePrompt(r.player, LAYOUT)).toBeNull();
-    r.run(2.5);
-    // ...but once it's been gliding down toward the ground for a while.
-    expect(computePrompt(r.player, LAYOUT)?.action).toBe('flare');
-    r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 13);
-    // Hauled back below stall speed: the stall breaks about a second in.
-    r.run(1.3, (inp) => (inp.flight.pitch = 1));
-    expect(computePrompt(r.player, LAYOUT)?.text).toMatch(/Stalling/);
+    // ...but once it's been gliding down toward the ground for a while, and only when it is
+    // about to arrive.
+    let flareAt = -1;
+    for (let i = 0; i < 100 && flareAt < 0; i++) {
+      r.run(0.05);
+      if (computePrompt(r.player, LAYOUT)?.text === 'Flare now') flareAt = r.player.heightAboveGround! - BREEDS.harrier.standHeight;
+    }
+    expect(flareAt).toBeGreaterThan(0);
+    expect(flareAt).toBeLessThan(10);
+    // A tail slide (straight up, coasting until the air runs out) is what stalls a wyvern now.
+    r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 35);
+    r.player.model.reset(new Vector3(0, 900, 0), yawQuat(0, -88 * DEG), new Vector3(0, 35, 0));
+    for (let i = 0; i < 160 && r.player.flight.stall <= 0.5; i++) r.run(0.05, (inp) => (inp.flight.pitch = -0.35));
+    expect(r.player.flight.stall).toBeGreaterThan(0.5);
+    // The glyph is the control the text asks for: beat the wings.
+    expect(computePrompt(r.player, LAYOUT)).toEqual({ action: 'flap', text: 'Stalling — ease off and beat your wings' });
+    // Flapping on an empty meter: no scolding, a suggestion to glide or land (and no button).
+    r.player.teleport(new Vector3(0, 900, 0), 0, 'flying', 24);
+    r.player.model.state.stamina = 0.1;
+    r.run(0.5, (inp) => (inp.flight.flap = 1));
+    expect(computePrompt(r.player, LAYOUT)).toEqual({ action: 'rest', text: 'Low on stamina — glide or land to rest' });
+  });
+
+  it('returns the same prompt object frame after frame (no per-frame allocation)', () => {
+    const r = rig();
+    r.player.teleport(new Vector3(0, 250, 60), 0, 'landed');
+    const a = computePrompt(r.player, LAYOUT);
+    r.run(DT);
+    expect(a).not.toBeNull();
+    expect(computePrompt(r.player, LAYOUT)).toBe(a);
   });
 
   it('offers the stable door on foot away from the wyvern', () => {

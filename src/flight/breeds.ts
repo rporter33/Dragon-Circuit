@@ -6,13 +6,18 @@
 //     to change direction and need strong flaps to climb.
 //
 // Measured with src/flight/telemetry.ts (still air, 120 Hz) — FlightModel.test.ts and
-// breeds.test.ts hold them. Stall = 1 g stall speed / where a slow hauled-back stall breaks.
+// breeds.test.ts hold them. A held pull no longer breaks the stall (soft protection): stall is
+// the 1 g stall speed. Climb is a held-flap climb; stamina is seconds of full flapping (×1.4 when
+// Rested), and an empty meter still gives weak beats.
 //
-//              cruise  stall      best glide  tucked dive  roll rate  roll in/out  climb    stamina
-//   harrier    24 m/s  14.5/14.8  8.9 : 1     81 m/s       1.76 r/s   0.34/0.34 s  5.0 m/s  9 s
-//   skimmer    23      13.6/13.9  7.3         74           2.53       0.33/0.33    4.2      6.5
-//   galewing   22      13.3/13.1  12.3        75           1.01       0.62/0.57    3.3      11
-//   ironback   27      16.4/16.6  8.0         89           1.16       0.48/0.48    3.2      8
+//              cruise  stall  best glide  tucked dive  roll rate  roll in/out  climb    stamina  beat
+//   harrier    24 m/s  14.5   8.9 : 1     89 m/s       1.76 r/s   0.34/0.19 s  5.0 m/s  13.5 s   1.45 Hz
+//   skimmer    22      13.3   7.8         82           2.53       0.33/0.17    5.5      10       2.1
+//   galewing   22      13.3   12.3        83           1.01       0.62/0.31    3.4      16.5     0.95
+//   ironback   27      16.4   8.3         98           1.16       0.48/0.28    3.4      12       1.0
+//
+// Big breeds beat slowly, and each downstroke is a bigger surge (thrust ÷ rate per kg: galewing
+// 16.9, ironback 16.3, harrier 15.2, skimmer 12.2 N·s/kg).
 //
 // The 0..1 display ratings below are read off that table: speed (dive + top flapping speed),
 // agility (roll rate), glide (best glide ratio), power (sustained climb), stamina (seconds).
@@ -41,8 +46,8 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     inducedK: inducedK(13, 38),
     flapThrust: 14300,
     flapLift: 6500,
-    flapRate: 1.6,
-    staminaSeconds: 9,
+    flapRate: 1.45,
+    staminaSeconds: 13.5,
     staminaRegen: 0.12,
     rollAuthority: 5.6,
     pitchAuthority: 3.4,
@@ -57,19 +62,19 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     id: 'skimmer',
     name: 'Skimmer',
     tagline: 'Light and twitchy',
-    description: 'Small, quick-winged and nervous. Turns on a coin, but tires fast and bleeds speed in a glide.',
+    description: 'Small, quick-winged and nervous. Turns on a coin and sprints on rapid wingbeats, but tires fast and bleeds speed in a glide.',
     mass: 470,
     wingArea: 30,
     wingspan: 11.2,
     liftSlope: 4.4,
-    clMax: 1.5,
+    clMax: 1.57,
     stallAngle: 18 * DEG,
-    cd0: 0.043,
+    cd0: 0.036,
     inducedK: inducedK(11.2, 30),
-    flapThrust: 10700,
+    flapThrust: 12000,
     flapLift: 4800,
-    flapRate: 2.3,
-    staminaSeconds: 6.5,
+    flapRate: 2.1,
+    staminaSeconds: 10,
     staminaRegen: 0.16,
     rollAuthority: 8.5,
     pitchAuthority: 4.6,
@@ -78,7 +83,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     maxRollRate: 2.6,
     groundSpeed: 11,
     standHeight: 2.1,
-    ratings: { speed: 0.45, agility: 0.95, glide: 0.45, power: 0.7, stamina: 0.55 },
+    ratings: { speed: 0.55, agility: 0.95, glide: 0.45, power: 0.9, stamina: 0.55 },
   },
   galewing: {
     id: 'galewing',
@@ -94,9 +99,9 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     cd0: 0.024,
     inducedK: inducedK(17.5, 46, 0.85),
     flapThrust: 10300,
-    flapLift: 6600,
-    flapRate: 1.15,
-    staminaSeconds: 11,
+    flapLift: 7000,
+    flapRate: 0.95,
+    staminaSeconds: 16.5,
     staminaRegen: 0.1,
     rollAuthority: 1.9,
     pitchAuthority: 2.6,
@@ -118,13 +123,13 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     liftSlope: 4.4,
     clMax: 1.46,
     stallAngle: 16 * DEG,
-    cd0: 0.034,
+    cd0: 0.031,
     inducedK: inducedK(13.5, 42, 0.78),
     flapThrust: 15000,
     flapLift: 10500,
-    flapRate: 1.25,
-    staminaSeconds: 8,
-    staminaRegen: 0.1,
+    flapRate: 1.0,
+    staminaSeconds: 12,
+    staminaRegen: 0.14,
     rollAuthority: 2.3,
     pitchAuthority: 2.5,
     yawAuthority: 0.9,

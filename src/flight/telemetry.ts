@@ -218,14 +218,15 @@ export function measureClimb(breed: BreedStats, seconds = 40): ClimbResult {
   return best;
 }
 
-/** Seconds of continuous full-strength flapping from full stamina until winded. */
-export function measureEndurance(breed: BreedStats): number {
+/** Seconds of continuous full-strength flapping from a full meter until it is empty. */
+export function measureEndurance(breed: BreedStats, capacity = 1): number {
   const m = launch(breed, new FlightModel(breed).derived.vCruise);
+  m.capacity = capacity;
   const env = stillAir();
   const input = neutralInput();
   input.flap = 1;
   let t = 0;
-  while (!m.state.winded && t < 120) {
+  while (m.state.stamina > 1e-4 && t < 120) {
     m.step(SIM_DT, input, env);
     t += SIM_DT;
   }
@@ -255,7 +256,7 @@ export function measureLevelFlapSpeed(breed: BreedStats): number {
   return speed / n;
 }
 
-/** Slow down holding altitude until the stall breaks; airspeed at stallStart. */
+/** Slow down holding altitude until the stall breaks; airspeed at stallStart (NaN: it never stalled). */
 export function measureStallSpeed(breed: BreedStats): number {
   const m = launch(breed, new FlightModel(breed).derived.vCruise);
   const env = stillAir();
@@ -268,6 +269,88 @@ export function measureStallSpeed(breed: BreedStats): number {
     if (m.state.stall > 0.5) return m.state.airspeed;
   }
   return NaN;
+}
+
+export interface MushResult {
+  /** Lowest airspeed reached while trying to hold altitude with the stick (m/s). */
+  minSpeed: number;
+  /** Settled airspeed and sink over the last 10 s. */
+  speed: number;
+  sink: number;
+  /** Deepest stall seen (0..1); a mush stays well under 0.5. */
+  maxStall: number;
+}
+
+/**
+ * Slow flight: try to hold altitude with the stick (hauling back as the speed bleeds away) for
+ * 40 s. With the soft stall protection it settles into a slow, sinking mush instead of stalling.
+ */
+export function measureMush(breed: BreedStats): MushResult {
+  const m = launch(breed, new FlightModel(breed).derived.vCruise);
+  const env = stillAir();
+  const input = neutralInput();
+  const y0 = m.state.position.y;
+  let minSpeed = Infinity;
+  let maxStall = 0;
+  let speed = 0;
+  let sink = 0;
+  let n = 0;
+  for (let i = 0; i < 40 / SIM_DT; i++) {
+    const dy = m.state.position.y - y0;
+    input.pitch = clamp(-dy * 0.2 - m.state.velocity.y * 0.4, -1, 1);
+    m.step(SIM_DT, input, env);
+    minSpeed = Math.min(minSpeed, m.state.airspeed);
+    maxStall = Math.max(maxStall, m.state.stall);
+    if (i * SIM_DT > 30) {
+      speed += m.state.airspeed;
+      sink -= m.state.velocity.y;
+      n++;
+    }
+  }
+  return { minSpeed, speed: speed / n, sink: sink / n, maxStall };
+}
+
+export interface TailSlideResult {
+  /** The zoom ran out of air and the wing let go. */
+  stalled: boolean;
+  /** Seconds from the stall break until back on a normal glide, hands off. */
+  seconds: number;
+  /** Height lost from the stall break until back on a normal glide (m). */
+  lost: number;
+  /** Bank at the moment the hands-off recovery began, signed (rad): which wing dropped. */
+  bankAtRelease: number;
+}
+
+/**
+ * The one sure way to stall: point straight up at `speed`, unload the wing (a little forward
+ * stick) and coast up until the air runs out — a tail slide — then let go. Measures how long and
+ * how much height the hands-off recovery takes.
+ */
+export function measureTailSlide(breed: BreedStats, speed = 35): TailSlideResult {
+  const m = launch(breed, speed, 3000, -88 * DEG);
+  const env = stillAir();
+  const input = neutralInput();
+  input.pitch = -0.35;
+  let t = 0;
+  while (m.state.stall < 0.5 && t < 20) {
+    m.step(SIM_DT, input, env);
+    t += SIM_DT;
+  }
+  const stalled = m.state.stall >= 0.5;
+  // Hold it a moment longer (the wing lets go), then hands off.
+  for (let i = 0; i < 0.5 / SIM_DT; i++) m.step(SIM_DT, input, env);
+  const bankAtRelease = bankAngle(m);
+  const y0 = m.state.position.y;
+  input.pitch = 0;
+  let tr = 0;
+  let unstalled = false;
+  while (tr < 30) {
+    m.step(SIM_DT, input, env);
+    tr += SIM_DT;
+    if (m.state.stall < 0.05) unstalled = true;
+    if (unstalled && pathAngle(m) > -8 * DEG && m.state.angularVelocity.x <= 0.02) break;
+  }
+  return { stalled, seconds: tr, lost: y0 - m.state.position.y, bankAtRelease };
 }
 
 /** Flare from `from` m/s in level flight: seconds until ground speed drops below `to`. */

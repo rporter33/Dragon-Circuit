@@ -344,14 +344,14 @@ function buildLayout(): WorldLayout {
 
   // --- Thermals --------------------------------------------------------------------------------
   const thermals: ThermalDef[] = [
-    { id: 0, x: 260, z: -60, radius: 55, strength: 9, baseY: 0, topY: 640 },
-    { id: 1, x: 620, z: -240, radius: 60, strength: 10, baseY: 0, topY: 720 },
-    { id: 2, x: -620, z: -620, radius: 50, strength: 8, baseY: 0, topY: 520 },
-    { id: 3, x: -260, z: 330, radius: 70, strength: 12, baseY: 0, topY: 1050 },
-    { id: 4, x: -1300, z: 480, radius: 55, strength: 10, baseY: 0, topY: 900 },
-    { id: 5, x: 1180, z: -1100, radius: 50, strength: 9, baseY: 0, topY: 760 },
-    { id: 6, x: 1100, z: 380, radius: 60, strength: 9, baseY: 0, topY: 820 },
-    { id: 7, x: 150, z: 760, radius: 55, strength: 11, baseY: 0, topY: 900 },
+    { id: 0, x: 260, z: -60, radius: 110, strength: 9, baseY: 0, topY: 640 },
+    { id: 1, x: 620, z: -240, radius: 120, strength: 10, baseY: 0, topY: 720 },
+    { id: 2, x: -620, z: -620, radius: 100, strength: 8, baseY: 0, topY: 520 },
+    { id: 3, x: -260, z: 330, radius: 140, strength: 12, baseY: 0, topY: 1050 },
+    { id: 4, x: -1300, z: 480, radius: 110, strength: 10, baseY: 0, topY: 900 },
+    { id: 5, x: 1180, z: -1100, radius: 100, strength: 9, baseY: 0, topY: 760 },
+    { id: 6, x: 1100, z: 380, radius: 120, strength: 9, baseY: 0, topY: 820 },
+    { id: 7, x: 150, z: 760, radius: 110, strength: 11, baseY: 0, topY: 900 },
   ];
 
   const landmarks: LandmarkDef[] = [
