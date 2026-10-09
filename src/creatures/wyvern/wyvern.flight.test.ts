@@ -216,6 +216,21 @@ describe('the beat’s shared clock', () => {
     }
   });
 
+  it('each style’s warp table (what flapPose reads) matches the exact curve', () => {
+    for (const b of BREED_ORDER) {
+      const st = FLAP_STYLES[b];
+      let worst = 0;
+      for (let i = 0; i < 5000; i++) {
+        const ph = i / 5000;
+        const f = ph * (st.warp.length - 1);
+        const j = Math.floor(f);
+        const w = st.warp[j] + (st.warp[j + 1] - st.warp[j]) * (f - j);
+        worst = Math.max(worst, Math.abs(w - strokeWarp(ph, st.down)));
+      }
+      expect(worst, b).toBeLessThan(1e-3);
+    }
+  });
+
   it('the membrane load peaks with the flight model’s power stroke', () => {
     for (const b of BREED_ORDER) {
       const st = FLAP_STYLES[b];
