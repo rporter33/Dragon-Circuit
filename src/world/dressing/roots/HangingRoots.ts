@@ -1,7 +1,8 @@
 // Meshes for the hanging roots, vines (with leaves), glowing fungal threads and moss curtains.
 // One merged mesh per island per material; everything sways slowly like heavy rope.
 
-import { BufferGeometry, Color, Group, Mesh, Vector3 } from 'three';
+import { BufferGeometry, Color, Group, Mesh, Vector3, type PerspectiveCamera } from 'three';
+import type { QualityProfile } from '../../../render/quality';
 import { mulberry32 } from '../../../core/rng';
 import { noise3 } from '../../../core/noise';
 import { GeoBuilder, tube } from '../geom';
@@ -13,7 +14,21 @@ export interface RootStats {
   strands: number;
   curtains: number;
   meshes: number;
+  /** Near-detail triangles built (all islands). */
   triangles: number;
+  /** Far-detail triangles built (all islands). */
+  farTriangles: number;
+}
+
+/** Islands farther than this (m from their rim, at 'high') draw their roots at far detail. */
+const FAR_DIST: Record<QualityProfile['level'], number> = { low: 160, medium: 260, high: 380, ultra: 520 };
+
+interface IslandRoots {
+  near: Group;
+  far: Group;
+  center: Vector3;
+  radius: number;
+  shape: { normRadius(x: number, z: number): number; topHeight(x: number, z: number): number };
 }
 
 const barkTop = new Color('#3f3129');
@@ -31,8 +46,14 @@ function rootRadius(s: Strand, t: number, i: number): number {
   return base * (1 + 0.7 * Math.pow(1 - t, 8)) * (1 + 0.12 * Math.sin(i * 1.7 + s.r0 * 10));
 }
 
+/** Far detail: every other point along a strand, three sides to a tube. */
+let farDetail = false;
+/** Lean near detail ('low' quality): full length, fewer sides. */
+let leanNear = false;
+
 function strandGeometry(s: Strand, b: GeoBuilder): void {
-  const pts = s.points.map((p) => new Vector3(p.x, p.y, p.z));
+  let pts = s.points.map((p) => new Vector3(p.x, p.y, p.z));
+  if (farDetail && pts.length > 4) pts = pts.filter((_, i) => i % 2 === 0 || i === pts.length - 1);
   const n = pts.length;
   const len = pts.reduce((acc, p, i) => (i ? acc + p.distanceTo(pts[i - 1]) : 0), 0);
   // Big roots are braids of two or three twisted strands: they read as gnarled, not as hoses.
@@ -58,7 +79,7 @@ function strandGeometry(s: Strand, b: GeoBuilder): void {
 function addStrandTube(s: Strand, b: GeoBuilder, pts: Vector3[], len: number, radius: (t: number, i: number) => number, top: Vector3): void {
   const n = pts.length;
   const radii = pts.map((_, i) => radius(i / (n - 1), i));
-  const radial = s.kind === 'root' ? (s.r0 > 1.2 ? 6 : 5) : 3;
+  const radial = farDetail || leanNear ? (s.kind === 'root' && s.r0 > 1.2 ? 4 : 3) : s.kind === 'root' ? (s.r0 > 1.2 ? 6 : 5) : 3;
   const geo = tube(pts, radii, radial, true);
   // Map each vertex to its fraction down the strand by height (strands hang roughly downward).
   const span = Math.max(1, top.y - pts[n - 1].y);
@@ -122,8 +143,8 @@ function vineLeaves(s: Strand, cards: GeoBuilder, seed: number): void {
 /** A shaggy curtain of hanging moss with a ragged hem. */
 function curtainGeometry(c: MossCurtain, shape: { bottomHeight(x: number, z: number): number }, cards: GeoBuilder): void {
   const rnd = mulberry32(c.seed);
-  const cols = Math.max(4, Math.round(c.width / 0.7));
-  const rows = 7;
+  const cols = Math.max(4, Math.round(c.width / (farDetail ? 1.6 : 0.7)));
+  const rows = farDetail ? 3 : 7;
   const sx = -c.nz;
   const sz = c.nx;
   const verts: number[] = [];
@@ -168,11 +189,22 @@ function curtainGeometry(c: MossCurtain, shape: { bottomHeight(x: number, z: num
 
 export class HangingRoots {
   readonly group = new Group();
-  readonly stats: RootStats = { strands: 0, curtains: 0, meshes: 0, triangles: 0 };
+  readonly stats: RootStats = { strands: 0, curtains: 0, meshes: 0, triangles: 0, farTriangles: 0 };
+  private islands: IslandRoots[] = [];
+  private farDist: number;
+  /** Thin strands (vines, glow threads, slim roots) kept at this quality. */
+  private thinKeep: number;
+  private lean: boolean;
 
-  /** Builds one island per deferred task (Rootfall alone is a few hundred thousand triangles). */
-  constructor(terrain: Terrain, plan: RootPlan, defer: (task: () => void) => void = (t) => t()) {
+  /**
+   * Builds one island per deferred task (Rootfall alone is a few hundred thousand triangles), in
+   * two levels of detail: near, and a far version at about a third of the triangles.
+   */
+  constructor(terrain: Terrain, plan: RootPlan, defer: (task: () => void) => void = (t) => t(), quality?: QualityProfile) {
     this.group.name = 'dressing:roots';
+    this.farDist = FAR_DIST[quality?.level ?? 'high'];
+    this.thinKeep = Math.min(1, 0.45 + 0.55 * (quality?.propDensity ?? 1));
+    this.lean = quality?.level === 'low';
     const islands = [...new Set<number>([...plan.strands.map((s) => s.islandId), ...plan.curtains.map((c) => c.islandId)])];
     // Nearest the Roost first.
     const dist = (id: number) => {
@@ -185,36 +217,69 @@ export class HangingRoots {
 
   private buildIsland(terrain: Terrain, plan: RootPlan, id: number): void {
     const shape = terrain.islands.find((s) => s.def.id === id)!;
-    const solid = new GeoBuilder();
-    const cards = new GeoBuilder();
-    const glow = new GeoBuilder();
-    let k = 0;
-    for (const s of plan.strands) {
-      if (s.islandId !== id) continue;
-      strandGeometry(s, s.kind === 'glow' ? glow : solid);
-      if (s.kind === 'vine') vineLeaves(s, cards, id * 1000 + k);
-      k++;
-      this.stats.strands++;
+    const d = shape.def;
+    const entry: IslandRoots = { near: new Group(), far: new Group(), center: new Vector3(d.x, d.y - d.depth * 0.5, d.z), radius: shape.maxRadius + d.depth * 0.5, shape };
+    entry.far.visible = false;
+    leanNear = this.lean;
+    for (const far of [false, true]) {
+      farDetail = far;
+      const solid = new GeoBuilder();
+      const cards = new GeoBuilder();
+      const glow = new GeoBuilder();
+      let k = 0;
+      for (const s of plan.strands) {
+        if (s.islandId !== id) continue;
+        k++;
+        // Thin strands thin out at lower quality (deterministically), and further at far detail.
+        const thin = s.kind !== 'root' || s.r0 < 0.6;
+        const h = ((k * 2654435761) >>> 0) / 4294967296;
+        if (thin && h > this.thinKeep * (far ? 0.6 : 1)) continue;
+        strandGeometry(s, s.kind === 'glow' ? glow : solid);
+        if (s.kind === 'vine' && !far) vineLeaves(s, cards, id * 1000 + k);
+        if (!far) this.stats.strands++;
+      }
+      for (const c of plan.curtains) {
+        if (c.islandId !== id) continue;
+        curtainGeometry(c, shape, cards);
+        if (!far) this.stats.curtains++;
+      }
+      const into = far ? entry.far : entry.near;
+      this.addMesh(into, solid, dressMaterial({ sway: 'root' }), `roots-${id}${far ? '-far' : ''}`, far);
+      this.addMesh(into, cards, dressMaterial({ sway: 'root', doubleSide: true, keepNormals: true }), `moss-${id}${far ? '-far' : ''}`, far);
+      this.addMesh(into, glow, dressMaterial({ sway: 'root', glow: true, glowDay: 0.2, glowNight: 3.2 }), `glowroots-${id}${far ? '-far' : ''}`, far);
     }
-    for (const c of plan.curtains) {
-      if (c.islandId !== id) continue;
-      curtainGeometry(c, shape, cards);
-      this.stats.curtains++;
-    }
-    this.addMesh(solid, dressMaterial({ sway: 'root' }), `roots-${id}`);
-    this.addMesh(cards, dressMaterial({ sway: 'root', doubleSide: true, keepNormals: true }), `moss-${id}`);
-    this.addMesh(glow, dressMaterial({ sway: 'root', glow: true, glowDay: 0.2, glowNight: 3.2 }), `glowroots-${id}`);
+    farDetail = false;
+    leanNear = false;
+    this.group.add(entry.near, entry.far);
+    this.islands.push(entry);
   }
 
-  private addMesh(b: GeoBuilder, mat: ReturnType<typeof dressMaterial>, name: string): void {
+  private addMesh(into: Group, b: GeoBuilder, mat: ReturnType<typeof dressMaterial>, name: string, far: boolean): void {
     if (b.isEmpty()) return;
     const geo: BufferGeometry = b.build(true);
     const m = new Mesh(geo, mat);
     m.name = name;
     m.receiveShadow = true;
     m.matrixAutoUpdate = false;
-    this.group.add(m);
+    into.add(m);
     this.stats.meshes++;
-    this.stats.triangles += (geo.getIndex()?.count ?? 0) / 3;
+    if (far) this.stats.farTriangles += (geo.getIndex()?.count ?? 0) / 3;
+    else this.stats.triangles += (geo.getIndex()?.count ?? 0) / 3;
+  }
+
+  /** Near or far detail per island, by the camera's distance from its roots. */
+  update(camera: PerspectiveCamera): void {
+    const c = camera.position;
+    for (const e of this.islands) {
+      // Standing on (or flying low over) the island itself, its rock hides everything under it.
+      const hidden = c.y > e.center.y && e.shape.normRadius(c.x, c.z) < 0.9 && c.y > e.shape.topHeight(c.x, c.z);
+      const far = c.distanceTo(e.center) - e.radius > this.farDist;
+      e.near.visible = !far && !hidden;
+      e.far.visible = far && !hidden;
+    }
+  }
+
+  setQuality(q: QualityProfile): void {
+    this.farDist = FAR_DIST[q.level];
   }
 }

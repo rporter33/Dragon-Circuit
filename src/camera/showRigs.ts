@@ -6,7 +6,7 @@ import { DEG, angleDelta, clamp, damp, smoothstep, wrapAngle } from '../core/mat
 import type { InputFrame } from '../core/types';
 import type { PlayerSystem } from '../game/contracts';
 import { boomStep, fitDistance } from './cameraMath';
-import { liftClear, sphereCast } from './collision';
+import { castBoom, liftClear, type BoomHit } from './collision';
 import { applyLook, type CameraPose, type CameraShot, type Rig, type RigContext } from './rigTypes';
 
 const UP = new Vector3(0, 1, 0);
@@ -79,10 +79,46 @@ function subjectOf(player: PlayerSystem, out: Vector3, focus: StableFocus = 'bot
 }
 
 /**
- * Title: a slow push-in from high and wide, then a gentle drift. With the rider on foot it is a
- * depth composition: the rider in the foreground, the wyvern further in, the camera low behind
- * the rider so the sky and the floating islands fill the frame beyond them. Mounted (or with
- * no rider nearby) it drifts round the wyvern instead.
+ * The title's hero composition with the rider on foot near the wyvern: a two-shot in depth, rider
+ * in the foreground on the left third, the wyvern further in on the right third (three-quarter
+ * front), the camera low so the sky and the floating islands own the frame — and the centre
+ * column clear for the logo above and the menu below. Screen positions are NDC.
+ */
+export const TITLE_SHOT = {
+  riderX: -0.44,
+  wyvernX: 0.54,
+  /** The rider's chest sits this low in frame (the horizon low, the sky owning the frame). */
+  riderY: -0.52,
+  /** The wyvern stands this many times further from the camera than the rider. */
+  depth: 2.5,
+  /** Camera height above the rider's feet (m): a low, heroic eye line. */
+  eye: 1.15,
+  /**
+   * Intro (first `introTime` s): starts a little higher (m), further back (×) and swung round
+   * (rad), then settles — a slow parallax move with the pair held in place on screen.
+   */
+  introTime: 9,
+  craneIntro: 0.6,
+  dollyIntro: 0.1,
+  swingIntro: 0.24,
+  /** Slow drift: azimuth (rad) and height (m) breathing about the pair. */
+  swayAz: 0.09,
+  swayHeight: 0.35,
+  /** Beyond this separation (m) the pair can't share a frame: the old rider-led drift takes over. */
+  maxPair: 34,
+};
+
+const riderFeet = new Vector3();
+const wyvernFeet = new Vector3();
+const pairU = new Vector3();
+const pairN = new Vector3();
+const titleHit: BoomHit = { t: Infinity, soft: false };
+
+/**
+ * Title. On foot with the wyvern close by: the hero two-shot above, held from the first frame (the
+ * intro only cranes down and pushes in, so the rider never wanders behind the menu), drifting
+ * slowly. Mounted, or with the pair far apart, it drifts round the wyvern (or behind the rider)
+ * instead.
  */
 export class TitleRig implements Rig {
   private t0 = 0;
@@ -94,35 +130,100 @@ export class TitleRig implements Rig {
   }
 
   update(dt: number, _input: InputFrame, player: PlayerSystem, ctx: RigContext, out: CameraShot): CameraShot {
+    const T = TITLE_SHOT;
     const t = ctx.time - this.t0;
-    const intro = 1 - smoothstep(0, 9, t);
+    const intro = 1 - smoothstep(0, T.introTime, t);
     const r = player.riderPose;
     const w = player.wyvernPose;
+    out.roll = 0;
+    out.fov = clamp(ctx.settings.fov - 10, 38, 70);
+    if (!r.mounted) {
+      riderFeet.copy(r.position);
+      wyvernFeet.set(w.position.x, w.groundY ?? w.position.y - player.breed.standHeight, w.position.z);
+      pairU.set(wyvernFeet.x - riderFeet.x, 0, wyvernFeet.z - riderFeet.z);
+      const L = pairU.length();
+      if (L > 2 && L < T.maxPair) return this.twoShot(dt, t, intro, L, player, ctx, out);
+    }
+    return this.drift(dt, t, intro, player, ctx, out);
+  }
+
+  /** Rider foreground-left, wyvern mid-ground-right; solved from the two positions each frame. */
+  private twoShot(dt: number, t: number, intro: number, L: number, player: PlayerSystem, ctx: RigContext, out: CameraShot): CameraShot {
+    const T = TITLE_SHOT;
+    const aspect = ctx.camera.aspect || 16 / 9;
+    const tanV = Math.tan((out.fov * DEG) / 2);
+    const tanH = tanV * aspect;
+    // Bearings of the two subjects off the view axis (rider to the left, wyvern to the right).
+    const thR = Math.atan(-T.riderX * tanH);
+    const thW = Math.atan(T.wyvernX * tanH);
+    const alpha = thR + thW;
+    const k = T.depth;
+    // Triangle rider–wyvern–camera: |C−R| = dR, |C−W| = k·dR, angle α at the camera.
+    const dR = L / Math.sqrt(Math.max(0.05, 1 + k * k - 2 * k * Math.cos(alpha)));
+    const cx = (L * L - (k * k - 1) * dR * dR) / (2 * L);
+    const cy = Math.sqrt(Math.max(0, dR * dR - cx * cx));
+    pairU.multiplyScalar(1 / L);
+    // The camera stands on the side from which the rider is on the LEFT (facing (sin, 0, cos),
+    // left = (cos, −sin)): n = (−u.z, u.x).
+    pairN.set(-pairU.z, 0, pairU.x);
+    // Slow azimuth drift about the pair's middle, and the intro's push-in.
+    const az = T.swayAz * Math.sin((t * Math.PI * 2) / 46) * (1 - intro) + T.swingIntro * intro;
+    const dolly = 1 + T.dollyIntro * intro;
+    const mx = riderFeet.x + pairU.x * L * 0.4;
+    const mz = riderFeet.z + pairU.z * L * 0.4;
+    let px = riderFeet.x + pairU.x * cx + pairN.x * cy - mx;
+    let pz = riderFeet.z + pairU.z * cx + pairN.z * cy - mz;
+    const ca = Math.cos(az);
+    const sa = Math.sin(az);
+    const rx = px * ca + pz * sa;
+    const rz = -px * sa + pz * ca;
+    px = mx + rx * dolly;
+    pz = mz + rz * dolly;
+    const groundY = Math.max(riderFeet.y, Math.min(wyvernFeet.y, riderFeet.y + 2));
+    const height = T.eye + T.craneIntro * intro + T.swayHeight * Math.sin((t * Math.PI * 2) / 53 + 1) * (1 - intro);
+    want.set(px, groundY + height, pz);
+    liftClear(ctx.terrain, want, 0.9);
+    // Keep a clear line to the pair: shorten toward their middle if something solid is in the way.
+    center.set(mx, groundY + 1.4, mz);
+    move.subVectors(want, center);
+    const len = move.length();
+    move.multiplyScalar(1 / Math.max(1e-6, len));
+    const hit = castBoom(ctx.terrain, center, move, len + 0.8, 0.6, titleHit);
+    this.boom = boomStep(this.boom, len, hit.soft ? Infinity : hit.t, hit.soft ? Math.max(hit.t, len * 0.5) : Infinity, dt, 6, 1.5);
+    out.position.copy(center).addScaledVector(move, this.boom);
+    // Aim: the rider's bearing minus its offset; the rider's chest at riderY.
+    const yawR = Math.atan2(riderFeet.x - out.position.x, riderFeet.z - out.position.z);
+    const yaw = yawR - thR * (1 / dolly);
+    const horiz = Math.hypot(riderFeet.x - out.position.x, riderFeet.z - out.position.z);
+    const below = Math.atan2(out.position.y - (riderFeet.y + 1.05), Math.max(0.5, horiz));
+    // The rider's chest at riderY — but never so low that their feet leave the frame (wide
+    // screens bring the rider closer).
+    const chest = Math.min(Math.atan(-T.riderY * tanV), Math.atan(0.88 * tanV) - Math.atan2(1.05, horiz));
+    const pitch = chest * (1 / dolly) - below;
+    out.target.set(Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw)).multiplyScalar(dR).add(out.position);
+    out.shift = 0;
+    return out;
+  }
+
+  /** Mounted, or the pair far apart: a slow drift round the wyvern (or behind the rider). */
+  private drift(dt: number, t: number, intro: number, player: PlayerSystem, ctx: RigContext, out: CameraShot): CameraShot {
+    const r = player.riderPose;
     let pivotPt: Vector3;
     if (!r.mounted) {
-      // Rider's feet → wyvern's feet, horizontally.
-      const wy = w.groundY ?? w.position.y - player.breed.standHeight;
-      dir.set(w.position.x - r.position.x, 0, w.position.z - r.position.z);
+      // Behind the rider, swung off to one side, the rider held on the left third from the start.
+      const wpos = player.wyvernPose.position;
+      dir.set(wpos.x - r.position.x, 0, wpos.z - r.position.z);
       const d = Math.max(1, dir.length());
       dir.multiplyScalar(1 / d);
-      // Behind the rider (away from the wyvern), swung off to one side so the rider never
-      // hides the wyvern; the swing breathes slowly between 0.2 and 0.8 rad.
       const az = Math.atan2(-dir.x, -dir.z) + 0.5 + 0.3 * Math.sin((t * Math.PI * 2) / 40);
-      const radius = (7.5 + 0.05 * Math.min(d, 60)) * (1 + 1.6 * intro + 0.08 * Math.sin((t * Math.PI * 2) / 31));
-      // Low, near eye level, so the horizon sits low and the sky owns the frame.
-      const height = 1.1 + 0.4 * Math.sin((t * Math.PI * 2) / 53 + 1) + 9 * intro;
+      const radius = 9 * (1 + 0.8 * intro + 0.08 * Math.sin((t * Math.PI * 2) / 31));
+      const height = 1.1 + 0.4 * Math.sin((t * Math.PI * 2) / 53 + 1) + 7 * intro;
       center.copy(r.position);
       want.set(center.x + Math.sin(az) * radius, center.y + height, center.z + Math.cos(az) * radius);
-      // Aim into the scene, between the two, lifted so the horizon sits low.
       const reach = clamp(d * 0.45, 3, 24);
-      out.target.set(
-        r.position.x + dir.x * reach,
-        Math.max(r.position.y, wy) + 3.6 + 0.08 * Math.min(d, 40) + 2 * intro,
-        r.position.z + dir.z * reach,
-      );
+      out.target.set(r.position.x + dir.x * reach, r.position.y + 3.6 + 2 * intro, r.position.z + dir.z * reach);
       center.y += 1.2;
       pivotPt = center;
-      // Lens shift: rider on the left third, wyvern on the right, the middle left for the logo.
       out.shift = 0.14;
     } else {
       const s = subjectOf(player, center);
@@ -139,17 +240,17 @@ export class TitleRig implements Rig {
     move.subVectors(want, pivotPt);
     const len = move.length();
     move.multiplyScalar(1 / Math.max(1e-6, len));
-    const hit = sphereCast(ctx.terrain, pivotPt, move, len + 0.8, 0.8);
-    this.boom = boomStep(this.boom, len, hit, Infinity, dt, 6, 1.5);
+    const hit = castBoom(ctx.terrain, pivotPt, move, len + 0.8, 0.8, titleHit);
+    this.boom = boomStep(this.boom, len, hit.soft ? Infinity : hit.t, hit.soft ? Math.max(hit.t, len * 0.5) : Infinity, dt, 6, 1.5);
     out.position.copy(pivotPt).addScaledVector(move, this.boom);
-    out.roll = 0;
-    out.fov = clamp(ctx.settings.fov - 10, 38, 70);
     return out;
   }
 }
 
 /** Fraction of the screen the stable UI panel covers on the left. */
 export const STABLE_UI_FRACTION = 0.4;
+/** A new stable subject further than this (m) from the current one is reached by a fade cut. */
+export const STABLE_CUT_JUMP = 14;
 
 /**
  * Stable: frames the wyvern (and the rider beside it) in the right 60% of the screen using a
@@ -166,6 +267,15 @@ export class StableRig implements Rig {
   private focus: StableFocus = 'both';
   /** Seconds left of the glide to a new subject's hero angle. */
   private refocus = 0;
+  /** The new subject is across the plaza: CameraRig should cut (through a fade) rather than glide. */
+  private cutWanted = false;
+
+  /** True once after a refocus asked for a cut (CameraRig then re-enters this rig at black). */
+  consumeCut(): boolean {
+    const c = this.cutWanted;
+    this.cutWanted = false;
+    return c;
+  }
 
   /** Frame the wyvern, the rider or both (the UI calls this when its tab changes). */
   setFocus(focus: StableFocus): void {
@@ -185,11 +295,14 @@ export class StableRig implements Rig {
     this.idle = 0;
     this.boom = -1;
     this.refocus = 0;
+    this.cutWanted = false;
   }
 
   update(dt: number, input: InputFrame, player: PlayerSystem, ctx: RigContext, out: CameraShot): CameraShot {
-    // Subject is re-read every frame (breed changes resize it) but eased so swaps glide.
+    // Subject is re-read every frame (breed changes resize it) but eased so swaps glide…
     const s = subjectOf(player, center, this.focus);
+    // …unless the new subject is across the plaza (the rider 50 m from the wyvern): cut instead.
+    if (this.refocus > 0 && center.distanceTo(this.center) > STABLE_CUT_JUMP) this.cutWanted = true;
     this.center.lerp(center, 1 - Math.exp(-6 * dt));
     this.radius = damp(this.radius, s.radius, 6, dt);
 
@@ -212,8 +325,10 @@ export class StableRig implements Rig {
     const yaw = this.view.yaw;
     const pitch = this.view.pitch;
     dir.set(Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw));
-    const hit = sphereCast(ctx.terrain, this.center, dir, dist + 0.6, 0.6);
-    this.boom = boomStep(this.boom, dist, hit, Infinity, dt, 20, 3);
+    const hit = castBoom(ctx.terrain, this.center, dir, dist + 0.6, 0.6, titleHit);
+    // Walls and rock pull the camera in at once; leaves only ease it in front of them.
+    if (hit.soft) this.boom = boomStep(this.boom, dist, Infinity, Math.max(hit.t, dist * 0.5), dt, 6, 3);
+    else this.boom = boomStep(this.boom, dist, hit.t, Infinity, dt, 20, 3);
     out.position.copy(this.center).addScaledVector(dir, this.boom);
     liftClear(ctx.terrain, out.position, 0.8);
     // Zoomed in, aim up toward the saddle and head, where the detail is.

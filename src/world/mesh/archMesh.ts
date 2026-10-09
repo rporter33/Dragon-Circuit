@@ -109,16 +109,19 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
   ): Ring => {
     frame(a);
     const start = b.vertexCount;
-    const capR = sink > 0 ? Math.sqrt(Math.max(0, tube * tube - sink * sink)) + ARCH_DISPLACE : Infinity;
+    const k = shape.squash;
     for (let i = 0; i < K; i++) {
       const phi = (i / K) * Math.PI * 2;
-      dir.copy(Rv).multiplyScalar(Math.cos(phi)).addScaledVector(shape.normal, Math.sin(phi));
-      P.copy(C).addScaledVector(dir, tube).addScaledVector(T, sink * outward);
-      let r = Math.min(capR, (tube + displace(P, a * R + sink * outward)) * scale);
+      const r0 = shape.radiusAt(a, phi);
+      const capR = sink > 0 ? Math.sqrt(Math.max(0, r0 * r0 - sink * sink)) + ARCH_DISPLACE : Infinity;
+      // The cross-section is an ellipse: thinner along the plane normal.
+      dir.copy(Rv).multiplyScalar(Math.cos(phi)).addScaledVector(shape.normal, Math.sin(phi) * k);
+      P.copy(C).addScaledVector(dir, r0).addScaledVector(T, sink * outward);
+      let r = Math.min(capR, (r0 + displace(P, a * R + sink * outward)) * scale);
       let push = 0;
       if (jag) {
         push = jag(phi);
-        const lim = tube * 0.98;
+        const lim = r0 * 0.98;
         const len = Math.hypot(r, push);
         if (len > lim) {
           r *= lim / len;
@@ -153,11 +156,12 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
     const island = terrain.islandAt(C.x, C.z);
     if (!island || island.topHeight(C.x, C.z) < C.y - tube) return 0;
     let depth = 0;
-    for (; depth < tube * 3; depth += 0.5) {
+    const footR = Math.max(shape.radiusAt(a, 0), shape.radiusAt(a, Math.PI));
+    for (; depth < footR * 3; depth += 0.5) {
       const x = C.x + T.x * depth * outward;
       const y = C.y + T.y * depth * outward;
       const z = C.z + T.z * depth * outward;
-      const r = Math.min(tube + ARCH_DISPLACE, Math.sqrt(Math.max(0, tube * tube - depth * depth)) + ARCH_DISPLACE);
+      const r = Math.min(footR + ARCH_DISPLACE, Math.sqrt(Math.max(0, footR * footR - depth * depth)) + ARCH_DISPLACE);
       if (y + r < island.topHeight(x, z) - 1) break;
     }
     return Math.max(depth, 1);
@@ -248,7 +252,8 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
     tmp.multiplyScalar(0.88 + 0.22 * bh);
     tmp.lerp(ROCK_UNDER, smoothstep(-0.2, -0.85, ny) * 0.55);
     // Moss in crisp patches on what faces the sky; orange lichen freckles the Eye's grey stone.
-    let moss = smoothstep(0.2, 0.6, ny) * smoothstep(0.42, 0.6, 0.5 + 0.5 * n2(x * 0.07, y * 0.07, z * 0.07));
+    // Moss only where rain and seeds land: the upward faces, in crisp patches.
+    let moss = smoothstep(0.4, 0.75, ny) * smoothstep(0.45, 0.62, 0.5 + 0.5 * n2(x * 0.07, y * 0.07, z * 0.07));
     if (pale) tmp.lerp(LICHEN, smoothstep(0.72, 0.8, 0.5 + 0.5 * n1(x * 0.23 + 4, y * 0.23, z * 0.23)) * 0.45);
     if (part[i] === 1) {
       tmp.lerp(FRESH, 0.55);
@@ -258,7 +263,8 @@ export function* buildArchMesh(shape: ArchShape, spec: ArchLodSpec, terrain: Ter
     tmp.lerp(MOSS, moss * 0.85).lerp(MOSS_DARK, moss * 0.25 * n);
     b.setColor(i, tmp.r, tmp.g, tmp.b);
     const hang = smoothstep(-0.05, -0.45, ny) * 0.75;
-    b.setSurf(i, part[i] === 1 ? 0.3 : 0.5, moss * 0.8, 0, hang);
+    // Full rock weight: the same strata, streaks and fractures as the island cliffs.
+    b.setSurf(i, part[i] === 1 ? 0.6 : 0.92, moss * 0.8, 0, hang);
   }
   return { data: b.finish(normals) };
 }

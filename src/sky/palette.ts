@@ -76,20 +76,20 @@ type PaletteSpec = { [K in ColorKey]: string } & { [K in NumberKey]: number };
 const NIGHT: PaletteSpec = {
   zenith: '#06102c', horizon: '#1c325f', horizonSun: '#1c325f', sunDisk: '#000000', glow: 0,
   belt: 0, beltColor: '#000000', stars: 1,
-  key: '#a9c0f2', keyI: 0.3, hemiSky: '#3c5590', hemiGround: '#40507e', hemiI: 1.0,
+  key: '#a9c0f2', keyI: 0.28, hemiSky: '#3c5590', hemiGround: '#40507e', hemiI: 0.8,
   fog: '#1a2c56', fogSun: '#2e4680', fogDensity: 0.00024, fogFalloff: 0.0021,
   cloudLit: '#7686b6', cloudShade: '#141d40',
-  exposure: 1.45, saturation: 0.94, contrast: 1.06, lift: '#03081c', gain: '#d6e2ff',
+  exposure: 1.08, saturation: 0.94, contrast: 1.06, lift: '#03081c', gain: '#d6e2ff',
   bloom: 0.55, bloomThreshold: 0.72, rim: 0.75,
 };
 
 const PREDAWN: PaletteSpec = {
   zenith: '#12235a', horizon: '#4a4c8e', horizonSun: '#946c9c', sunDisk: '#000000', glow: 0.25,
   belt: 0, beltColor: '#000000', stars: 0.5,
-  key: '#a4b0e4', keyI: 0.16, hemiSky: '#4a5a96', hemiGround: '#424670', hemiI: 0.92,
+  key: '#a4b0e4', keyI: 0.2, hemiSky: '#4a5a96', hemiGround: '#424670', hemiI: 1.1,
   fog: '#3c4479', fogSun: '#7e6292', fogDensity: 0.00027, fogFalloff: 0.0021,
   cloudLit: '#a8a8da', cloudShade: '#343a6c',
-  exposure: 1.4, saturation: 0.98, contrast: 1.04, lift: '#0a0822', gain: '#e2dcff',
+  exposure: 1.5, saturation: 0.98, contrast: 1.04, lift: '#0a0822', gain: '#e2dcff',
   bloom: 0.5, bloomThreshold: 0.75, rim: 0.65,
 };
 
@@ -166,30 +166,30 @@ const SUNSET: PaletteSpec = {
 const SUNDOWN: PaletteSpec = {
   zenith: '#24367c', horizon: '#e68a7c', horizonSun: '#ff7a4a', sunDisk: '#ff7040', glow: 1.1,
   belt: 0.7, beltColor: '#d48cb2', stars: 0.05,
-  key: '#d27c74', keyI: 0.2, hemiSky: '#6870ae', hemiGround: '#90789a', hemiI: 0.92,
+  key: '#d27c74', keyI: 0.3, hemiSky: '#6870ae', hemiGround: '#90789a', hemiI: 1.0,
   fog: '#a0789a', fogSun: '#f08062', fogDensity: 0.0003, fogFalloff: 0.0022,
   cloudLit: '#f2a294', cloudShade: '#5a5892',
-  exposure: 1.2, saturation: 1.12, contrast: 1.04, lift: '#180a2c', gain: '#f8e4e8',
+  exposure: 1.3, saturation: 1.12, contrast: 1.04, lift: '#180a2c', gain: '#f8e4e8',
   bloom: 0.5, bloomThreshold: 0.75, rim: 0.8,
 };
 
 const DUSK: PaletteSpec = {
   zenith: '#182a6c', horizon: '#8a7cb2', horizonSun: '#d8808a', sunDisk: '#000000', glow: 0.55,
   belt: 0.45, beltColor: '#b088b4', stars: 0.3,
-  key: '#a2a4e0', keyI: 0.16, hemiSky: '#5a68a8', hemiGround: '#5a6290', hemiI: 0.95,
+  key: '#a2a4e0', keyI: 0.2, hemiSky: '#5a68a8', hemiGround: '#5a6290', hemiI: 1.05,
   fog: '#4c5890', fogSun: '#b47888', fogDensity: 0.00028, fogFalloff: 0.0021,
   cloudLit: '#a8aedc', cloudShade: '#303c70',
-  exposure: 1.34, saturation: 1.0, contrast: 1.05, lift: '#0a0c2a', gain: '#e8e8ff',
+  exposure: 1.45, saturation: 1.0, contrast: 1.05, lift: '#0a0c2a', gain: '#e8e8ff',
   bloom: 0.52, bloomThreshold: 0.74, rim: 0.78,
 };
 
 const LATE_DUSK: PaletteSpec = {
   zenith: '#0d1848', horizon: '#334080', horizonSun: '#5a4a86', sunDisk: '#000000', glow: 0.2,
   belt: 0, beltColor: '#000000', stars: 0.8,
-  key: '#a6b6ee', keyI: 0.26, hemiSky: '#42528e', hemiGround: '#404c7a', hemiI: 0.96,
+  key: '#a6b6ee', keyI: 0.27, hemiSky: '#42528e', hemiGround: '#404c7a', hemiI: 0.9,
   fog: '#26346c', fogSun: '#3e467c', fogDensity: 0.00026, fogFalloff: 0.0021,
   cloudLit: '#7e8cc2', cloudShade: '#1c264e',
-  exposure: 1.44, saturation: 0.96, contrast: 1.05, lift: '#060a22', gain: '#dfe6ff',
+  exposure: 1.36, saturation: 0.96, contrast: 1.05, lift: '#060a22', gain: '#dfe6ff',
   bloom: 0.55, bloomThreshold: 0.72, rim: 0.72,
 };
 

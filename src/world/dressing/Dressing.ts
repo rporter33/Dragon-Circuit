@@ -6,7 +6,7 @@
 // grass never grow through a floor or a stream.
 
 import { Group, Vector3, type PerspectiveCamera, type Scene } from 'three';
-import type { CylinderCollider } from '../../core/types';
+import type { Collider } from '../../core/types';
 import type { DressingSystem } from '../../game/contracts';
 import type { QualityProfile } from '../../render/quality';
 import type { Terrain } from '../terrain';
@@ -19,6 +19,8 @@ import { Waterfalls } from './water/Waterfalls';
 import { planWaterfalls } from './water/waterfallPlan';
 import { HangingRoots } from './roots/HangingRoots';
 import { planRoots, type RootPlan } from './roots/rootPlan';
+import { colliderView } from './colliderView';
+import { deckCollider } from '../colliders';
 
 export interface DressingDeps {
   scene: Scene;
@@ -52,7 +54,8 @@ export interface DressingStats {
 
 export class Dressing implements DressingSystem {
   readonly group = new Group();
-  readonly colliders: CylinderCollider[] = [];
+  /** Collision shapes of everything built (boxes, cylinders, spheres; foliage-soft where noted). */
+  readonly colliders: Collider[] = [];
   readonly decks: Deck[] = [];
   readonly exclusions = new ExclusionSet();
   readonly grass: GrassField;
@@ -78,7 +81,7 @@ export class Dressing implements DressingSystem {
     this.group.name = 'dressing';
 
     const defer = (task: () => void) => this.tasks.push(task);
-    this.structures = new Structures(this.terrain, { exclusions: this.exclusions, colliders: this.colliders, decks: this.decks }, defer);
+    this.structures = new Structures(this.terrain, { exclusions: this.exclusions, colliders: this.colliders, decks: this.decks }, defer, this.quality);
     this.group.add(this.structures.group);
     // Streams avoid built-up ground; their banks then keep trees and grass out of the water.
     const plans = planWaterfalls(this.terrain, this.exclusions);
@@ -86,7 +89,7 @@ export class Dressing implements DressingSystem {
     this.water = new Waterfalls(this.terrain, plans, this.quality);
     this.group.add(this.water.group);
     this.rootPlan = planRoots(this.terrain);
-    this.roots = new HangingRoots(this.terrain, this.rootPlan, defer);
+    this.roots = new HangingRoots(this.terrain, this.rootPlan, defer, this.quality);
     this.group.add(this.roots.group);
     this.buildForest();
     this.grass = new GrassField(this.terrain, this.exclusions, this.quality, { async: deps.asyncStreaming ?? true });
@@ -115,7 +118,7 @@ export class Dressing implements DressingSystem {
     }
     const all: PropInstance[] = [...this.bankProps];
     for (const shape of this.terrain.islands) all.push(...scatterIsland(shape, this.exclusions, { density: this.quality.propDensity }));
-    this.forest = new Forest(all, this.quality);
+    this.forest = new Forest(all, this.quality, this.terrain.islands);
     this.group.add(this.forest.group);
   }
 
@@ -141,6 +144,8 @@ export class Dressing implements DressingSystem {
     while (this.tasks.length && performance.now() - t0 < 4) this.tasks.shift()!();
     this.grass.update(camera, focus);
     this.forest.update(camera);
+    this.roots.update(camera);
+    this.structures.update(camera);
   }
 
   setQuality(q: QualityProfile): void {
@@ -150,6 +155,21 @@ export class Dressing implements DressingSystem {
     if (rebuild) this.buildForest();
     else this.forest.setQuality(q);
     this.water.setQuality(q);
+    this.roots.setQuality(q);
+    this.structures.setQuality(q);
+  }
+
+  private colliderDebug: Group | null = null;
+
+  /** Debug: draw every dressing collider (structures, decks, forest) as wireframes. */
+  showColliders(on: boolean): void {
+    if (this.colliderDebug) {
+      this.colliderDebug.removeFromParent();
+      this.colliderDebug = null;
+    }
+    if (!on) return;
+    this.colliderDebug = colliderView([this.colliders, this.forest.colliders, this.decks.map(deckCollider)]);
+    this.group.add(this.colliderDebug);
   }
 
   stats(): DressingStats {

@@ -70,6 +70,18 @@ const unitCyl8 = new CylinderGeometry(1, 1, 1, 8);
 const unitCyl12 = new CylinderGeometry(1, 1, 1, 12);
 
 let jitterRnd = mulberry32(0x5eed);
+
+/**
+ * While set, helpers build a site's far version: whole shingle rows instead of single
+ * shingles, plain blocks, coarser cloth, no flagstones, chimes or lantern brackets.
+ */
+let coarse = false;
+export function setCoarse(on: boolean): void {
+  coarse = on;
+}
+export function isCoarse(): boolean {
+  return coarse;
+}
 /** Reset the color-jitter stream (call once per site so sites are deterministic). */
 export function resetJitter(seed: number): void {
   jitterRnd = mulberry32(seed);
@@ -134,6 +146,16 @@ export function shingleRoof(
     const midX = (side * halfSpan) / 2;
     const midY = (eaveY + ridgeY) / 2;
     box(b, frame, midX, midY - 0.12, (z0 + z1) / 2, slope + 0.1, 0.12, len, shade(color, -0.12), { rz: side * -ang });
+    if (coarse) {
+      // Far away: each course is one long strip.
+      for (let r = 0; r < rows; r += 2) {
+        const t = (r + 1) / rows;
+        const x = side * halfSpan * (1 - t);
+        const y = eaveY + rise * t;
+        box(b, frame, x, y + 0.02, (z0 + z1) / 2, (slope / rows) * 2 + 0.22, 0.09, len, jitter(rand() < 0.22 ? alt : color, 0.08), { rz: side * -(ang + 0.07) });
+      }
+      continue;
+    }
     for (let r = 0; r < rows; r++) {
       const t = (r + 0.5) / rows;
       const x = side * halfSpan * (1 - t);
@@ -155,6 +177,11 @@ export function shingleRoof(
 /** A hanging lantern: bracket frame + glowing panes (+ a light pool on the ground). */
 export function lantern(s: SiteBuilders, frame: Matrix4, x: number, y: number, z: number, scale = 1, groundY?: number): void {
   const f = under(frame, xf(x, y, z, 0, 0, 0, scale));
+  if (coarse) {
+    box(s.solid, f, 0, 0.32, 0, 0.42, 0.1, 0.42, PALETTE.iron);
+    s.glow.add(unitBox, under(f, xf(0, 0, 0, 0, 0, 0, 0.36, 0.6, 0.36)), { color: PALETTE.glow, glow: 1 });
+    return;
+  }
   box(s.solid, f, 0, 0.32, 0, 0.42, 0.06, 0.42, PALETTE.iron);
   box(s.solid, f, 0, -0.32, 0, 0.38, 0.06, 0.38, PALETTE.iron);
   for (const [cx, cz] of [[-0.19, -0.19], [0.19, -0.19], [-0.19, 0.19], [0.19, 0.19]]) box(s.solid, f, cx, 0, cz, 0.05, 0.62, 0.05, PALETTE.iron);
@@ -179,6 +206,7 @@ export function lanternPost(s: SiteBuilders, frame: Matrix4, x: number, y: numbe
 
 /** Post-and-rail fence from a to b (frame space, a.y/b.y = ground). */
 export function fence(b: GeoBuilder, frame: Matrix4, a: Vector3, c: Vector3, spacing = 2.6, groundAt?: (x: number, z: number) => number): void {
+  if (coarse) spacing *= 2;
   const len = Math.hypot(c.x - a.x, c.z - a.z);
   const n = Math.max(1, Math.round(len / spacing));
   const tops: Vector3[] = [];
@@ -192,7 +220,7 @@ export function fence(b: GeoBuilder, frame: Matrix4, a: Vector3, c: Vector3, spa
     tops.push(v(x, gy, z));
   }
   for (let i = 0; i < n; i++) {
-    for (const h of [0.55, 1.05]) {
+    for (const h of coarse ? [1.05] : [0.55, 1.05]) {
       const p0 = tops[i].clone().add(v(0, h + (rand() - 0.5) * 0.06, 0));
       const p1 = tops[i + 1].clone().add(v(0, h + (rand() - 0.5) * 0.06, 0));
       beam(b, frame, p0, p1, 0.08, PALETTE.timberLight);
@@ -215,8 +243,8 @@ export function bannerPole(s: SiteBuilders, frame: Matrix4, x: number, y: number
  * a trim band and a simple emblem (a diamond), all in the cloth builder.
  */
 export function bannerCloth(s: SiteBuilders, frame: Matrix4, x: number, top: number, z: number, w: number, h: number, cloth: string, trim: string): void {
-  const cols = 10;
-  const rows = Math.max(10, Math.round(h / 0.25));
+  const cols = coarse ? 3 : 10;
+  const rows = coarse ? 4 : Math.max(10, Math.round(h / 0.25));
   const verts: number[] = [];
   const P = (u: number, t: number): [number, number, number] => {
     // u: -0.5..0.5 across, t: 0..1 down. Swallow tail cut at the bottom center.
@@ -271,7 +299,7 @@ export function bannerCloth(s: SiteBuilders, frame: Matrix4, x: number, top: num
 export function pennant(s: SiteBuilders, frame: Matrix4, x: number, y: number, z: number, len: number, hgt: number, color: string): void {
   const inv = new Matrix4().copy(frame).invert();
   const lp = new Vector3();
-  const segs = 5;
+  const segs = coarse ? 2 : 5;
   const verts: number[] = [];
   for (let i = 0; i < segs; i++) {
     const t0 = i / segs;
@@ -297,6 +325,7 @@ export function pennant(s: SiteBuilders, frame: Matrix4, x: number, y: number, z
 
 /** Wind chime: a disc with hanging tubes (chime builder) on a short cord. */
 export function windChime(s: SiteBuilders, frame: Matrix4, x: number, y: number, z: number): void {
+  if (coarse) return;
   const f = under(frame, xf(x, y, z));
   post(s.solid, f, v(0, 0, 0), v(0, -0.35, 0), 0.01, PALETTE.rope, 6);
   s.chime.add(unitCyl12, under(f, xf(0, -0.38, 0, 0, 0, 0, 0.18, 0.04, 0.18)), { color: PALETTE.timberLight, sway: 0.2 });
@@ -378,13 +407,14 @@ const pick = <T>(list: T[], seed: number): T => list[Math.abs(Math.floor(seed * 
 
 /** An irregular flat stepping stone. */
 export function flagstone(b: GeoBuilder, frame: Matrix4, x: number, y: number, z: number, r: number, seed: number): void {
+  if (coarse) return;
   const g = pick(variants('flag', 5, (i) => displace(new CylinderGeometry(1, 1.05, 1, 9), 0.12, 1.6, 900 + i, 1)), seed);
   b.add(g, under(frame, xf(x, y, z, 0, seed * 0.37, 0, r, 0.22, r * (0.7 + 0.3 * Math.sin(seed)))), { color: jitter(PALETTE.stone, 0.08) });
 }
 
 /** A rough stone block (ruins, cairns). */
 export function stoneBlock(b: GeoBuilder, frame: Matrix4, x: number, y: number, z: number, w: number, h: number, d: number, seed: number, color: string = PALETTE.stone, mossy = 0.4): void {
-  const g = pick(variants('block', 8, (i) => displace(new BoxGeometry(1, 1, 1, 2, 2, 2), 0.06, 2.5, 500 + i, 1)), seed);
+  const g = coarse ? unitBox : pick(variants('block', 8, (i) => displace(new BoxGeometry(1, 1, 1, 2, 2, 2), 0.06, 2.5, 500 + i, 1)), seed);
   const moss = new Color(PALETTE.moss);
   const base = jitter(color, 0.07);
   b.add(g, under(frame, xf(x, y, z, (rand() - 0.5) * 0.06, (rand() - 0.5) * 0.15, (rand() - 0.5) * 0.06, w, h, d)), {

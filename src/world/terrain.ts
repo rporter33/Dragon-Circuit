@@ -10,6 +10,8 @@ import { ColliderIndex } from './colliders';
 const CELL = 400;
 /** How far above the feet a structure top still counts as ground to step onto (m). */
 const STRUCTURE_STEP = 1.0;
+/** How far distance() looks for structure colliders (m); also the longest step it allows near them. */
+const COLLIDER_REACH = 24;
 /** Ground hits on structures report this island id (they aren't part of any island). */
 export const STRUCTURE_GROUND_ID = -1000;
 
@@ -276,9 +278,12 @@ export class Terrain implements TerrainQuery {
     }
     // Outside the searched cells nothing is closer than the cell margin.
     best = Math.min(best, 400);
-    // Structures only matter when they're nearer than the rock already found.
-    const near = this.colliders.distance(p, Math.min(best, 60));
-    return near < best ? near : best;
+    // Structures only matter when they're nearer than the rock already found. Colliders beyond the
+    // search radius weren't looked at, so they may be anywhere past it: cap the answer there to
+    // stay a lower bound (sphere tracing would otherwise step straight through a building).
+    if (this.colliders.size === 0) return best;
+    const reach = Math.min(best, COLLIDER_REACH);
+    return Math.min(best, this.colliders.distance(p, reach), reach);
   }
 
   raycast(origin: Vector3, dir: Vector3, maxDist: number): RayHit | null {

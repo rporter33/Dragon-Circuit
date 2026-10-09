@@ -25,6 +25,24 @@ export const SHAPING = {
   keyAttack: 0.12,
   /** …and settle back to centre (or start reversing) over this long. */
   keyRelease: 0.08,
+  /**
+   * Keyboard PITCH is shaped further (a big body doesn't bunt): a key press eases in over
+   * keyPitchAttack to keyPitchSoft of full deflection, and only after keyPitchHold seconds held
+   * does it grow to full over keyPitchGrow — taps trim, a held key commits.
+   */
+  keyPitchAttack: 0.25,
+  keyPitchSoft: 0.6,
+  keyPitchHold: 0.55,
+  keyPitchGrow: 0.6,
+  /** Tap-to-flap: the trigger travel that counts as a press, and the weakest beat a press gives. */
+  tapPressAt: 0.18,
+  tapMinStrength: 0.3,
+  /** Pad chord (LB + RB = tuck): a lone bumper becomes rudder only after this long alone. */
+  chordWindow: 0.09,
+  /** Mouse steering: stick travel per pixel (×look sensitivity), and re-centring (1/s). */
+  mouseStickPerPx: 0.0045,
+  mouseStickReturn: 2.6,
+  mouseStickReturnMoving: 0.6,
   /** Menu navigation auto-repeat. */
   repeatDelay: 0.38,
   repeatInterval: 0.09,
@@ -212,8 +230,10 @@ export class TapPulse {
   private armed = true;
   constructor(
     readonly seconds = 0.14,
-    readonly pressAt = 0.3,
-    readonly releaseAt = 0.15,
+    readonly pressAt: number = SHAPING.tapPressAt,
+    readonly releaseAt = 0.1,
+    /** Every pulse is at least this strong: the Player accepts beats from 0.3, so a light squeeze is a soft beat, never a lost one. */
+    readonly minStrength: number = SHAPING.tapMinStrength,
   ) {}
 
   update(raw: number, dt: number): number {
@@ -227,7 +247,7 @@ export class TapPulse {
     if (this.timer > 0) {
       this.timer -= dt;
       this.peak = Math.max(this.peak, raw);
-      return this.peak;
+      return Math.max(this.minStrength, this.peak);
     }
     return 0;
   }
@@ -242,4 +262,99 @@ export class TapPulse {
 /** Pick whichever of two sources is deflected further (keyboard ramp vs stick), keeping sign. */
 export function dominant(a: number, b: number): number {
   return Math.abs(a) >= Math.abs(b) ? a : b;
+}
+
+/**
+ * Keyboard pitch, shaped for a heavy body: where a digital pitch key should be heading after it
+ * has been held `heldFor` seconds (0 when released). Soft at first (a tap or a short hold trims
+ * the path), growing to full deflection only once the key is clearly held. Feed the result to
+ * rampAxis with SHAPING.keyPitchAttack.
+ */
+export function keyPitchTarget(dir: number, heldFor: number): number {
+  if (dir === 0) return 0;
+  const S = SHAPING;
+  const grow = clamp01((heldFor - S.keyPitchHold) / S.keyPitchGrow);
+  const k = S.keyPitchSoft + (1 - S.keyPitchSoft) * grow * grow * (3 - 2 * grow);
+  return Math.sign(dir) * k;
+}
+
+/** Output of BumperChord: tuck (both held) or a rudder direction (one held on its own). */
+export interface ChordOut {
+  tuck: boolean;
+  left: boolean;
+  right: boolean;
+}
+
+/**
+ * The pad's shoulder buttons: either one alone is rudder; both together fold the wings (tuck), so
+ * a dive never takes the right thumb off the camera stick. A lone bumper waits `window` seconds
+ * before it counts as rudder (the second finger is usually a few frames behind), and after a
+ * chord the bumper still held is ignored until it is let go — no rudder blip either side of a dive.
+ */
+export class BumperChord {
+  private aliveFor = 0;
+  private chord = false;
+  private ignoreLeft = false;
+  private ignoreRight = false;
+  readonly out: ChordOut = { tuck: false, left: false, right: false };
+  constructor(readonly window: number = SHAPING.chordWindow) {}
+
+  update(left: boolean, right: boolean, dt: number): ChordOut {
+    if (!left) this.ignoreLeft = false;
+    if (!right) this.ignoreRight = false;
+    const o = this.out;
+    if (left && right) {
+      this.chord = true;
+      this.aliveFor = 0;
+      o.tuck = true;
+      o.left = o.right = false;
+      return o;
+    }
+    if (this.chord) {
+      // Chord released (one or both): whatever is still held stays quiet until let go.
+      this.chord = false;
+      this.ignoreLeft = left;
+      this.ignoreRight = right;
+    }
+    o.tuck = false;
+    const l = left && !this.ignoreLeft;
+    const r = right && !this.ignoreRight;
+    if (l || r) this.aliveFor += dt;
+    else this.aliveFor = 0;
+    const ready = this.aliveFor >= this.window;
+    o.left = l && ready;
+    o.right = r && ready;
+    return o;
+  }
+
+  reset(): void {
+    this.aliveFor = 0;
+    this.chord = this.ignoreLeft = this.ignoreRight = false;
+    this.out.tuck = this.out.left = this.out.right = false;
+  }
+}
+
+/**
+ * Mouse steering (optional, Settings.mouseFlight): mouse travel moves a virtual stick that eases
+ * back to centre — quickly when the mouse is still, slowly while it moves — so proportional,
+ * analog corrections are possible on a keyboard + mouse. x = roll (right +), y = pitch (+ = pulled
+ * back / nose up: moving the mouse toward you).
+ */
+export class MouseStick {
+  x = 0;
+  y = 0;
+
+  update(dxPx: number, dyPx: number, sensitivity: number, dt: number): this {
+    const S = SHAPING;
+    const k = S.mouseStickPerPx * sensitivity;
+    const moving = dxPx !== 0 || dyPx !== 0;
+    const ret = Math.exp(-(moving ? S.mouseStickReturnMoving : S.mouseStickReturn) * Math.max(0, dt));
+    this.x = clamp(this.x * ret + dxPx * k, -1, 1);
+    this.y = clamp(this.y * ret + dyPx * k, -1, 1);
+    return this;
+  }
+
+  reset(): void {
+    this.x = this.y = 0;
+  }
 }

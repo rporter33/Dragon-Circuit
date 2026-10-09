@@ -14,8 +14,14 @@ const FILLERS = 3;
  *   position = (root offset x, height fraction t, root offset z)   (meters at width scale 1)
  *   aBlade   = (side -1..1 across the blade, blade height factor, blade yaw, root width (m))
  */
-export function tuftGeometry(): BufferGeometry {
+export function tuftGeometry(far = false): BufferGeometry {
   const rnd = mulberry32(0x9a55);
+  const blades = far ? 3 : BLADES;
+  const fillers = far ? 1 : FILLERS;
+  const segments = far ? 1 : SEGMENTS;
+  // Far tufts (a few dozen meters out) are a handful of single-triangle blades, a little wider
+  // so the meadow keeps its coverage: 4 triangles instead of 34.
+  const wide = far ? 1.7 : 1;
   const pos: number[] = [];
   const blade: number[] = [];
   const idx: number[] = [];
@@ -41,16 +47,16 @@ export function tuftGeometry(): BufferGeometry {
     const last = base + (segs - 1) * 2;
     idx.push(last, last + 1, last + 2);
   };
-  for (let b = 0; b < BLADES; b++) {
-    const a = (b / BLADES) * Math.PI * 2 + rnd() * 0.6;
+  for (let b = 0; b < blades; b++) {
+    const a = (b / blades) * Math.PI * 2 + rnd() * 0.6;
     const r = 0.03 + rnd() * 0.15;
     // Taller blades in the middle of the tuft.
-    addBlade(a, r, 0.55 + 0.45 * (1 - r / 0.18) * (0.7 + rnd() * 0.3), 0.04 + rnd() * 0.03, SEGMENTS);
+    addBlade(a, r, 0.55 + 0.45 * (1 - r / 0.18) * (0.7 + rnd() * 0.3), (0.04 + rnd() * 0.03) * wide, segments);
   }
   // Short, wide filler blades splayed outward cover the ground between tufts.
-  for (let b = 0; b < FILLERS; b++) {
-    const a = (b / FILLERS) * Math.PI * 2 + rnd() * 1.2;
-    addBlade(a, 0.12 + rnd() * 0.1, 0.32 + rnd() * 0.12, 0.07 + rnd() * 0.03, 2);
+  for (let b = 0; b < fillers; b++) {
+    const a = (b / fillers) * Math.PI * 2 + rnd() * 1.2;
+    addBlade(a, 0.12 + rnd() * 0.1, 0.32 + rnd() * 0.12, (0.07 + rnd() * 0.03) * wide, far ? 1 : 2);
   }
   const g = new BufferGeometry();
   g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));

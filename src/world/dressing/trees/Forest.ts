@@ -15,11 +15,11 @@ import {
   type Material,
   type PerspectiveCamera,
 } from 'three';
-import type { CylinderCollider } from '../../../core/types';
+import type { Collider } from '../../../core/types';
 import type { QualityProfile } from '../../../render/quality';
 import { dressMaterial, swayDepthMaterial } from '../materials';
 import type { PropInstance } from './placement';
-import { SPECIES, SPECIES_IDS, instanceMatrix, type SpeciesId } from './species';
+import { SPECIES, SPECIES_IDS, instanceMatrix, speciesShapes, type SpeciesId } from './species';
 
 interface LodMesh {
   mesh: InstancedMesh;
@@ -31,11 +31,25 @@ interface LodMesh {
 interface SpeciesBucket {
   id: SpeciesId;
   lods: LodMesh[];
-  /** lodDist squared, per LOD boundary. */
-  dist2: [number, number, number];
+  /** Switch distances squared (scaled for quality), per LOD boundary; the last one culls. */
+  dist2: number[];
+}
+
+/**
+ * LOD distance scale per quality level: 'low' hands trees down to cheaper levels at half the
+ * distance (a quarter of the area), 'ultra' keeps detail further out.
+ */
+export const FOREST_LOD_SCALE: Record<QualityProfile['level'], number> = { low: 0.4, medium: 0.7, high: 1, ultra: 1.3 };
+
+/** What the forest needs to know about an island to tell when it hides its own trees. */
+export interface IslandOccluder {
+  def: { id: number };
+  normRadius(x: number, z: number): number;
+  bottomHeight(x: number, z: number): number;
 }
 
 interface IslandGroup {
+  islandId: number;
   sphere: Sphere;
   /** Indices into the packed instance arrays. */
   start: number;
@@ -46,21 +60,79 @@ interface IslandGroup {
 
 const _frustum = new Frustum();
 const _pv = new Matrix4();
-const _lastPos = new Vector3();
-const _lastDir = new Vector3();
 const _dir = new Vector3();
 
 export interface ForestStats {
   instances: number;
   drawn: number[];
   drawCalls: number;
-  byLod: [number, number, number];
+  /** Instances drawn at each LOD (0 = nearest). */
+  byLod: number[];
+}
+
+/**
+ * Mark the first `count` items of an instanced attribute for upload, reusing one range object
+ * per attribute (the renderer clears the list after each upload; addUpdateRange would allocate
+ * a fresh object every refresh).
+ */
+const ownRange = new WeakMap<InstancedBufferAttribute, { start: number; count: number }>();
+function setRange(attr: InstancedBufferAttribute, count: number): void {
+  let range = ownRange.get(attr);
+  if (!range) ownRange.set(attr, (range = { start: 0, count: 0 }));
+  range.count = count;
+  const r = attr.updateRanges;
+  r.length = 0;
+  r.push(range);
+  attr.needsUpdate = true;
+}
+
+/** World-space colliders of one placed prop (its species' shapes, placed, turned and scaled). */
+export function instanceColliders(p: PropInstance, out: Collider[]): void {
+  const shapes = speciesShapes(p.species);
+  if (shapes.length === 0) return;
+  const s = p.scale;
+  const sv = p.scale * p.scaleY;
+  const cs = Math.cos(p.yaw);
+  const sn = Math.sin(p.yaw);
+  // Local (x, z) → world, turned by yaw like the instance matrix (Y rotation).
+  const wx = (x: number, z: number) => p.x + (x * cs + z * sn) * s;
+  const wz = (x: number, z: number) => p.z + (-x * sn + z * cs) * s;
+  for (const sh of shapes) {
+    if (sh.t === 'cyl') {
+      const c: Collider = { x: wx(sh.x, sh.z), z: wz(sh.x, sh.z), radius: sh.r * s, y0: p.y + sh.y0 * sv, y1: p.y + sh.y1 * sv, surface: 'wood' };
+      if (sh.soft) c.soft = true;
+      out.push(c);
+    } else if (sh.t === 'ell') {
+      const a = sh.a * s;
+      const b = sh.b * sv;
+      const r = (a + b) / 2;
+      // Centered on the ellipsoid, or with its top where the drawn top is.
+      const y = p.y + sh.y * sv + (sh.top ? b - r : 0);
+      const c: Collider = { kind: 'sphere', x: wx(sh.x, sh.z), y, z: wz(sh.x, sh.z), radius: r, surface: 'rock' };
+      if (sh.soft) {
+        c.soft = true;
+        delete c.surface;
+      }
+      out.push(c);
+    } else {
+      out.push({ kind: 'box', x: wx(sh.x, sh.z), y: p.y + sh.y * sv, z: wz(sh.x, sh.z), hx: sh.hx * s, hy: sh.hy * sv, hz: sh.hz * s, yaw: p.yaw, surface: 'wood' });
+    }
+  }
 }
 
 export class Forest {
   readonly group = new Group();
-  readonly colliders: CylinderCollider[] = [];
-  readonly stats: ForestStats = { instances: 0, drawn: [], drawCalls: 0, byLod: [0, 0, 0] };
+  /**
+   * Every tree's trunk (solid) and canopy (soft), bushes (soft), boulders and logs (solid), for
+   * the instances this quality level plants. A new Forest (quality change) brings a new array.
+   */
+  readonly colliders: Collider[] = [];
+  readonly stats: ForestStats = { instances: 0, drawn: [], drawCalls: 0, byLod: [0, 0, 0, 0] };
+  private lodScale: number;
+  /** Camera position and direction at the last re-bucket; dirty forces the next one. */
+  private lastPos = new Vector3(Infinity, 0, 0);
+  private lastDir = new Vector3();
+  private dirty = true;
   private buckets = new Map<SpeciesId, SpeciesBucket>();
   /** Packed per-instance data, sorted by island. */
   private speciesOf: Uint8Array;
@@ -74,9 +146,17 @@ export class Forest {
   /** Buckets indexed like SPECIES_IDS (speciesOf values). */
   private bucketList: (SpeciesBucket | undefined)[] = [];
 
-  constructor(instances: PropInstance[], quality: QualityProfile) {
+  private occluders = new Map<number, IslandOccluder>();
+
+  /**
+   * `islands` (optional) lets the forest skip an island's trees while the camera is underneath
+   * it: from below the footprint, the island's own rock hides everything on its top.
+   */
+  constructor(instances: PropInstance[], quality: QualityProfile, islands: readonly IslandOccluder[] = []) {
+    for (const sh of islands) this.occluders.set(sh.def.id, sh);
     this.group.name = 'dressing:forest';
     this.shadows = quality.shadows;
+    this.lodScale = FOREST_LOD_SCALE[quality.level];
     const sorted = [...instances].sort((a, b) => a.islandId - b.islandId);
     const n = sorted.length;
     this.speciesOf = new Uint8Array(n);
@@ -92,10 +172,7 @@ export class Forest {
       this.cols.set(p.tint, i * 3);
       this.scaleOf[i] = p.scale;
       counts.set(p.species, (counts.get(p.species) ?? 0) + 1);
-      const spec = SPECIES[p.species];
-      if (spec.trunkRadius * p.scale > 0.55) {
-        this.colliders.push({ x: p.x, z: p.z, radius: spec.trunkRadius * p.scale + 0.25, y0: p.y - 1, y1: p.y + spec.height * p.scale * 0.6 });
-      }
+      instanceColliders(p, this.colliders);
     });
     this.stats.instances = n;
 
@@ -118,9 +195,9 @@ export class Forest {
         const p = sorted[i];
         const spec = SPECIES[p.species];
         r = Math.max(r, Math.hypot(p.x - c.x, p.y - c.y, p.z - c.z) + spec.height * p.scale * 1.3);
-        reach = Math.max(reach, spec.lodDist[2] * Math.sqrt(p.scale));
+        reach = Math.max(reach, spec.lodDist[spec.lodDist.length - 1] * Math.sqrt(p.scale));
       }
-      this.groups.push({ sphere: new Sphere(c, r), start, end, reach });
+      this.groups.push({ islandId: island, sphere: new Sphere(c, r), start, end, reach });
       start = end;
     }
 
@@ -129,7 +206,7 @@ export class Forest {
       if (count === 0) continue;
       const spec = SPECIES[id];
       const lods: LodMesh[] = [];
-      for (let l = 0; l < 3; l++) {
+      for (let l = 0; l < spec.lodDist.length; l++) {
         const geo = spec.build(l);
         const mesh = new InstancedMesh(geo, this.materialFor(spec.material), count);
         mesh.name = `${id}-lod${l}`;
@@ -144,9 +221,9 @@ export class Forest {
         this.group.add(mesh);
         lods.push({ mesh, matrices: mesh.instanceMatrix.array as Float32Array, colors: mesh.instanceColor.array as Float32Array, count: 0 });
       }
-      const d = spec.lodDist;
-      this.buckets.set(id, { id, lods, dist2: [d[0] * d[0], d[1] * d[1], d[2] * d[2]] });
+      this.buckets.set(id, { id, lods, dist2: [] });
     }
+    this.applyLodScale();
     this.bucketList = SPECIES_IDS.map((sid) => this.buckets.get(sid));
   }
 
@@ -163,23 +240,37 @@ export class Forest {
     }
   }
 
+  /** Switch distances for the current quality (the cull distance itself is not scaled). */
+  private applyLodScale(): void {
+    for (const b of this.buckets.values()) {
+      const d = SPECIES[b.id].lodDist;
+      b.dist2 = d.map((v, i) => (i < d.length - 1 ? v * this.lodScale : v) ** 2);
+    }
+  }
+
   setQuality(q: QualityProfile): void {
     this.shadows = q.shadows;
     for (const b of this.buckets.values()) {
       b.lods[0].mesh.castShadow = SPECIES[b.id].castShadow && q.shadows;
     }
-    this.framesSince = 1e9;
+    this.lodScale = FOREST_LOD_SCALE[q.level];
+    this.applyLodScale();
+    this.dirty = true;
   }
 
   /** Re-bucket instances into LOD meshes when the camera has moved or turned enough. */
   update(camera: PerspectiveCamera): void {
     camera.getWorldDirection(_dir);
     this.framesSince++;
-    const moved = camera.position.distanceToSquared(_lastPos) > 9;
-    const turned = _dir.dot(_lastDir) < 0.995;
-    if (!moved && !turned && this.framesSince < 20) return;
-    _lastPos.copy(camera.position);
-    _lastDir.copy(_dir);
+    const drift = camera.position.distanceToSquared(this.lastPos);
+    const moved = drift > 9;
+    const turned = _dir.dot(this.lastDir) < 0.995;
+    // Re-bucket after a real move or turn, or now and then while creeping; never while still.
+    const still = drift < 1e-4 && _dir.dot(this.lastDir) > 0.99999;
+    if (!this.dirty && !moved && !turned && (this.framesSince < 20 || still)) return;
+    this.dirty = false;
+    this.lastPos.copy(camera.position);
+    this.lastDir.copy(_dir);
     this.framesSince = 0;
 
     camera.updateMatrixWorld();
@@ -192,13 +283,15 @@ export class Forest {
     const cy = camera.position.y;
     const cz = camera.position.z;
     const byLod = this.stats.byLod;
-    byLod[0] = byLod[1] = byLod[2] = 0;
+    byLod.fill(0);
     const bucketList = this.bucketList;
 
     for (const g of this.groups) {
       const dc = g.sphere.center.distanceTo(camera.position) - g.sphere.radius;
       if (dc > g.reach || dc * dc > far2) continue;
       if (!_frustum.intersectsSphere(g.sphere)) continue;
+      const occ = this.occluders.get(g.islandId);
+      if (occ && cy < g.sphere.center.y && occ.normRadius(cx, cz) < 0.95 && cy < occ.bottomHeight(cx, cz) - 2) continue;
       for (let i = g.start; i < g.end; i++) {
         const b = bucketList[this.speciesOf[i]]!;
         const dx = this.pos[i * 3] - cx;
@@ -206,8 +299,10 @@ export class Forest {
         const dz = this.pos[i * 3 + 2] - cz;
         // Bigger things keep detail further out.
         const d2 = (dx * dx + dy * dy + dz * dz) / this.scaleOf[i];
-        const lod = d2 < b.dist2[0] ? 0 : d2 < b.dist2[1] ? 1 : d2 < b.dist2[2] ? 2 : 3;
-        if (lod === 3) continue;
+        const bounds = b.dist2;
+        let lod = 0;
+        while (lod < bounds.length && d2 >= bounds[lod]) lod++;
+        if (lod === bounds.length) continue;
         const L = b.lods[lod];
         const k = L.count++;
         const src = i * 16;
@@ -229,12 +324,9 @@ export class Forest {
         m.visible = L.count > 0;
         if (L.count > 0) {
           calls++;
-          m.instanceMatrix.clearUpdateRanges();
-          m.instanceMatrix.addUpdateRange(0, L.count * 16);
-          m.instanceMatrix.needsUpdate = true;
-          m.instanceColor!.clearUpdateRanges();
-          m.instanceColor!.addUpdateRange(0, L.count * 3);
-          m.instanceColor!.needsUpdate = true;
+          // Upload only the used prefix; reuse the range objects instead of allocating new ones.
+          setRange(m.instanceMatrix, L.count * 16);
+          setRange(m.instanceColor!, L.count * 3);
         }
         this.stats.drawn.push(L.count);
       }

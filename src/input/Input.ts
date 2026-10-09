@@ -2,10 +2,12 @@
 //
 // The controller is the primary device: sticks get a radial deadzone, flight axes a square map
 // and an expo curve so small corrections are precise, triggers are analog. Keyboard flight keys
-// ramp in and out so they are never twitchy. Both devices are always read and merged (the
-// stronger deflection wins); `device` only says which one was used LAST, for button prompts,
-// and it switches on deliberate actions only (presses, real stick throws, real mouse travel),
-// never on stick noise.
+// ramp in and out so they are never twitchy (pitch more gently still: taps trim, holds commit).
+// Optional mouse steering turns mouse travel into a virtual stick in flight. Both devices are
+// always read and merged (the stronger deflection wins); `device` only says which one was used
+// LAST, for button prompts, and it switches on deliberate actions only (presses, real stick
+// throws, real mouse travel), never on stick noise. Pads without the standard mapping are read
+// through a best-guess remap (padMapping.ts).
 //
 // Bindings come from scheme.ts (the single source of truth). Rumble patterns are mixed here
 // (Input owns the actuator) and fed by haptics.ts.
@@ -16,6 +18,8 @@ import type { InputSystem } from '../game/contracts';
 import { clamp } from '../core/math';
 import { KEYS, PAD, PAD_AXIS, PAD_BUTTON, type PadButton } from './scheme';
 import {
+  BumperChord,
+  MouseStick,
   RepeatTimer,
   SHAPING,
   StickNav,
@@ -24,6 +28,7 @@ import {
   detectPadStyle,
   dominant,
   expo,
+  keyPitchTarget,
   radialDeadzone,
   rampAxis,
   triggerDeadzone,
@@ -31,6 +36,7 @@ import {
   type PadStyle,
   type Vec2,
 } from './shaping';
+import { createPadMapState, createPadView, mapPad, type PadMapState, type PadView } from './padMapping';
 import { HapticMixer, type RumbleLevels, type RumblePulse, type RumbleSink } from './haptics';
 
 export function emptyPresses(): InputPresses {
@@ -97,6 +103,11 @@ export class Input implements InputSystem, RumbleSink {
   padStyle: PadStyle | null = null;
   /** True while the mouse is captured for look (pointer lock). */
   pointerLocked = false;
+  /**
+   * Set by Game each frame: the player is in the air. Mouse steering (Settings.mouseFlight) only
+   * takes the mouse in flight; on the ground it still looks around.
+   */
+  flying = false;
 
   private target: HTMLElement;
   private settings: () => Settings;
@@ -119,9 +130,14 @@ export class Input implements InputSystem, RumbleSink {
   private escAt = -1e9;
   private pendingPause = false;
 
-  // Gamepads (standard mapping). Per pad index: held state this poll and last poll.
+  // Gamepads, read in standard layout (padMapping.ts remaps the rest). Per pad index: held state
+  // this poll and last poll.
   private padIndex = -1;
   private pad: Gamepad | null = null;
+  private padView: PadView = createPadView();
+  private views: PadView[] = [];
+  private mapStates: PadMapState[] = [];
+  private guessWarned = new Set<string>();
   private padHeld: boolean[][] = [];
   private padPrev: boolean[][] = [];
   private padStickPrev: number[][] = [];
@@ -130,6 +146,10 @@ export class Input implements InputSystem, RumbleSink {
   private rampPitch = 0;
   private rampRoll = 0;
   private rampYaw = 0;
+  private kbPitchDir = 0;
+  private kbPitchHeld = 0;
+  private bumpers = new BumperChord();
+  private mouseStick = new MouseStick();
   private tap = new TapPulse();
   private sprintLatch = false;
   private sprintIdle = 0;
@@ -235,23 +255,30 @@ export class Input implements InputSystem, RumbleSink {
     let rt = 0;
     let lt = 0;
     if (pad) {
-      const ax = pad.axes;
+      const v = this.padView;
+      const ax = v.axes;
       radialDeadzone(ax[PAD_AXIS.LX] ?? 0, ax[PAD_AXIS.LY] ?? 0, SHAPING.stickInner, SHAPING.stickOuter, this.ls);
       radialDeadzone(ax[PAD_AXIS.RX] ?? 0, ax[PAD_AXIS.RY] ?? 0, SHAPING.stickInner, SHAPING.stickOuter, this.rs);
-      rt = triggerDeadzone(pad.buttons[PAD_BUTTON.RT]?.value ?? 0);
-      lt = triggerDeadzone(pad.buttons[PAD_BUTTON.LT]?.value ?? 0);
+      rt = triggerDeadzone(v.buttons[PAD_BUTTON.RT]?.value ?? 0);
+      lt = triggerDeadzone(v.buttons[PAD_BUTTON.LT]?.value ?? 0);
     } else {
       this.ls.x = this.ls.y = this.rs.x = this.rs.y = 0;
     }
 
     // --- Flight -------------------------------------------------------------------------------
     // Keyboard: ramped digital axes. +pitch = nose up, so W (forward) pitches the nose down.
+    // Pitch is shaped further (taps trim, a held key commits after ~0.55 s): a big body doesn't bunt.
     const kbPitch = (this.held(KEYS.pitchUp) ? 1 : 0) - (this.held(KEYS.pitchDown) ? 1 : 0);
+    if (kbPitch !== 0 && kbPitch === this.kbPitchDir) this.kbPitchHeld += dt;
+    else {
+      this.kbPitchDir = kbPitch;
+      this.kbPitchHeld = 0;
+    }
     const kbRoll = (this.held(KEYS.rollRight) ? 1 : 0) - (this.held(KEYS.rollLeft) ? 1 : 0);
-    const yawTarget =
-      (this.held(KEYS.yawRight) || this.padHeldAny(PAD.yawRight) ? 1 : 0) -
-      (this.held(KEYS.yawLeft) || this.padHeldAny(PAD.yawLeft) ? 1 : 0);
-    this.rampPitch = rampAxis(this.rampPitch, kbPitch, dt);
+    // Pad shoulders: either alone is rudder, both together tuck (scheme.ts design notes).
+    const chord = this.bumpers.update(this.padHeldAny(PAD.yawLeft), this.padHeldAny(PAD.yawRight), dt);
+    const yawTarget = (this.held(KEYS.yawRight) || chord.right ? 1 : 0) - (this.held(KEYS.yawLeft) || chord.left ? 1 : 0);
+    this.rampPitch = rampAxis(this.rampPitch, keyPitchTarget(kbPitch, this.kbPitchHeld), dt, SHAPING.keyPitchAttack, SHAPING.keyRelease);
     this.rampRoll = rampAxis(this.rampRoll, kbRoll, dt);
     this.rampYaw = rampAxis(this.rampYaw, yawTarget, dt);
 
@@ -263,15 +290,24 @@ export class Input implements InputSystem, RumbleSink {
     const padPitch = expo(this.sq.y, SHAPING.flightExpo);
     const padRoll = expo(this.sq.x, SHAPING.flightExpo);
 
+    // Mouse steering (optional): captured mouse in flight → a virtual stick; middle button held
+    // looks around instead. On the ground, and without it, the mouse only ever looks.
+    const steering = !!s.mouseFlight && this.flying && this.pointerLocked && !this.held(KEYS.freeLook);
+    if (steering) this.mouseStick.update(this.mouseDX, this.mouseDY, s.lookSensitivity, dt);
+    else if (!this.flying || !s.mouseFlight) this.mouseStick.reset();
+    else this.mouseStick.update(0, 0, s.lookSensitivity, dt);
+
+    // Inverts are per device (falling back to the shared invertPitch).
+    const padInv = (s.invertPitchPad ?? s.invertPitch) ? -1 : 1;
+    const keyInv = (s.invertPitchKeys ?? s.invertPitch) ? -1 : 1;
     const fl = f.flight;
-    const pitch = dominant(this.rampPitch, padPitch);
-    fl.pitch = s.invertPitch ? -pitch : pitch;
-    fl.roll = dominant(this.rampRoll, padRoll);
+    fl.pitch = dominant(dominant(this.rampPitch * keyInv, padPitch * padInv), this.mouseStick.y * keyInv);
+    fl.roll = dominant(dominant(this.rampRoll, padRoll), this.mouseStick.x);
     fl.yaw = this.rampYaw;
     const flapRaw = Math.max(rt, this.held(KEYS.flap) ? 1 : 0);
     fl.flap = s.holdToFlap ? flapRaw : this.tap.update(flapRaw, dt);
     fl.flare = Math.max(lt, this.held(KEYS.flare) ? 1 : 0);
-    fl.tuck = this.held(KEYS.tuck) || this.padHeldAny(PAD.tuck) ? 1 : 0;
+    fl.tuck = this.held(KEYS.tuck) || chord.tuck ? 1 : 0;
 
     // --- On foot ------------------------------------------------------------------------------
     let kx = (this.held(KEYS.moveRight) ? 1 : 0) - (this.held(KEYS.moveLeft) ? 1 : 0);
@@ -307,6 +343,11 @@ export class Input implements InputSystem, RumbleSink {
       f.lookY = this.rs.y * k;
       f.lookIsRate = true;
       f.lookActive = true;
+    } else if (steering) {
+      // The mouse is flying the wyvern; the camera holds its chase framing.
+      f.lookX = f.lookY = 0;
+      f.lookIsRate = false;
+      f.lookActive = false;
     } else {
       const k = MOUSE_RAD_PER_PX * s.lookSensitivity;
       f.lookX = this.mouseDX * k;
@@ -314,6 +355,7 @@ export class Input implements InputSystem, RumbleSink {
       f.lookIsRate = false;
       f.lookActive = this.mouseDX !== 0 || this.mouseDY !== 0;
     }
+    if (s.invertLookY) f.lookY = -f.lookY;
     this.mouseDX = this.mouseDY = 0;
     this.mouseTravel *= Math.exp(-4 * dt);
 
@@ -426,6 +468,9 @@ export class Input implements InputSystem, RumbleSink {
     this.keysDown.clear();
     this.dragButton = -1;
     this.mouseDX = this.mouseDY = 0;
+    this.kbPitchHeld = 0;
+    this.bumpers.reset();
+    this.mouseStick.reset();
   }
 
   // --- Pointer lock -------------------------------------------------------------------------
@@ -466,6 +511,13 @@ export class Input implements InputSystem, RumbleSink {
   private onLockChange(): void {
     const was = this.pointerLocked;
     this.pointerLocked = document.pointerLockElement === this.target;
+    if (this.pointerLocked && !this.wantLock) {
+      // A lock granted after nobody wants it any more (asked for on the way through 'play', e.g.
+      // leaving a Stable opened from the title): hand the mouse straight back.
+      this.releasing = true;
+      document.exitPointerLock();
+      return;
+    }
     if (was && !this.pointerLocked) {
       this.keys.delete('Mouse0');
       this.keys.delete('Mouse1');
@@ -503,9 +555,19 @@ export class Input implements InputSystem, RumbleSink {
       const held = (this.padHeld[i] ??= new Array<boolean>(BUTTON_COUNT).fill(false));
       const prev = (this.padPrev[i] ??= new Array<boolean>(BUTTON_COUNT).fill(false));
       const sticks = (this.padStickPrev[i] ??= [0, 0]);
+      // Standard layout, whatever the driver reports (GAMEPAD-01).
+      const view = mapPad(g, (this.mapStates[i] ??= createPadMapState()), (this.views[i] ??= createPadView()));
+      if (view.guessed && !this.guessWarned.has(g.id)) {
+        this.guessWarned.add(g.id);
+        this.events?.emit('toast', {
+          text: 'Controller layout guessed',
+          sub: 'If buttons feel wrong, try an Xbox / PlayStation pad in Chrome or Edge',
+          icon: 'info',
+        });
+      }
       let active = false;
       for (let b = 0; b < BUTTON_COUNT; b++) {
-        const btn = g.buttons[b];
+        const btn = view.buttons[b];
         // Triggers count as "held" past half travel; their analog value is read separately.
         const isTrigger = b === PAD_BUTTON.LT || b === PAD_BUTTON.RT;
         held[b] = btn ? (isTrigger ? btn.value > 0.5 : btn.pressed) : false;
@@ -513,7 +575,7 @@ export class Input implements InputSystem, RumbleSink {
       }
       // A deliberate stick throw (not drift): crossing half deflection, or a big fast move.
       for (let st = 0; st < 2; st++) {
-        const m = Math.hypot(g.axes[st * 2] ?? 0, g.axes[st * 2 + 1] ?? 0);
+        const m = Math.hypot(view.axes[st * 2] ?? 0, view.axes[st * 2 + 1] ?? 0);
         const pm = sticks[st];
         if ((m > 0.5 && pm <= 0.5) || (m > 0.3 && Math.abs(m - pm) > 0.25)) active = true;
         sticks[st] = m;
@@ -526,6 +588,7 @@ export class Input implements InputSystem, RumbleSink {
     const cur = this.padIndex >= 0 ? list[this.padIndex] : null;
     if (!cur || !cur.connected) this.padIndex = first;
     this.pad = this.padIndex >= 0 ? list[this.padIndex] : null;
+    if (this.pad) this.padView = this.views[this.padIndex] ?? this.padView;
     this.padStyle = this.pad ? detectPadStyle(this.pad.id) : null;
   }
 

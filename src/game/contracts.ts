@@ -8,7 +8,7 @@ import type {
   BreedId,
   BreedStats,
   CosmeticSlot,
-  CylinderCollider,
+  Collider,
   FlightEnvironment,
   FlightState,
   InputDevice,
@@ -17,6 +17,7 @@ import type {
   PlayerMode,
   RaceKind,
   RaceRecord,
+  ResearchBranch,
   RiderLook,
   RiderPose,
   Settings,
@@ -66,6 +67,17 @@ export interface WeatherSystem extends Pick<FlightEnvironment, 'windAt'> {
   readonly cloudCover: number;
   set(kind: WeatherKind, immediate?: boolean): void;
   update(dt: number, camera: PerspectiveCamera, focus: Vector3): void;
+  /**
+   * Optional: rising air at the focus from thermals and ridge lift (m/s, + up), smoothed a
+   * little, for a HUD vario or an audio cue. 0 when absent.
+   */
+  readonly lift?: number;
+  /**
+   * Optional: 0..1 how close the focus is to (and into) the storm at the world's edge that turns
+   * flyers back: 0 inside the archipelago, rising over the last ~250 m before the boundary radius,
+   * 1 well into it. For a one-time "the winds turn you back" notice.
+   */
+  readonly boundary?: number;
 }
 
 export interface SkySystem {
@@ -105,8 +117,11 @@ export interface WorldSystem {
  */
 export interface DressingSystem {
   readonly group: Group;
-  /** Solid cylinders (building walls, towers, big trunks) to keep walkers out of. */
-  readonly colliders: readonly CylinderCollider[];
+  /**
+   * Collision shapes of everything built (building and roof boxes, tower and post cylinders, soft
+   * hay and cloth). Widened from cylinders only: check `kind` (absent = cylinder).
+   */
+  readonly colliders: readonly Collider[];
   /**
    * Walkable built surfaces that the terrain doesn't cover (the Roost's launch deck juts out over
    * the void): the deck top under (x, z) at or below fromY + 2, or null.
@@ -289,6 +304,10 @@ export interface SaveData {
    * ui/tutor.ts). tutorialDone turns true once every first-flight tip is in here.
    */
   tips?: string[];
+  /** Research journal: recorded entry ids and points per branch (absent in older saves). */
+  research?: { entries: string[]; points: Record<ResearchBranch, number> };
+  /** The guided opening with Quintus: finished or skipped (absent = not yet). */
+  prologueDone?: boolean;
 }
 
 export interface GhostRecording {

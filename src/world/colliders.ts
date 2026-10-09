@@ -10,8 +10,11 @@
 import { Vector3 } from 'three';
 import type { BoxCollider, Collider, ContactInfo, CylinderCollider, SphereCollider, SurfaceKind } from '../core/types';
 
-/** Grid cell size (m). Shapes are small (≤ ~30 m), so most live in one or two cells. */
-const CELL = 24;
+/**
+ * Grid cell size (m). Most shapes are a few meters across, so a cell holds only the handful of
+ * shapes around it; bigger ones (roofs, canopies) simply sit in several cells.
+ */
+const CELL = 12;
 
 /** How much of a soft (foliage) penetration is resolved per query: a cushion, not a wall. */
 export const SOFT_PUSH = 0.35;
@@ -22,6 +25,11 @@ interface Entry {
   /** Top of the shape (m), for ground queries and quick rejects. */
   top: number;
   bottom: number;
+  /** Horizontal bounds: most candidates in a cell are rejected on these before any real test. */
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
 }
 
 const tmpN = new Vector3();
@@ -70,7 +78,7 @@ export class ColliderIndex {
       top = c.y1;
       bottom = c.y0;
     }
-    const e: Entry = { c, stamp: 0, top, bottom };
+    const e: Entry = { c, stamp: 0, top, bottom, minX, maxX, minZ, maxZ };
     this.entries.push(e);
     for (let cx = Math.floor(minX / CELL); cx <= Math.floor(maxX / CELL); cx++) {
       for (let cz = Math.floor(minZ / CELL); cz <= Math.floor(maxZ / CELL); cz++) {
@@ -153,6 +161,7 @@ export class ColliderIndex {
     let hit = false;
     for (const e of this.near(p.x, p.z, radius)) {
       if (p.y - radius > e.top || p.y + radius < e.bottom) continue;
+      if (p.x + radius < e.minX || p.x - radius > e.maxX || p.z + radius < e.minZ || p.z - radius > e.maxZ) continue;
       const c = e.c;
       const d = signedDistance(c, p, tmpN);
       if (d >= radius) continue;
@@ -172,9 +181,37 @@ export class ColliderIndex {
   /** Signed distance to the nearest collider within maxR (Infinity if none that close). */
   distance(p: Vector3, maxR: number): number {
     if (this.entries.length === 0) return Infinity;
-    let best = Infinity;
-    for (const e of this.near(p.x, p.z, maxR)) {
-      if (p.y - maxR > e.top || p.y + maxR < e.bottom) continue;
+    const s = ++this.stamp;
+    const pcx = Math.floor(p.x / CELL);
+    const pcz = Math.floor(p.z / CELL);
+    // The cell holding p first: a near hit there shrinks the search for everything else.
+    let best = this.distanceInCell(this.grid.get(key(pcx, pcz)), p, maxR, Infinity, s);
+    for (let cx = Math.floor((p.x - maxR) / CELL); cx <= Math.floor((p.x + maxR) / CELL); cx++) {
+      for (let cz = Math.floor((p.z - maxR) / CELL); cz <= Math.floor((p.z + maxR) / CELL); cz++) {
+        if (cx === pcx && cz === pcz) continue;
+        // Skip whole cells farther than the best so far.
+        const gx = Math.max(cx * CELL - p.x, 0, p.x - (cx + 1) * CELL);
+        const gz = Math.max(cz * CELL - p.z, 0, p.z - (cz + 1) * CELL);
+        const lim = Math.min(best, maxR);
+        if (lim > 0 && gx * gx + gz * gz > lim * lim) continue;
+        best = this.distanceInCell(this.grid.get(key(cx, cz)), p, maxR, best, s);
+      }
+    }
+    return best;
+  }
+
+  private distanceInCell(list: Entry[] | undefined, p: Vector3, maxR: number, best: number, s: number): number {
+    if (!list) return best;
+    for (const e of list) {
+      if (e.stamp === s) continue;
+      e.stamp = s;
+      // Distance to the entry's bounding box never overestimates: skip anything whose box is
+      // already farther than the best (or the search radius).
+      const ex = Math.max(e.minX - p.x, 0, p.x - e.maxX);
+      const ey = Math.max(e.bottom - p.y, 0, p.y - e.top);
+      const ez = Math.max(e.minZ - p.z, 0, p.z - e.maxZ);
+      const lim = Math.min(best, maxR);
+      if (lim > 0 && ex * ex + ey * ey + ez * ez > lim * lim) continue;
       const d = signedDistance(e.c, p, null);
       if (d < best) best = d;
     }
@@ -192,6 +229,7 @@ export class ColliderIndex {
       const c = e.c;
       if (c.soft || e.top > fromY + stepUp) continue;
       if (best && e.top <= best.y) continue;
+      if (x < e.minX || x > e.maxX || z < e.minZ || z > e.maxZ) continue;
       if (!insideTopFace(c, x, z)) continue;
       best = { y: e.top, surface: c.surface ?? 'wood' };
     }
