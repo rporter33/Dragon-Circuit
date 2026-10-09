@@ -752,6 +752,69 @@ describe('weight and life (client direction: a big, heavy dragon)', { timeout: 6
   });
 });
 
+describe('reptile hide', { timeout: 60000 }, () => {
+  it('armors the ironback like a crocodile: paired keeled osteoderms from nape to tail, none under the saddle', () => {
+    const w = new Wyvern(look('ironback'));
+    const g = w.skinnedMesh!.geometry;
+    const pos = g.getAttribute('position');
+    const mat = g.getAttribute('aMat');
+    const rig = w.rigDef;
+    let left = 0;
+    let right = 0;
+    let zMax = -Infinity;
+    let zMin = Infinity;
+    let underSaddle = 0;
+    for (let i = 0; i < pos.count; i++) {
+      if (Math.round(mat.getX(i)) !== 8) continue;
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      if (x > 0.01) left++;
+      else if (x < -0.01) right++;
+      zMax = Math.max(zMax, z);
+      zMin = Math.min(zMin, z);
+      if (Math.abs(z - rig.seat.z) < 0.35 && pos.getY(i) > rig.seat.y - 0.6) underSaddle++;
+    }
+    // Paired rows, mirror-symmetric.
+    expect(left).toBeGreaterThan(400);
+    expect(Math.abs(left - right)).toBeLessThan(left * 0.02);
+    // From up the neck (well ahead of the shoulders) to far down the tail.
+    expect(zMax).toBeGreaterThan(rig.props.shoulder[2] + 1);
+    expect(zMin).toBeLessThan(rig.tailTip.z * 0.6);
+    expect(underSaddle).toBe(0);
+    w.dispose();
+    // The other breeds go unarmored.
+    const h = new Wyvern(look('harrier'));
+    const hm = h.skinnedMesh!.geometry.getAttribute('aMat');
+    let plates = 0;
+    for (let i = 0; i < hm.count; i++) if (Math.round(hm.getX(i)) === 8) plates++;
+    expect(plates).toBe(0);
+    h.dispose();
+  });
+
+  it('tells the body shader the angle around the tube for its rows of keeled scales', () => {
+    const w = new Wyvern(look('harrier'));
+    const geo = w.skinnedMesh!.geometry;
+    const mat = geo.getAttribute('aMat');
+    // Body group only (membranes use the channel for their flutter).
+    const body = new Set<number>();
+    const idx = geo.index!.array;
+    for (let i = geo.groups[0].start; i < geo.groups[0].start + geo.groups[0].count; i++) body.add(idx[i]);
+    let tube = 0;
+    let bad = 0;
+    for (const i of body) {
+      if (Math.round(mat.getX(i)) !== 0) continue;
+      const a = mat.getW(i);
+      if (a > 0.5) {
+        tube++;
+        if (a < 1 - 1e-6 || a > 3 + 1e-6) bad++;
+      }
+    }
+    expect(tube).toBeGreaterThan(1000);
+    expect(bad).toBe(0);
+    w.dispose();
+  });
+});
+
 describe('seat', () => {
   it('reports the standing seat in the body frame, matching the saddle anchor (mount/dismount line-up)', () => {
     for (const breed of BREED_ORDER) {

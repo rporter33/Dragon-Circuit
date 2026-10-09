@@ -192,14 +192,47 @@ varying vec4 vMat;
 varying vec2 vUv2;
 ${NOISE_GLSL}
 
+// Scales: the nearest scale centre in a jittered grid (feature points kept to the middle half
+// of each cell, so a 2x2x2 search finds it: 8 lookups instead of 27). xyz: offset from the
+// fragment to that centre; w: how far inside the scale (0 at the crevice to the next one).
+vec4 dwScaleCell(vec3 p) {
+  vec3 i = floor(p - 0.5);
+  vec3 f = p - i;
+  float d1 = 8.0;
+  float d2 = 8.0;
+  vec3 r1 = vec3(0.0);
+  for (int z = 0; z <= 1; z++)
+  for (int y = 0; y <= 1; y++)
+  for (int x = 0; x <= 1; x++) {
+    vec3 g = vec3(float(x), float(y), float(z));
+    vec3 r = g + 0.25 + 0.5 * dwHash33(i + g) - f;
+    float d = dot(r, r);
+    if (d < d1) { d2 = d1; d1 = d; r1 = r; }
+    else if (d < d2) { d2 = d; }
+  }
+  return vec4(r1, sqrt(d2) - sqrt(d1));
+}
+
+// Relief of the keeled scales (about -0.7..0.9), for the bump once the normal is known.
+float dwScaleH = 0.0;
+
 // Returns albedo; writes the emissive part and a "gold" mask for the glint.
 vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
   emit = vec3(0.0);
   gold = 0.0;
+  dwScaleH = 0.0;
   int region = int(vMat.x + 0.5);
   vec3 bp = vBodyPos / uBodyScale;
   float n1 = dwVnoise(bp * 2.3);
   float n2 = dwVnoise(bp * 6.1 + 3.1);
+  // Scale coordinates, faded out by their on-screen frequency so they never shimmer at range
+  // (plain painterly hide there). On the body tube: along it (rows ~13 cm) and around it (40
+  // rows, so smaller on the neck and in rings down the tail); elsewhere a granular 3D cell.
+  vec2 tq = vec2(vUv2.x / (0.13 * uBodyScale), (vMat.w - 2.0) * 20.0);
+  vec2 tw = fwidth(tq);
+  float tubeFade = 1.0 - smoothstep(0.25, 0.6, length(tw));
+  vec3 sq = bp * vec3(11.0, 11.0, 8.0);
+  float scaleFade = 1.0 - smoothstep(0.22, 0.55, length(fwidth(sq)));
   if (region == 0 || region == 8) {
     float belly = vMat.y;
     float dorsal = vMat.z;
@@ -275,14 +308,49 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
       col = mix(col, goldCol, tip * 0.9);
       gold = tip;
     }
+    if (region == 0 && vMat.w > 0.5) {
+      // Keeled dorsal scales on the body: staggered rows of overlapping scales running nose to
+      // tail, each a round-tipped shield whose free rear edge overlaps the next, a raised keel
+      // down its middle (strongest along the back); they flatten down the flanks and give way
+      // to the broad ventral scutes.
+      if (tubeFade > 0.001) {
+        float row = floor(tq.y);
+        float along = tq.x + 0.5 * mod(row, 2.0);
+        vec2 f = vec2(fract(tq.y) - 0.5, fract(along));
+        // A lanceolate free edge: rounded at the shoulders, coming to a soft point.
+        float d = (1.0 - 0.62 * pow(abs(2.0 * f.x), 1.5)) - f.y;
+        // Line widths grow with the on-screen size of a scale, so the crevices stay soft lines
+        // instead of breaking into dots.
+        float aa = max(tw.x, tw.y * 2.0 * abs(f.x));
+        float inside = smoothstep(-aa, aa, d);
+        float gap = 1.0 - smoothstep(0.0, 0.07 + 1.5 * aa, abs(d));
+        float side = (1.0 - smoothstep(0.0, 0.06 + 1.5 * tw.y, 0.5 - abs(f.x))) * inside;
+        float keelW = smoothstep(0.15, 0.7, dorsal);
+        float keel = (1.0 - smoothstep(0.0, 0.08 + 1.5 * tw.y, abs(f.x))) * smoothstep(0.1, 0.55, f.y) * inside * keelW;
+        float rear = smoothstep(0.05, 0.9, f.y) * inside;
+        float w = tubeFade * (1.0 - smoothstep(0.2, 0.55, belly));
+        float shade = (1.0 - 0.24 * max(gap, 0.6 * side)) * mix(0.9, 1.06, rear) + 0.14 * keel;
+        col *= mix(1.0, shade, w);
+        dwScaleH = w * (0.6 * keel + 0.4 * rear - 0.8 * max(gap, 0.5 * side));
+      }
+    } else if (region == 0 && scaleFade > 0.001) {
+      // Head and limbs: small granular scales, softer.
+      vec4 cv = dwScaleCell(sq);
+      float w = scaleFade * (1.0 - smoothstep(0.2, 0.6, belly));
+      float gap = 1.0 - smoothstep(0.0, 0.1, cv.w);
+      col *= mix(1.0, (1.0 - 0.16 * gap) * mix(0.95, 1.03, smoothstep(-0.35, 0.35, cv.z)), w);
+      dwScaleH = w * (0.3 * smoothstep(-0.35, 0.35, cv.z) - 0.5 * gap);
+    }
     // Belly: a soft painterly boundary and faint transverse scutes.
     float bm = smoothstep(0.32, 0.68, belly + 0.18 * (n1 - 0.5));
     float scute = smoothstep(0.86, 0.97, fract(s * 2.6)) * 0.12 * bm;
     col = mix(col, uBelly * (1.0 - scute) * (0.96 + 0.06 * n2), bm);
     if (region == 8) {
-      // Armor plates: secondary-toned, lighter worn rims.
-      vec3 plate = mix(uSecondary, uPrimary, 0.25) * (0.88 + 0.12 * n2);
-      plate = mix(plate, mix(uHorn, uPrimary, 0.5), smoothstep(0.6, 0.95, vUv2.x) * 0.55);
+      // Osteoderms: bony scutes in the secondary tone, their keels worn pale like old bone, the
+      // rims shading down into the gaps between them (aUv2.x: 0 on the keel, 1 at the rim).
+      vec3 plate = mix(uSecondary, uPrimary, 0.3) * (0.86 + 0.14 * n2);
+      plate = mix(plate, mix(uHorn, plate, 0.45), (1.0 - smoothstep(0.0, 0.3, vUv2.x)) * 0.6);
+      plate *= 1.0 - 0.3 * smoothstep(0.75, 1.0, vUv2.x);
       col = plate;
     }
     return col;
@@ -356,7 +424,26 @@ vec3 dwWyvernAlbedo(out vec3 emit, out float gold) {
 const CONTOUR_GLSL = /* glsl */ `
 {
   float dwCf = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
-  outgoingLight *= 1.0 - uContour * 0.28 * smoothstep(0.55, 0.95, dwCf);
+  outgoingLight *= 1.0 - uContour * 0.34 * smoothstep(0.55, 0.95, dwCf);
+}
+`;
+
+/**
+ * Relief of the scales: tilt the normal by the screen-space gradient of their height (three's
+ * derivative bump-map formula, without a texture): a few millimetres of keel and crevice.
+ */
+const SCALE_BUMP_GLSL = /* glsl */ `
+{
+  vec3 sp = -vViewPosition;
+  vec3 dpx = dFdx(sp);
+  vec3 dpy = dFdy(sp);
+  float hx = dFdx(dwScaleH) * 0.012;
+  float hy = dFdy(dwScaleH) * 0.012;
+  vec3 r1 = cross(dpy, normal);
+  vec3 r2 = cross(normal, dpx);
+  float det = dot(dpx, r1);
+  vec3 grad = sign(det) * (hx * r1 + hy * r2);
+  normal = normalize(abs(det) * normal - grad);
 }
 `;
 
@@ -483,6 +570,7 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
       shader.fragmentShader = shader.fragmentShader
         .replace('void main() {', BODY_PARS_FRAG + '\nvoid main() {')
         .replace('#include <opaque_fragment>', CONTOUR_GLSL + '\n#include <opaque_fragment>')
+        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + SCALE_BUMP_GLSL)
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>

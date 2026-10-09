@@ -2,7 +2,8 @@
 // time; each part gets smooth normals from its own triangles (so separate parts keep crisp
 // intersections), up to four bone influences per vertex, and the extra attributes the wyvern
 // shaders read:
-//   aMat  (vec4): region id, belly mask, dorsal mask, flutter amount
+//   aMat  (vec4): region id, belly mask, dorsal mask, flutter amount (membranes) or, on the
+//                 body tube, the angle around it (2 + θ/π) for the scale rows
 //   aUv2  (vec2): part-specific coordinates (arc length along a part, lateral position, …)
 // Two index lists are kept: group 0 for the opaque body, group 1 for membranes.
 

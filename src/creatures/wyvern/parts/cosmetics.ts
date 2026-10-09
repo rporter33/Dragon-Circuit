@@ -479,49 +479,114 @@ export function buildTailTip(b: GeoBuilder, rig: RigDef, id: string): void {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Armor plates (ironback)
+// Osteoderms (ironback)
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * One keeled osteoderm (bony scute) lying on the surface: a low rounded-rectangle shield whose
+ * top rises to a ridge (keel) running along the body, highest toward the rear edge, with a skirt
+ * sunk into the skin so it never floats. ~24 triangles. u: along the body (toward the tail),
+ * v: across, n: surface normal. aUv2.x is 0 on the keel and 1 at the rim (for the shading).
+ */
+function keeledScute(b: GeoBuilder, c: Vector3, u: Vector3, v: Vector3, n: Vector3, halfLen: number, halfWid: number, keel: number, skin: Skin): void {
+  const mat = { region: REGION.plate, dorsal: 1, belly: 0 };
+  const P = new Vector3();
+  const at = (a: number, w: number, h: number, rim: number) =>
+    b.vertex(P.copy(c).addScaledVector(u, a * halfLen).addScaledVector(v, w * halfWid).addScaledVector(n, h), skin, mat, rim, w);
+  // Top: three cross rows (front, middle, rear) of left edge, keel, right edge.
+  const rows = [-0.9, 0.05, 0.95];
+  const keelH = [0.45, 0.85, 1.0];
+  const top: number[][] = rows.map((a, r) => [at(a, -1, keel * 0.12, 0.85), at(a, 0, keel * keelH[r], 0), at(a, 1, keel * 0.12, 0.85)]);
+  // Rim around the top, then a skirt sunk below the skin.
+  const ring: [number, number][] = [
+    [-1, -0.75],
+    [-1, 0],
+    [-1, 0.75],
+    [0.05, 1.08],
+    [1, 0.75],
+    [1, 0],
+    [1, -0.75],
+    [0.05, -1.08],
+  ];
+  const rim = ring.map(([a, w]) => at(a, w, 0, 1));
+  const skirt = ring.map(([a, w]) => at(a * 1.04, w * 1.04, -keel * 0.9 - 0.02, 1));
+  // Top quads (2 x 2), counter-clockwise seen from outside (u x v = n).
+  for (let r = 0; r < 2; r++) {
+    for (let k = 0; k < 2; k++) b.quad(top[r][k], top[r + 1][k], top[r + 1][k + 1], top[r][k + 1]);
+  }
+  // Top border to the rim: front edge, right edge, rear edge, left edge (outline order).
+  const border = [top[0][0], top[0][1], top[0][2], top[1][2], top[2][2], top[2][1], top[2][0], top[1][0]];
+  for (let k = 0; k < 8; k++) {
+    const j = (k + 1) % 8;
+    // (The outline runs clockwise seen from outside, so these wind inner -> next -> outer.)
+    b.quad(border[k], border[j], rim[j], rim[k]);
+    b.quad(rim[k], rim[j], skirt[j], skirt[k]);
+  }
+}
+
+/**
+ * Crocodilian armor down the ironback: a nuchal shield of big scutes behind the head, paired
+ * transverse rows of keeled osteoderms down the neck and over the back (the saddle sits on bare
+ * hide), and two rows of tall keeled crests down the tail, converging and shrinking toward the tip.
+ */
 export function buildPlates(b: GeoBuilder, rig: RigDef, look: WyvernLook): void {
   const plan = rig.plan;
   const k = plan.keyS;
   const m = plan.marks;
   const chain = bodyChain(rig);
   const [g0, g1] = saddleGap(rig);
-  const extraGap = look.saddle === 'royal' || look.saddle === 'nomad' ? 0.45 : 0.1;
-  const sStart = lerp(k[m.neckTop], k[m.neckBase], 0.3);
-  const sEnd = lerp(k[m.tailBase], plan.length, 0.6);
+  const extraGap = look.saddle === 'royal' || look.saddle === 'nomad' ? 0.4 : 0.12;
+  const S = rig.props.shape;
+  const scale = S.torsoHalfHeight / 1.04;
   const p = new Vector3();
   const n = new Vector3();
-  const S = rig.props.shape;
+  const u = new Vector3();
+  const v = new Vector3();
+  const sNeck0 = lerp(k[m.neckTop], k[m.neckBase], 0.18);
+  const sNuchal = lerp(k[m.neckTop], k[m.neckBase], 0.78);
+  const sTail = k[m.tailBase];
+  const sEnd = lerp(sTail, plan.length, 0.8);
   b.begin(0);
-  let s = sStart;
-  let row = 0;
+  const place = (s: number, th: number, halfLen: number, halfWid: number, keel: number) => {
+    plan.surface(s, th, p, n);
+    const st = plan.station(s);
+    u.copy(st.tangent).addScaledVector(n, -st.tangent.dot(n)).normalize();
+    v.crossVectors(n, u).normalize();
+    keeledScute(b, p, u, v, n, halfLen, halfWid, keel, chain.skin(s));
+  };
+  let s = sNeck0;
   while (s < sEnd) {
     const st = plan.station(s);
-    const r = Math.min(st.halfWidth, st.upper);
-    const size = clamp(r * 0.62, 0.16, 0.5);
-    if (!(s > g0 - extraGap && s < g1 + extraGap)) {
-      for (const th of row % 2 === 0 ? [0] : [-0.62, 0.62]) {
-        plan.surface(s, th, p, n);
-        const back = st.tangent.clone().addScaledVector(n, -st.tangent.dot(n)).normalize();
-        const side = new Vector3().crossVectors(n, back).normalize();
-        // Shield outline (u along the back toward the tail, v across).
-        const w = size * (th === 0 ? 1 : 0.75);
-        const outline: [number, number][] = [];
-        for (let i = 0; i < 10; i++) {
-          const a = (i / 10) * Math.PI * 2;
-          outline.push([Math.cos(a) * w * (Math.cos(a) > 0 ? 1.15 : 0.85), Math.sin(a) * w * 0.9]);
-        }
-        // Overlap: tilt the trailing edge up a touch.
-        const c = p.clone().addScaledVector(n, 0.02).addScaledVector(back, w * 0.15);
-        const nn = n.clone().addScaledVector(back, -0.18).normalize();
-        const sk = chain.skin(s);
-        leaf(b, c, back, side, nn, outline, 0.07 * (S.torsoHalfHeight / 1.04), () => sk, (_top, f) => ({ region: REGION.plate, dorsal: 1, belly: 0 }), 2, 0.3);
+    const r = Math.max(0.05, Math.min(st.halfWidth, st.upper));
+    const onTail = s > sTail + 0.1;
+    // Rows about as long as the body is round here (a tighter pitch down the tail).
+    const pitch = clamp(r * (onTail ? 0.42 : 0.3), 0.1, 0.3 * scale);
+    const inSaddle = s > g0 - extraGap && s < g1 + extraGap;
+    if (!inSaddle) {
+      if (onTail) {
+        // Double crest: two rows of upright keels converging toward the tip.
+        const f = (s - sTail) / (sEnd - sTail);
+        const th = lerp(0.42, 0.22, f);
+        const keel = (0.16 - 0.1 * f) * scale + 0.25 * r * (1 - f);
+        for (const sx of [1, -1]) place(s, th * sx, pitch * 0.42, r * 0.17, keel);
+      } else if (s < sNuchal) {
+        // Neck: paired rows, a smaller outer pair further down.
+        const cols = s > lerp(sNeck0, sNuchal, 0.5) ? [0.3, 0.78] : [0.32];
+        for (const th of cols) for (const sx of [1, -1]) place(s, th * sx, pitch * 0.42, r * (th < 0.5 ? 0.24 : 0.18), 0.05 * scale);
+      } else if (s < k[m.chest]) {
+        // Nuchal shield at the neck base: two rows of big scutes.
+        for (const th of [0.24, 0.66]) for (const sx of [1, -1]) place(s, th * sx, pitch * 0.46, r * 0.22, 0.07 * scale);
+      } else {
+        // Dorsal shield: three pairs across the back, the outer ones lower and smaller.
+        for (const [th, wid, keel] of [
+          [0.17, 0.15, 0.075],
+          [0.52, 0.15, 0.065],
+          [0.88, 0.12, 0.045],
+        ] as const)
+          for (const sx of [1, -1]) place(s, th * sx, pitch * 0.42, r * wid, keel * scale);
       }
     }
-    s += clamp(r * 0.55, 0.16, 0.5);
-    row++;
+    s += pitch;
   }
   b.end();
 }
