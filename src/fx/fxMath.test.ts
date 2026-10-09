@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  breedMassFactor,
   decay,
   flapDustAmount,
+  flapTrailBurst,
+  flapTrailFloor,
+  seaDownwashAmount,
   isColdAir,
   planeBasis,
   scaledCount,
@@ -159,5 +163,42 @@ describe('misc', () => {
     expect(end.dirZ).toBeCloseTo(0);
     expect(launchDeckEnd([])).toBeNull();
     expect(launchDeckEnd(undefined)).toBeNull();
+  });
+});
+
+describe('wingbeat air', () => {
+  it('sheds a tip-vortex burst over the end of each downstroke, following the breed\'s stroke timing', () => {
+    const at = (phase: number, downFrac = 0.5) => flapTrailBurst(phase, 1, downFrac, 1, 28);
+    // Nothing early in the downstroke or on the upstroke; full at the end of the downstroke.
+    expect(at(0.1)).toBe(0);
+    expect(at(0.45)).toBeCloseTo(1, 6);
+    expect(at(0.7)).toBe(0);
+    // A longer downstroke (big breeds) moves the burst later.
+    expect(at(0.45, 0.6)).toBeLessThan(at(0.55, 0.6));
+    // Scaled by the beat and the animal's mass; nothing while hovering or gliding.
+    expect(flapTrailBurst(0.45, 0.5, 0.5, 1, 28)).toBeCloseTo(0.5, 6);
+    expect(flapTrailBurst(0.45, 1, 0.5, 1, 6)).toBe(0);
+    expect(flapTrailBurst(0.45, 0, 0.5, 1, 28)).toBe(0);
+  });
+
+  it('keeps a faint vortex floor while the wings work at speed', () => {
+    expect(flapTrailFloor(1, 28)).toBeCloseTo(0.2, 6);
+    expect(flapTrailFloor(0, 28)).toBe(0);
+    expect(flapTrailFloor(1, 8)).toBe(0);
+  });
+
+  it('weights air effects by mass (sqrt, against the harrier), within bounds', () => {
+    expect(breedMassFactor(650)).toBeCloseTo(1, 6);
+    expect(breedMassFactor(920)).toBeGreaterThan(1.15);
+    expect(breedMassFactor(470)).toBeLessThan(0.9);
+    expect(breedMassFactor(5000)).toBe(1.25);
+    expect(breedMassFactor(10)).toBe(0.8);
+  });
+
+  it('presses the cloud sea only within a few spans of the billows', () => {
+    expect(seaDownwashAmount(10, 13, 1)).toBe(1);
+    expect(seaDownwashAmount(26, 13, 1)).toBeGreaterThan(0.3);
+    expect(seaDownwashAmount(45, 13, 1)).toBe(0);
+    expect(seaDownwashAmount(Number.NaN, 13, 1)).toBe(0);
   });
 });

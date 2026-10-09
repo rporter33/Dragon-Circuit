@@ -46,7 +46,8 @@ void main() {
   vec3 side = cross(tan, viewV);
   float sl = length(side);
   side = sl > 1e-4 ? side / sl : b1;
-  float w = uWidth * (0.45 + 2.4 * t);
+  // Strong samples (a wingbeat's burst) roll up into a thicker vortex.
+  float w = uWidth * (0.45 + 2.4 * t) * (0.7 + 0.6 * clamp(aData.z, 0.0, 1.0));
   float minW = 2.0 * length(wp - cameraPosition) / uPxScale;
   float thin = min(1.0, w / max(minW, 1e-4));
   wp += side * aData.x * max(w, minW);
@@ -69,9 +70,10 @@ void main() {
   float across = 1.0 - vUv.x * vUv.x;
   // Streaky along the ribbon, pinned to the air (birth time), so it shears like real vapor.
   float n = fxNoise(vec2(vUv.y, vUv.x * 1.7 + 3.0)) * 0.65 + 0.35;
-  // Cooler, slightly darker edges: the vapor still reads against white cloud.
-  vec3 col = mix(vColor * vec3(0.62, 0.7, 0.88), vColor, smoothstep(0.35, 0.85, across));
-  float a = smoothstep(0.0, 0.7, across) * n * vAlpha;
+  // Cooler, darker edges (the shaded side of the rolled-up vapor): the thread still reads
+  // against bright cloud, golden-hour peach included.
+  vec3 col = mix(vColor * vec3(0.5, 0.58, 0.78), vColor, smoothstep(0.45, 0.9, across));
+  float a = smoothstep(0.0, 0.5, across) * n * vAlpha;
   if (a < 0.004) discard;
   gl_FragColor = vec4(col, a);
 }

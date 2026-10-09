@@ -36,6 +36,39 @@ export function trailIntensity(airspeed: number, gLoad: number, flying: boolean)
   return clamp01(Math.max(speed * 0.85, pull));
 }
 
+/**
+ * Wingtip vortices a wingbeat sheds (0..1): a burst over the end of the downstroke, where the
+ * tips sweep fastest (flap phase 0.6..1.1 of the downstroke's share of the cycle, so it follows
+ * the breed's stroke timing), scaled by the beat's strength and the animal's mass (a heavy breed
+ * moves more air). Below ~10 m/s (hover, takeoff) the downwash goes into dust and spray instead.
+ */
+export function flapTrailBurst(flapPhase: number, flapStrength: number, downFrac: number, massFactor: number, airspeed: number): number {
+  if (!(flapStrength > 0)) return 0;
+  const p = flapPhase / Math.max(0.2, downFrac);
+  const env = smoothstep(0.6, 0.8, p) * (1 - smoothstep(0.95, 1.1, p));
+  return clamp01(env * clamp01(flapStrength) * massFactor * smoothstep(10, 16, airspeed));
+}
+
+/** The floor the tip vortices keep while the wings work at speed, so each beat leaves a thread. */
+export function flapTrailFloor(flapStrength: number, airspeed: number): number {
+  return 0.2 * smoothstep(0.05, 0.25, flapStrength) * smoothstep(13, 17, airspeed);
+}
+
+/** Wing-loading factor of a breed for its air effects: sqrt of its mass against the harrier's. */
+export function breedMassFactor(mass: number): number {
+  return Math.min(1.25, Math.max(0.8, Math.sqrt(Math.max(0, mass) / 650)));
+}
+
+/**
+ * A wingbeat's downwash on the cloud sea (0..1): full within about a span and a quarter of the
+ * billows, gone past 3 spans (the cloud floor keeps a flier 10-25 m over the tops, so the jet of
+ * a big wing is given a generous reach).
+ */
+export function seaDownwashAmount(heightAboveSea: number, wingspan: number, strength: number): number {
+  if (!Number.isFinite(heightAboveSea) || heightAboveSea < -2) return 0;
+  return clamp01(strength) * (1 - smoothstep(1.25 * wingspan, 3 * wingspan, heightAboveSea));
+}
+
 /** Ground-effect dust from a wingbeat: strong close to the ground, nothing above ~2.5 spans. */
 export function flapDustAmount(heightAboveGround: number, wingspan: number, strength: number): number {
   if (!Number.isFinite(heightAboveGround) || heightAboveGround < -1) return 0;

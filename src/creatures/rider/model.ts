@@ -4,6 +4,8 @@
 import { Color, MeshToonMaterial, SkinnedMesh, type BufferAttribute, type BufferGeometry } from 'three';
 import type { RiderLook } from '../../core/types';
 import { applyPainterly, toonRamp } from '../../render/painterly';
+import { creatureUniforms } from '../../render/uniforms';
+import { CREATURE_LIGHT_PARS, RIDER_RIG_LIGHT } from '../wyvern/shading/light';
 import { createRig, rigDims, type Rig } from './rig';
 import { SkinBuilder } from './meshKit';
 import { buildBody, makeBodyCtx, type BodyCtx } from './body';
@@ -35,11 +37,14 @@ export function riderMaterial(): MeshToonMaterial {
   applyPainterly(m, {
     rim: 1.15,
     onBeforeCompile: (shader) => {
+      // The camera rig's kick and rim (camera/creatureLight.ts), shared with the wyvern.
+      Object.assign(shader.uniforms, creatureUniforms);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute float glow;\nvarying float vDwGlow;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDwGlow = glow;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vDwGlow;')
+        .replace('#include <common>', '#include <common>\nvarying float vDwGlow;\n' + CREATURE_LIGHT_PARS)
+        .replace('#include <opaque_fragment>', RIDER_RIG_LIGHT + '#include <opaque_fragment>')
         .replace(
           '#include <emissivemap_fragment>',
           '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vColor.rgb * vDwGlow * (0.45 + 1.8 * uNight);',
@@ -47,7 +52,7 @@ export function riderMaterial(): MeshToonMaterial {
     },
   });
   const key = m.customProgramCacheKey.bind(m);
-  m.customProgramCacheKey = () => `${key()}-rider-glow`;
+  m.customProgramCacheKey = () => `${key()}-rider-glow-rig`;
   bodyMaterial = m;
   return m;
 }

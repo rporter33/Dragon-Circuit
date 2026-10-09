@@ -15,11 +15,11 @@ import {
   type PerspectiveCamera,
   type Scene,
 } from 'three';
-import type { Settings } from '../core/types';
+import type { Settings, WyvernPose } from '../core/types';
 import type { SkySystem } from '../game/contracts';
 import type { QualityProfile } from '../render/quality';
 import type { Renderer } from '../render/renderer';
-import { globalUniforms } from '../render/uniforms';
+import { creatureUniforms, globalUniforms } from '../render/uniforms';
 import { registerShadowFrustum } from '../render/shadowOnly';
 import { LAYOUT, type WorldLayout } from '../world/layout';
 import { clamp01, smoothstep } from '../core/math';
@@ -287,6 +287,7 @@ export class Sky implements SkySystem {
     // Inside a cloud the world goes to the cloud's own lit color, never a glaring white at night.
     g.uCloudColor.value.copy(pal.cloudLit).lerp(pal.fog, 0.35).multiplyScalar(0.92);
     this.renderer.setBloom(pal.bloom, pal.bloomThreshold);
+    creatureUniforms.uDwBloomT.value = pal.bloomThreshold;
 
     // --- Clouds -------------------------------------------------------------------------------
     this.shared.uCloudLit.value.copy(pal.cloudLit);
@@ -364,6 +365,20 @@ export class Sky implements SkySystem {
       tmpV.copy(w.flashPosition).y += 450;
       d.uFlashDir.value.copy(tmpV.sub(camera.position).normalize());
     }
+  }
+
+  /**
+   * The player's wyvern casts its shadow on the cloud sea (call every frame before update): the
+   * wings' spread span, strongest skimming low, fading out with height above the billows.
+   */
+  setCreatureShadow(pose: Pick<WyvernPose, 'position' | 'orientation' | 'airborne' | 'wingSpread'>, wingspan: number): void {
+    const p = pose.position;
+    const seaY = SEA_BASE + this.seaMean01 * SEA_RANGE;
+    const h = p.y - seaY;
+    const strength = pose.airborne ? 0.5 * (1 - smoothstep(60, 260, h)) : 0;
+    tmpV.set(0, 0, 1).applyQuaternion(pose.orientation);
+    const span = wingspan * (0.45 + 0.55 * clamp01(pose.wingSpread));
+    this.sea.setCreatureShadow(p.x, p.y, p.z, tmpV.x, tmpV.z, span, strength);
   }
 
   /** Pick the islands, spires and cloud banks whose shadows fall nearest the camera on the sea. */

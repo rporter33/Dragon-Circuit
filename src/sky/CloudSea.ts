@@ -97,6 +97,10 @@ uniform float uSeaMean01;
 uniform vec4 uShadowers[${MAX_SHADOWERS}];
 uniform int uShadowerCount;
 uniform float uShadowerStrength;
+// The player's wyvern: xyz its centre, w its wingspan as spread (0 = no shadow); axis xy its
+// heading on the ground plane, z the shadow's strength.
+uniform vec4 uCreature;
+uniform vec4 uCreatureAxis;
 varying vec3 vDir;
 ${FAR_SEA_GLSL}
 
@@ -244,6 +248,23 @@ bool seaMarch(vec3 ro, vec3 rd, out vec3 col, out float tHit) {
       float occ = 1.0 - smoothstep(r - pen, r + pen, length(c - o.xz));
       sh *= 1.0 - occ * (o.w > 0.0 ? 0.72 : 0.45) * uShadowerStrength;
     }
+    // The wyvern's own shadow racing over the billows: wings and body as two soft ellipses in
+    // the creature's plane, a tight penumbra that softens with the height it falls from.
+    if (uCreature.w > 0.0) {
+      float k = (uCreature.y - hit.y) / max(L.y, 0.05);
+      if (k > 0.0) {
+        vec2 c = hit.xz + L.xz * k - uCreature.xz;
+        vec2 fw = uCreatureAxis.xy;
+        float u = dot(c, vec2(fw.y, -fw.x));
+        float v = dot(c, fw);
+        float span = uCreature.w;
+        float pen = span * 0.06 + k * 0.01;
+        float dw = length(vec2(u / (0.5 * span + pen), v / (0.13 * span + pen)));
+        float db = length(vec2(u / (0.08 * span + pen), (v + 0.12 * span) / (0.5 * span + pen)));
+        float occ = 1.0 - smoothstep(0.55, 1.0, min(dw, db));
+        sh *= 1.0 - occ * uCreatureAxis.z * uShadowerStrength;
+      }
+    }
   }
 
   col = dwCloudShade(n, h01, cavity, sh, rd);
@@ -340,6 +361,8 @@ export class CloudSea {
     uShadowers: { value: Vector4[] };
     uShadowerCount: { value: number };
     uShadowerStrength: { value: number };
+    uCreature: { value: Vector4 };
+    uCreatureAxis: { value: Vector4 };
   };
   private q: SeaQuality;
   private viewportHeight = 720;
@@ -372,6 +395,8 @@ export class CloudSea {
       uShadowers: { value: this.shadowers },
       uShadowerCount: { value: 0 },
       uShadowerStrength: { value: 1 },
+      uCreature: { value: new Vector4() },
+      uCreatureAxis: { value: new Vector4(0, 1, 0, 0) },
     };
     this.material = new ShaderMaterial({
       name: 'DriftwingCloudSea',
@@ -432,6 +457,16 @@ export class CloudSea {
     u.uScrollDetail.value.set(fract((-drift.x * 1.25 * 4.7) / SEA_TILE + 0.37), fract((-drift.z * 1.25 * 4.7) / SEA_TILE + 0.61));
     u.uShadowerCount.value = Math.min(count, this.q.shadowers);
     u.uShadowerStrength.value = shadowStrength;
+  }
+
+  /**
+   * The player's wyvern's shadow on the sea (one dedicated slot, every frame: the island and bank
+   * slots refresh only every 0.2 s). `span` 0 removes it.
+   */
+  setCreatureShadow(x: number, y: number, z: number, headingX: number, headingZ: number, span: number, strength: number): void {
+    const l = Math.hypot(headingX, headingZ);
+    this.uniforms.uCreature.value.set(x, y, z, strength > 0 ? span : 0);
+    this.uniforms.uCreatureAxis.value.set(l > 1e-6 ? headingX / l : 0, l > 1e-6 ? headingZ / l : 1, strength, 0);
   }
 
   dispose(): void {
