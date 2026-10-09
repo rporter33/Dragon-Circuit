@@ -434,6 +434,24 @@ const CONTOUR_GLSL = /* glsl */ `
 `;
 
 /**
+ * Capture-harness ID matte (scripts/dragon-capture.mjs): compiled only when the harness sets the
+ * DW_MATTE define on a material for one extra pass, never in play. Writes the non-emissive light
+ * after fog (what the bloom prefilter thresholds), the emissive part, a coverage tag and the
+ * region, so the harness can report the hide's brightest pixel against the bloom threshold.
+ */
+function matteOut(region: string): string {
+  return /* glsl */ `
+#ifdef DW_MATTE
+  {
+    vec3 dwMl = dwApplyFog(dwMatteLit, vDwWorldPos, cameraPosition);
+    float dwMlL = dot(dwMl, vec3(0.2126, 0.7152, 0.0722));
+    float dwMlE = max(0.0, dot(gl_FragColor.rgb, vec3(0.2126, 0.7152, 0.0722)) - dwMlL);
+    gl_FragColor = vec4(dwMlL, dwMlE, -1000.0, ${region});
+  }
+#endif`;
+}
+
+/**
  * Relief of the scales: tilt the normal by the screen-space gradient of their height (three's
  * derivative bump-map formula, without a texture): a few millimetres of keel and crevice.
  */
@@ -580,7 +598,11 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
       shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_BEGIN);
       shader.fragmentShader = shader.fragmentShader
         .replace('void main() {', BODY_PARS_FRAG + '\nvoid main() {')
-        .replace('#include <opaque_fragment>', CONTOUR_GLSL + '\n#include <opaque_fragment>')
+        .replace(
+          '#include <opaque_fragment>',
+          CONTOUR_GLSL + '\n#ifdef DW_MATTE\nvec3 dwMatteLit = max(outgoingLight - totalEmissiveRadiance, vec3(0.0));\n#endif\n#include <opaque_fragment>',
+        )
+        .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + matteOut('vRegion + 1.0'))
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + SCALE_BUMP_GLSL)
         // Per-region rim (see dwRimScale); a no-op if the painterly rim's wording ever changes.
         .replace('uRimStrength * uDwRim', 'uRimStrength * uDwRim * dwRimScale')
@@ -609,6 +631,7 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
     },
   });
   m.customProgramCacheKey = ((prev) => () => prev() + '-wyvern-body')(m.customProgramCacheKey.bind(m));
+  m.userData.dwWyvern = 'body';
   return m;
 }
 
@@ -625,6 +648,9 @@ export function createMembraneMaterial(u: WyvernUniforms): MeshToonMaterial {
       frag =
         frag.slice(0, idx) +
         /* glsl */ `
+        #ifdef DW_MATTE
+        vec3 dwMatteLit = outgoingLight;
+        #endif
         {
           // Light through the membrane: looking toward the sun, or the far side is sunlit.
           vec3 mV = normalize(vDwWorldPos - cameraPosition);
@@ -641,6 +667,7 @@ export function createMembraneMaterial(u: WyvernUniforms): MeshToonMaterial {
         frag.slice(idx);
       shader.fragmentShader = frag
         .replace('void main() {', MEMBRANE_PARS_FRAG + '\nvoid main() {')
+        .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + matteOut('vRegion + 21.0'))
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
@@ -650,6 +677,7 @@ export function createMembraneMaterial(u: WyvernUniforms): MeshToonMaterial {
     },
   });
   m.customProgramCacheKey = ((prev) => () => prev() + '-wyvern-membrane')(m.customProgramCacheKey.bind(m));
+  m.userData.dwWyvern = 'membrane';
   return m;
 }
 

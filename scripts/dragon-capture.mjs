@@ -11,6 +11,8 @@
 //               (e.g. --only '^c-flap-' or --only '^g$'); results of earlier runs into the same
 //               --out are kept, and index.md always lists everything captured there
 //   --list      print the expanded items (id, boot, kind) and exit; --dry also prints URLs
+//   --gpu       launch Chromium on the machine's real GPU (no SwiftShader), for kind "gpu" timing
+//               items (EXT_disjoint_timer_query_webgl2); --headful shows the window
 //
 // Manifest (see scripts/dragon-capture.manifest.json):
 //   defaults  { base, size, stripSize, stage, settle, ui }
@@ -25,6 +27,22 @@
 //                      onion?, diff?
 //               grid: cells: [{ label, stage }] — one staging per cell (stage merged over the
 //                     item's), shot after settle and assembled into one labelled sheet
+//               matte: true — wyvern ID-matte luminance report per shot/frame (__cap.matte):
+//                      max non-emissive luminance vs the palette's bloom threshold, coverage,
+//                      width, brightest region; collected in measure/m-matte-luminance.json
+//               ortho: { view: side|front|top, matte?, gap? } — a same-scale orthographic lineup
+//                      of every visible wyvern on a 1 m grid (plus a black-silhouette .matte.png
+//                      with measured lengths, heights, spans, areas and aspect ratios)
+//               aim: { target: eye|<bone>|body, az, el, dist (m or "=expr of t") , fov? } —
+//                      re-aim the camera after the rigs ran (eye macros, dollies)
+//               spans: true — on-screen wingspan and rider height in pixels
+//               stance: true (strips) — per-foot stance/swing markers and a footfall diagram
+//               metrics: ["tail","stroke"] (strips) — tail bend per joint, wingtip elevation,
+//                      separation and fore-aft per frame, summarised; measure/m-motion-metrics.json
+//               diff: gain | { gain, mode: "consecutive" } — difference sheets vs frame 0, or
+//                      frame to frame (shimmer/crawl), with a mean-difference figure per frame
+//               gpu: { frames } (kind "gpu") — wyvern draw time with/without the wyverns
+//                      (GPU timer queries, or a SwiftShader wall-clock proxy); measure/gpu-timings.json
 //               sequence: shots: [step + { shot: { id, desc, crop?, label?, ui? } }], run in order
 //               measure: { fn: "wyvern", breeds? } }
 //   step      { eval?, advance?, input? (held), inputs?: [{at, input}] (from the step's start) }
@@ -137,7 +155,55 @@ const resultsPath = path.join(outDir, 'results.json');
 const results = fs.existsSync(resultsPath) ? JSON.parse(fs.readFileSync(resultsPath, 'utf8')) : {};
 function saveResults() {
   fs.writeFileSync(resultsPath, JSON.stringify(results, null, 1));
+  writeReports();
   writeIndex();
+}
+
+/** Aggregated reports over everything captured into this --out (kept across runs). */
+function writeReports() {
+  const dir = path.join(outDir, 'measure');
+  const all = Object.values(results);
+  const mattes = all.flatMap((r) => (r.mattes ?? []).map((m) => ({ item: r.id, ...m })));
+  if (mattes.length) {
+    fs.mkdirSync(dir, { recursive: true });
+    const fails = mattes.filter((m) => !m.error && !m.pass);
+    fs.writeFileSync(
+      path.join(dir, 'm-matte-luminance.json'),
+      JSON.stringify(
+        {
+          note: 'Wyvern ID matte: the non-emissive light the hide outputs (after fog, before tone mapping; what the bloom prefilter thresholds) against the palette bloom threshold at that time of day. pass = maxNonEmissive below the threshold and no NaN pixels.',
+          when: new Date().toISOString(),
+          shots: mattes.length,
+          failing: fails.map((m) => `${m.id}: ${m.maxNonEmissive} >= ${m.bloomThreshold} (${m.maxNonEmissiveRegion})`),
+          clawsBrightest: mattes.filter((m) => m.clawsBrightest).map((m) => m.id),
+          reports: mattes,
+        },
+        null,
+        1,
+      ),
+    );
+  }
+  const motion = all.filter((r) => r.metrics);
+  if (motion.length) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'm-motion-metrics.json'), JSON.stringify(Object.fromEntries(motion.map((r) => [r.id, { desc: r.desc, summary: r.metrics, frames: r.motion }])), null, 1));
+  }
+  const gpu = all.filter((r) => r.kind === 'gpu' && r.data);
+  if (gpu.length) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'gpu-timings.json'),
+      JSON.stringify(
+        {
+          note: 'Wyvern share of the frame: the same frame rendered with and without the wyverns (shadow + scene + post). method timer-query = EXT_disjoint_timer_query_webgl2 on a real GPU (run with --gpu); wallclock-swiftshader-proxy = CPU rasteriser wall clock, only for before/after comparisons on one machine.',
+          budgets: { highChase1080: 1.5, low1080: 0.6, stableClose: 2.5 },
+          scenarios: Object.fromEntries(gpu.map((r) => [r.id, r.data])),
+        },
+        null,
+        1,
+      ),
+    );
+  }
 }
 
 // --- Dev server -----------------------------------------------------------------------------
@@ -178,13 +244,12 @@ process.on('SIGINT', () => process.exit(130));
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium',
-  args: [
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--ignore-gpu-blocklist',
-    '--enable-webgl',
-  ],
+  headless: !flag('headful'),
+  args: flag('gpu')
+    ? ['--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--use-angle=default', '--enable-features=Vulkan']
+    : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],
 });
+const PAGE_EXT = fs.readFileSync(new URL('./dragon-capture.page.js', import.meta.url), 'utf8');
 
 /** In-page helpers: exact time steps with scripted input, projections for crops. */
 const HELPERS = () => {
@@ -266,6 +331,7 @@ async function bootPage(bootId) {
   await page.waitForFunction(() => window.__dw?.ready === true, null, { timeout: 300000 });
   await page.addStyleTag({ content: 'html.cap-noui #ui, html.cap-noui #boot { display: none !important; }' });
   await page.evaluate(HELPERS);
+  await page.evaluate(PAGE_EXT);
   console.log(`boot ${bootId} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   return { ctx, page, size: `${w}x${h}` };
 }
@@ -334,24 +400,115 @@ async function cropJob(page, crop, file) {
   return { file: rel(out), dist: c.dist };
 }
 
+/** Short text for a matte report (index descriptions and frame labels). */
+function matteText(m) {
+  if (!m || m.error) return `matte: ${m?.error ?? 'n/a'}`;
+  const ok = m.maxNonEmissive < m.bloomThreshold ? 'below' : 'AT/ABOVE';
+  return `hide max ${m.maxNonEmissive} ${ok} bloom ${m.bloomThreshold} (${m.maxNonEmissiveRegion}), ${m.pxAtThreshold} px ≥ thr, brightest ${m.brightestRegion}${m.clawsBrightest ? ' (CLAWS)' : ''}, width ${(m.widthFrac * 100).toFixed(1)}%, cover ${(m.coverage * 100).toFixed(1)}%${m.nanPixels ? `, ${m.nanPixels} NaN px` : ''}`;
+}
+
+async function frameExtras(page, it, res, key) {
+  const ex = {};
+  if (it.matte) ex.matte = await page.evaluate(() => window.__cap.matte());
+  if (it.spans) ex.spans = await page.evaluate(() => window.__cap.spans());
+  if (it.stance) ex.feet = await page.evaluate(() => window.__cap.feet());
+  if (it.metrics) ex.metrics = await page.evaluate((n) => window.__cap.metrics(n), it.metrics);
+  if (ex.matte) (res.mattes ??= []).push({ id: key, ...ex.matte });
+  return ex;
+}
+
+function extrasText(ex) {
+  const parts = [];
+  if (ex.matte) parts.push(matteText(ex.matte));
+  if (ex.spans) parts.push(`span ${ex.spans.spanPx}px (${(ex.spans.spanFrac * 100).toFixed(1)}% of width) at ${ex.spans.dist} m, rider ${ex.spans.riderPx}px`);
+  return parts.join('; ');
+}
+
+function shortExtras(ex) {
+  const parts = [];
+  if (ex.matte && !ex.matte.error) parts.push(`max ${ex.matte.maxNonEmissive.toFixed(2)}/${ex.matte.bloomThreshold}`);
+  if (ex.feet) parts.push(ex.feet.map((f) => `${f.name}${f.swing ? '·' : '■'}`).join(' '));
+  if (ex.metrics?.tail) parts.push(`tail ${ex.metrics.tail.maxBend}°@${ex.metrics.tail.at}`);
+  if (ex.metrics?.stroke) parts.push(`tip ${ex.metrics.stroke.L.elev}°/${ex.metrics.stroke.R.elev}° sep ${ex.metrics.stroke.sep}`);
+  return parts.join('  ');
+}
+
+/** Per-strip summary of tail and stroke metrics (Q6, Q7). */
+function summariseMetrics(frames, times) {
+  const out = {};
+  const tails = frames.map((f) => f.ex.metrics?.tail).filter(Boolean);
+  if (tails.length) {
+    const worst = tails.reduce((a, b) => (b.maxBend > a.maxBend ? b : a));
+    const pitch = tails.map((t) => t.tipPitch);
+    out.tail = { maxBend: worst.maxBend, worstFrame: tails.indexOf(worst), tipPitchRange: [Math.min(...pitch), Math.max(...pitch)], tipExcursion: +((Math.max(...pitch) - Math.min(...pitch)) / 2).toFixed(1) };
+  }
+  const st = frames.map((f) => f.ex.metrics?.stroke).filter(Boolean);
+  if (st.length) {
+    const el = st.map((s) => (s.L.elev + s.R.elev) / 2);
+    const top = Math.max(...el);
+    const bot = Math.min(...el);
+    const iTop = el.indexOf(top);
+    const iBot = el.indexOf(bot);
+    // Downstroke share: frames whose elevation falls to the next frame (cyclic).
+    let down = 0;
+    for (let i = 0; i < el.length; i++) if (el[(i + 1) % el.length] < el[i]) down++;
+    const nearTop = el.filter((e) => e >= top - 0.1 * (top - bot)).length;
+    out.stroke = {
+      tipElevTop: +top.toFixed(1),
+      tipElevBottom: +bot.toFixed(1),
+      sepAtTop: st[iTop].sep,
+      minSep: Math.min(...st.map((s) => s.sep)),
+      downstrokeFrac: +(down / el.length).toFixed(2),
+      nearTopFrac: +(nearTop / el.length).toFixed(2),
+      tipFwdAtBottom: +((st[iBot].L.fwd + st[iBot].R.fwd) / 2).toFixed(2),
+      beatSeconds: times.length > 1 ? +((times[times.length - 1] - times[0]) * (times.length / (times.length - 1))).toFixed(3) : null,
+    };
+  }
+  return out;
+}
+
 async function runItem(page, it) {
   const t0 = Date.now();
   const dir = path.join(outDir, it.dir);
   await setView(page, it, it.kind);
   await page.evaluate(() => {
     window.__cap.t = 0;
+    window.__cap.resetAim();
   });
   if (it.stage !== undefined) await page.evaluate((q) => window.__wyvernShowcase(q), mergeStage(it.stage));
   for (const st of it.steps ?? []) await runStep(page, st);
-  const settle = await num(page, it.settle, it.kind === 'sequence' || it.kind === 'measure' ? 0 : D.settle);
+  if (it.aim) await page.evaluate((o) => window.__cap.aim(o), it.aim);
+  const settle = await num(page, it.settle, it.kind === 'sequence' || it.kind === 'measure' || it.kind === 'gpu' ? 0 : D.settle);
   await advance(page, settle, it.settleInput);
   const meta = { boot: it.boot, stage: mergeStage(it.stage), settle, size: current.size };
   const res = { id: it.id, section: it.section, kind: it.kind, desc: it.desc ?? '', meta, files: [] };
 
-  if (it.kind === 'still') {
+  if (it.kind === 'still' && it.ortho) {
+    const file = path.join(dir, `${it.id}.png`);
+    await page.evaluate(() => window.__dw.render());
+    const lay = await page.evaluate((o) => window.__cap.ortho({ ...o, matte: false }), it.ortho);
+    await page.screenshot({ path: file });
+    await page.evaluate(() => window.__cap.orthoRestore());
+    res.ortho = lay;
+    const labels = it.ortho.labels ?? null;
+    pyJobs.push({ type: 'ortho', src: file, out: file, layout: lay, labels, matte: false, title: it.id });
+    res.files.push({ file: rel(file), desc: `${it.desc} — orthographic, one scale (${lay.ppm} px/m), 1 m grid` });
+    if (it.ortho.matte) {
+      const mf = file.replace(/\.png$/, '.matte.png');
+      await page.evaluate(() => window.__dw.render());
+      const lay2 = await page.evaluate((o) => window.__cap.ortho({ ...o, matte: true }), it.ortho);
+      await page.screenshot({ path: mf });
+      await page.evaluate(() => window.__cap.orthoRestore());
+      pyJobs.push({ type: 'ortho', src: mf, out: mf, layout: lay2, labels, matte: true, title: it.id, json: path.join(outDir, 'measure', `${it.id}.silhouettes.json`) });
+      res.files.push({ file: rel(mf), desc: `${it.desc} — black silhouettes, measured (measure/${it.id}.silhouettes.json)` });
+    }
+  } else if (it.kind === 'still') {
     const file = path.join(dir, `${it.id}.png`);
     await shoot(page, file);
-    res.files.push({ file: rel(file), desc: it.desc + (it.label ? ` [${await evalLabel(page, it.label)}]` : '') });
+    const ex = await frameExtras(page, it, res, it.id);
+    res.extras = ex;
+    const et = extrasText(ex);
+    res.files.push({ file: rel(file), desc: it.desc + (it.label ? ` [${await evalLabel(page, it.label)}]` : '') + (et ? ` {${et}}` : '') });
     const c = await cropJob(page, it.crop, file);
     if (c) res.files.push({ file: c.file, desc: `${it.desc} — ${it.crop.scale ?? 4}x crop around the wyvern (${c.dist.toFixed(0)} m from the camera)` });
   } else if (it.kind === 'strip') {
@@ -372,14 +529,17 @@ async function runItem(page, it) {
       t = times[i];
       const file = path.join(dir, it.id, `f${String(i).padStart(2, '0')}.png`);
       await shoot(page, file);
+      const ex = await frameExtras(page, it, res, `${it.id}/f${String(i).padStart(2, '0')}`);
       let label = `${String(i).padStart(2, '0')}  t=${t.toFixed(3)}s`;
       if (it.label) label += `  ${await evalLabel(page, it.label)}`;
-      frames.push({ file, label });
+      const sx = shortExtras(ex);
+      if (sx) label += `  ${sx}`;
+      frames.push({ file, label, ex });
     }
     meta.times = times;
     const sheet = path.join(dir, `${it.id}.sheet.png`);
-    pyJobs.push({ type: 'sheet', out: sheet, frames: frames.map((f) => [f.file, f.label]), cols: it.cols ?? (frames.length > 9 ? 4 : 3), title: it.id, desc: it.desc ?? '' });
-    res.files.push({ file: rel(sheet), desc: `${it.desc} — contact sheet, ${frames.length} frames` });
+    pyJobs.push({ type: 'sheet', out: sheet, frames: frames.map((f) => [f.file, f.label, f.ex.feet ?? null]), cols: it.cols ?? (frames.length > 9 ? 4 : 3), title: it.id, desc: it.desc ?? '', gait: !!it.stance });
+    res.files.push({ file: rel(sheet), desc: `${it.desc} — contact sheet, ${frames.length} frames${it.stance ? ' (feet: ■ stance, ○ swing; footfall diagram below)' : ''}` });
     if (it.onion) {
       const out = path.join(dir, `${it.id}.onion.png`);
       pyJobs.push({ type: 'onion', out, frames: frames.map((f) => f.file), title: it.id, desc: `${it.desc} — onion skin (all frames over their median)` });
@@ -387,10 +547,39 @@ async function runItem(page, it) {
     }
     if (it.diff) {
       const out = path.join(dir, `${it.id}.diff.png`);
-      pyJobs.push({ type: 'diff', out, frames: frames.map((f) => [f.file, f.label]), cols: it.cols ?? 4, gain: it.diff === true ? 6 : it.diff, title: it.id, desc: `${it.desc} — |frame - frame 0| amplified` });
-      res.files.push({ file: rel(out), desc: `${it.desc} — difference from frame 0, amplified (subtle motion)` });
+      const d = typeof it.diff === 'object' ? it.diff : { gain: it.diff === true ? 6 : it.diff };
+      const consecutive = d.mode === 'consecutive';
+      pyJobs.push({ type: 'diff', out, frames: frames.map((f) => [f.file, f.label]), cols: it.cols ?? 4, gain: d.gain ?? 6, consecutive, title: it.id, desc: `${it.desc} — ${consecutive ? '|frame - previous frame|' : '|frame - frame 0|'} amplified`, stats: path.join(outDir, 'measure', `${it.id}.diff.json`) });
+      res.files.push({ file: rel(out), desc: `${it.desc} — ${consecutive ? 'frame-to-frame difference (shimmer, crawl, pops)' : 'difference from frame 0'}, amplified (measure/${it.id}.diff.json)` });
     }
     res.frames = frames.map((f) => ({ file: rel(f.file), label: f.label }));
+    if (it.metrics || it.stance || it.matte || it.spans) res.frameData = frames.map((f, i) => ({ t: times[i], ...f.ex }));
+    if (it.metrics) {
+      res.metrics = summariseMetrics(frames, times);
+      res.motion = frames.map((f, i) => ({ t: +times[i].toFixed(3), ...f.ex.metrics }));
+      res.files[0].desc += ` [${JSON.stringify(res.metrics)}]`;
+    }
+    if (it.matte && it.spans) {
+      // A dolly: coverage × distance² is constant for a fixed model, so a jump flags a LOD pop.
+      const k = frames.map((f) => (f.ex.matte?.coverage ?? 0) * (f.ex.spans?.dist ?? 0) ** 2);
+      const med = [...k].sort((a, b) => a - b)[Math.floor(k.length / 2)] || 1;
+      let jump = 0;
+      let at = -1;
+      for (let i = 1; i < k.length; i++) {
+        const j = Math.abs(k[i] - k[i - 1]) / med;
+        if (j > jump) {
+          jump = j;
+          at = i;
+        }
+      }
+      res.dolly = { normalisedCoverage: k.map((v) => +(v / med).toFixed(3)), maxJump: +jump.toFixed(3), atFrame: at };
+      res.files[0].desc += ` [coverage×d² max frame-to-frame jump ${(jump * 100).toFixed(1)}% at f${String(at).padStart(2, '0')}]`;
+    }
+    if (it.stance) {
+      const order = touchdownOrder(frames.map((f) => f.ex.feet));
+      res.touchdownOrder = order;
+      res.files[0].desc += ` [touchdowns: ${order.join(', ') || 'none'}]`;
+    }
   } else if (it.kind === 'grid') {
     const cells = [];
     for (let i = 0; i < it.cells.length; i++) {
@@ -405,12 +594,15 @@ async function runItem(page, it) {
       await advance(page, await num(page, c.settle ?? it.settle, D.settle), it.settleInput);
       const file = path.join(dir, it.id, `c${String(i).padStart(2, '0')}.png`);
       await shoot(page, file);
-      cells.push({ file, label: c.label ?? c.stage });
+      const ex = await frameExtras(page, it, res, `${it.id}/c${String(i).padStart(2, '0')}`);
+      const sx = shortExtras(ex);
+      cells.push({ file, label: (c.label ?? c.stage) + (sx ? `  ${sx}` : ''), ex });
     }
     const sheet = path.join(dir, `${it.id}.sheet.png`);
-    pyJobs.push({ type: 'sheet', out: sheet, frames: cells.map((f) => [f.file, f.label]), cols: it.cols ?? (cells.length > 4 ? (cells.length > 6 ? 4 : 3) : 2), title: it.id, desc: it.desc ?? '' });
+    pyJobs.push({ type: 'sheet', out: sheet, frames: cells.map((f) => [f.file, f.label, null]), cols: it.cols ?? (cells.length > 4 ? (cells.length > 6 ? 4 : 3) : 2), title: it.id, desc: it.desc ?? '' });
     res.files.push({ file: rel(sheet), desc: `${it.desc} — ${cells.length} variants side by side` });
     res.frames = cells.map((f) => ({ file: rel(f.file), label: f.label }));
+    if (it.cellStats) pyJobs.push({ type: 'cellstats', cells: cells.map((f) => [f.file, f.label]), out: path.join(outDir, 'measure', `${it.id}.cells.json`) });
   } else if (it.kind === 'sequence') {
     // Steps run in order; any step with a shot captures after it.
     for (const st of it.shots ?? []) {
@@ -421,7 +613,9 @@ async function runItem(page, it) {
         await shoot(page, file);
         let extra = '';
         if (st.shot.label) extra = ` [${await evalLabel(page, st.shot.label)}]`;
-        res.files.push({ file: rel(file), desc: st.shot.desc + extra });
+        const ex = await frameExtras(page, { ...it, ...st.shot }, res, st.shot.id);
+        const et = extrasText(ex);
+        res.files.push({ file: rel(file), desc: st.shot.desc + extra + (et ? ` {${et}}` : '') });
         const c = await cropJob(page, st.shot.crop, file);
         if (c) res.files.push({ file: c.file, desc: `${st.shot.desc} — ${st.shot.crop.scale ?? 4}x crop (${c.dist.toFixed(0)} m)` });
         if (st.shot.ui) await page.evaluate((h) => document.documentElement.classList.toggle('cap-noui', h), (it.ui ?? D.ui) !== 'show');
@@ -434,10 +628,31 @@ async function runItem(page, it) {
     fs.writeFileSync(file, JSON.stringify(data, null, 1));
     res.files.push({ file: rel(file), desc: it.desc });
     res.data = data;
+  } else if (it.kind === 'gpu') {
+    await page.evaluate(() => window.__dw.render());
+    const data = await page.evaluate((o) => window.__cap.gpu(o), it.gpu ?? {});
+    data.scenario = it.id;
+    data.desc = it.desc;
+    res.data = data;
+    const file = path.join(dir, `${it.id}.png`);
+    await shoot(page, file);
+    res.files.push({ file: rel(file), desc: `${it.desc} — ${data.method}: wyverns ${data.wyvernMs} ms of a ${data.frameMs} ms frame (${data.size}, ${data.quality}, ${data.renderer})` });
   }
   res.seconds = (Date.now() - t0) / 1000;
   results[it.id] = res;
   console.log(`  ${it.id} (${res.seconds.toFixed(1)} s)`);
+}
+
+/** Order in which feet touch down over a strip (swing → stance transitions). */
+function touchdownOrder(feetFrames) {
+  const out = [];
+  for (let i = 1; i < feetFrames.length; i++) {
+    const a = feetFrames[i - 1];
+    const b = feetFrames[i];
+    if (!a || !b) continue;
+    for (let f = 0; f < b.length; f++) if (a[f].swing && !b[f].swing) out.push(b[f].name);
+  }
+  return out;
 }
 
 // --- Measurement (runs in the page) -----------------------------------------------------------
@@ -604,7 +819,7 @@ const MEASURE_SETUP = () => {
       const mesh = W.skinnedMesh;
       return {
         stats: W.stats,
-        lods: 1,
+        lods: W.lodCount ?? W.lods?.length ?? 1,
         inventory: inventory(W.group),
         frame: frameDelta(W.group),
         boneTexture: mesh.skeleton.boneTexture ? `${mesh.skeleton.boneTexture.image.width}x${mesh.skeleton.boneTexture.image.height}` : null,
@@ -772,26 +987,93 @@ def grid(tiles, cols, title, desc, gap=4):
         sheet.paste(t, (gap + c * (w + gap), head.size[1] + gap + r * (h + gap)))
     return sheet
 
+FEET_COL = {'LH': (90, 200, 255), 'RH': (255, 170, 60), 'LF': (120, 255, 140), 'RF': (255, 90, 160)}
+
+def draw_feet(im, feet):
+    d = ImageDraw.Draw(im, 'RGBA')
+    for f in feet:
+        x, y = f['x'], f['y']
+        if not (-50 < x < im.size[0] + 50 and -50 < y < im.size[1] + 50):
+            continue
+        c = FEET_COL.get(f['name'], (255, 255, 255))
+        r = 7
+        if f['swing']:
+            d.ellipse((x - r, y - r, x + r, y + r), outline=c + (255,), width=2)
+        else:
+            d.ellipse((x - r, y - r, x + r, y + r), fill=c + (230,), outline=(0, 0, 0, 255))
+        d.text((x + r + 2, y - 8), f['name'], fill=c + (255,), font=F_LABEL)
+
+def gait_diagram(width, frames):
+    # Hildebrand-style footfall diagram: rows LH, LF, RH, RF; a bar where the foot is in stance.
+    rows = ['LH', 'LF', 'RH', 'RF']
+    n = len(frames)
+    h = 26 * len(rows) + 30
+    im = Image.new('RGB', (width, h), BG)
+    d = ImageDraw.Draw(im)
+    x0 = 60
+    cw = (width - x0 - 10) / max(1, n)
+    for ri, name in enumerate(rows):
+        y = 20 + ri * 26
+        d.text((8, y + 2), name, fill=FEET_COL[name], font=F_LABEL)
+        for i, feet in enumerate(frames):
+            if not feet:
+                continue
+            f = next((q for q in feet if q['name'] == name), None)
+            if f and not f['swing']:
+                d.rectangle((x0 + i * cw + 1, y, x0 + (i + 1) * cw - 1, y + 18), fill=FEET_COL[name])
+            else:
+                d.rectangle((x0 + i * cw + 1, y, x0 + (i + 1) * cw - 1, y + 18), outline=(70, 70, 80))
+    d.text((x0, 2), 'footfall: filled = stance (frame by frame)', fill=(200, 200, 200), font=F_DESC)
+    return im
+
+def lstar(a):
+    c = a / 255.0
+    lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    y = lin[..., 0] * 0.2126 + lin[..., 1] * 0.7152 + lin[..., 2] * 0.0722
+    return np.where(y > 0.008856, 116 * np.cbrt(y) - 16, 903.3 * y)
+
 for job in json.load(sys.stdin)['jobs']:
     kind = job['type']
     if kind == 'sheet':
         tiles = []
-        for f, text in job['frames']:
+        feet_frames = []
+        for fr in job['frames']:
+            f, text = fr[0], fr[1]
+            feet = fr[2] if len(fr) > 2 else None
             im = Image.open(f).convert('RGB')
+            if feet:
+                draw_feet(im, feet)
             label(im, text)
             tiles.append(im)
-        grid(tiles, job['cols'], job['title'], job['desc']).save(job['out'], optimize=True)
+            feet_frames.append(feet)
+        sheet = grid(tiles, job['cols'], job['title'], job['desc'])
+        if job.get('gait') and any(feet_frames):
+            gd = gait_diagram(sheet.size[0], feet_frames)
+            out = Image.new('RGB', (sheet.size[0], sheet.size[1] + gd.size[1]), BG)
+            out.paste(sheet, (0, 0))
+            out.paste(gd, (0, sheet.size[1]))
+            sheet = out
+        sheet.save(job['out'], optimize=True)
     elif kind == 'diff' and np is not None:
         ims = [np.asarray(Image.open(f).convert('RGB')).astype(np.float32) for f, _ in job['frames']]
-        ref = ims[0]
         tiles = []
-        for (f, text), a in zip(job['frames'], ims):
-            d = np.clip(np.abs(a - ref).max(axis=2) * job['gain'], 0, 255).astype(np.uint8)
+        stats = []
+        for i, ((f, text), a) in enumerate(zip(job['frames'], ims)):
+            ref = ims[i - 1] if job.get('consecutive') and i > 0 else ims[0]
+            raw = np.abs(a - ref).max(axis=2)
+            stats.append({'frame': i, 'mean': round(float(raw.mean()), 3), 'p99': round(float(np.percentile(raw, 99)), 2), 'max': round(float(raw.max()), 1)})
+            d = np.clip(raw * job['gain'], 0, 255).astype(np.uint8)
             heat = np.stack([d, (d * 0.7).astype(np.uint8), (255 - d) // 6], axis=2)
             im = Image.fromarray(heat)
-            label(im, text)
+            label(im, text + '  mean %.2f' % stats[-1]['mean'])
             tiles.append(im)
         grid(tiles, job['cols'], job['title'], job['desc']).save(job['out'], optimize=True)
+        if job.get('stats'):
+            import os
+            os.makedirs(os.path.dirname(job['stats']), exist_ok=True)
+            body = stats[1:] if job.get('consecutive') else stats
+            summary = {'consecutive': bool(job.get('consecutive')), 'meanOfMeans': round(sum(s['mean'] for s in body) / max(1, len(body)), 3), 'maxP99': max((s['p99'] for s in body), default=0), 'frames': stats}
+            json.dump(summary, open(job['stats'], 'w'), indent=1)
     elif kind == 'onion' and np is not None:
         ims = np.stack([np.asarray(Image.open(f).convert('RGB')).astype(np.float32) for f in job['frames']])
         med = np.median(ims, axis=0)
@@ -817,6 +1099,108 @@ for job in json.load(sys.stdin)['jobs']:
         c = im.crop((x0, y0, x0 + b, y0 + b)).resize((b * job['scale'], b * job['scale']), Image.NEAREST)
         label(c, job['label'])
         c.save(job['out'], optimize=True)
+    elif kind == 'ortho':
+        im = Image.open(job['src']).convert('RGB')
+        lay = job['layout']
+        ppm = lay['ppm']
+        names = job.get('labels') or ['wyvern %d' % (i + 1) for i in range(len(lay['layout']))]
+        W, H = im.size
+        meas = []
+        if job['matte'] and np is not None:
+            a = np.asarray(im).astype(np.float32).mean(axis=2) < 128
+            for i, box in enumerate(lay['layout']):
+                x0 = max(0, int(box['x0']) - 3)
+                x1 = min(W, int(box['x1']) + 4)
+                sub = a[:, x0:x1]
+                ys, xs = np.nonzero(sub)
+                if len(xs) == 0:
+                    meas.append(None)
+                    continue
+                wpx = xs.max() - xs.min() + 1
+                hpx = ys.max() - ys.min() + 1
+                area = sub.sum() / (ppm * ppm)
+                m = {'name': names[i] if i < len(names) else str(i), 'width_m': round(wpx / ppm, 2), 'height_m': round(hpx / ppm, 2), 'area_m2': round(float(area), 2)}
+                if lay['view'] == 'top':
+                    m['span_m'] = m['width_m']
+                    m['length_m'] = m['height_m']
+                    m['planformAR'] = round(m['span_m'] ** 2 / max(1e-6, m['area_m2']), 2)
+                    # Torso width: the narrowest... widest section of the body in the middle third
+                    # of the length, wings excluded by taking runs that touch the centreline.
+                    cx = int((xs.min() + xs.max()) / 2)
+                    rows = []
+                    for yy in range(ys.min(), ys.max() + 1):
+                        row = sub[yy]
+                        if not row[cx]:
+                            rows.append(0)
+                            continue
+                        l = cx
+                        while l > 0 and row[l - 1]:
+                            l -= 1
+                        r = cx
+                        while r < len(row) - 1 and row[r + 1]:
+                            r += 1
+                        rows.append(r - l + 1)
+                    m['centreRunMax_m'] = round(max(rows) / ppm, 2)
+                elif lay['view'] == 'side':
+                    m['length_m'] = m['width_m']
+                    # Depth of the silhouette at the middle of its length (body depth incl. legs/wings).
+                    cx = int((xs.min() + xs.max()) / 2)
+                    col = sub[:, cx]
+                    yy = np.nonzero(col)[0]
+                    m['midDepth_m'] = round((yy.max() - yy.min() + 1) / ppm, 2) if len(yy) else None
+                else:
+                    m['frontWidth_m'] = m['width_m']
+                meas.append(m)
+            if job.get('json'):
+                import os
+                os.makedirs(os.path.dirname(job['json']), exist_ok=True)
+                json.dump({'view': lay['view'], 'ppm': ppm, 'silhouettes': meas}, open(job['json'], 'w'), indent=1)
+        d = ImageDraw.Draw(im, 'RGBA')
+        # 1 m grid (every 5 m stronger), labels and the ground line.
+        gy = lay['ground']['y'] if lay['view'] != 'top' else H
+        col = (0, 0, 0, 40) if job['matte'] else (255, 255, 255, 34)
+        col5 = (0, 0, 0, 90) if job['matte'] else (255, 255, 255, 80)
+        x = lay['ground']['x'] % ppm
+        k = 0
+        start = lay['ground']['x'] - int(lay['ground']['x'] / ppm) * ppm
+        xi = 0
+        while start + xi * ppm < W:
+            xx = start + xi * ppm
+            idx = int(round((xx - lay['ground']['x']) / ppm))
+            d.line((xx, 0, xx, H), fill=col5 if idx % 5 == 0 else col, width=1)
+            xi += 1
+        yi = 0
+        while gy - yi * ppm > 0:
+            yy = gy - yi * ppm
+            d.line((0, yy, W, yy), fill=col5 if yi % 5 == 0 else col, width=1)
+            yi += 1
+        if lay['view'] != 'top':
+            d.line((0, gy, W, gy), fill=(200, 40, 40, 200), width=2)
+        tc = (20, 20, 20) if job['matte'] else (255, 255, 255)
+        for i, box in enumerate(lay['layout']):
+            nm = names[i] if i < len(names) else str(i)
+            txt = nm
+            if meas and i < len(meas) and meas[i]:
+                m = meas[i]
+                if lay['view'] == 'top':
+                    txt += '  span %.1f m  len %.1f m  AR %.2f' % (m['span_m'], m['length_m'], m['planformAR'])
+                elif lay['view'] == 'side':
+                    txt += '  len %.1f m  ht %.1f m' % (m['length_m'], m['height_m'])
+                else:
+                    txt += '  w %.1f m  ht %.1f m' % (m['width_m'], m['height_m'])
+            d.text((box['x0'], max(2, box['y0'] - 22)), txt, fill=tc, font=F_LABEL)
+        d.text((8, H - 22), '%s  orthographic  %.1f px/m  grid 1 m (5 m bold)' % (job['title'], ppm), fill=tc, font=F_LABEL)
+        im.save(job['out'], optimize=True)
+    elif kind == 'cellstats' and np is not None:
+        ls = [lstar(np.asarray(Image.open(f).convert('RGB')).astype(np.float32)) for f, _ in job['cells']]
+        out = {'note': 'CIELAB L* (0..100) differences between each cell and cell 0, over the pixels that changed by more than 2 L*', 'cells': []}
+        for (f, lab), l in zip(job['cells'], ls):
+            dl = l - ls[0]
+            m = np.abs(dl) > 2
+            out['cells'].append({'label': lab, 'changedPx': int(m.sum()), 'meanDeltaL': round(float(dl[m].mean()) / 100, 4) if m.any() else 0, 'p90AbsDeltaL': round(float(np.percentile(np.abs(dl[m]), 90)) / 100, 4) if m.any() else 0})
+        import os
+        os.makedirs(os.path.dirname(job['out']), exist_ok=True)
+        json.dump(out, open(job['out'], 'w'), indent=1)
 `;
 
 function flushPython() {
