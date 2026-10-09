@@ -246,6 +246,7 @@ export class Game implements GameActions {
     const worldDt = this.screen === 'pause' ? 0 : dt;
     this.weather.update(worldDt, this.camera, focus);
     this.updateTimeOfDay(worldDt);
+    this.sky.setCreatureShadow(this.player.wyvernPose, this.player.breed.wingspan);
     this.sky.update(worldDt, this.camera, focus, this.settings);
     this.world.update(dt, this.camera, focus);
     this.wyvern.update(dt, this.player.wyvernPose);

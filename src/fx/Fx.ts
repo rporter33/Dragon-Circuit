@@ -44,6 +44,10 @@ import {
   speedLineAmount,
   SURFACE_DUST,
   trailIntensity,
+  breedMassFactor,
+  flapTrailBurst,
+  flapTrailFloor,
+  seaDownwashAmount,
   wispAmount,
 } from './fxMath';
 
@@ -209,7 +213,14 @@ export class Fx implements FxSystem {
     this.wisps.update(step, this.camPos, this.airVel, wispAmount(airspeed, f.position.y, 0, flying) * 0.8);
     wyvern.getWingtips(this.tipL, this.tipR);
     this.trails.setPxScale(pxScale);
-    this.trails.update(step, this.tipL, this.tipR, trailIntensity(airspeed, f.gLoad, flying) * 0.75);
+    // Tip vortices: from speed and hard pulls, plus every power stroke made visible — a burst off
+    // each tip at the end of the downstroke (heavier breeds shed more) over a faint floor while
+    // the wings work.
+    const wp = player.wyvernPose;
+    const beat = flying ? wp.flapStrength : 0;
+    const burst = flapTrailBurst(wp.flapPhase, beat, player.breed.downFrac ?? 0.5, breedMassFactor(player.breed.mass), airspeed);
+    const vortex = Math.max(trailIntensity(airspeed, f.gLoad, flying) * 0.75, flapTrailFloor(beat, airspeed), burst * 0.85);
+    this.trails.update(step, this.tipL, this.tipR, vortex);
 
     // --- World: thermals, fireflies, leaves, launch gust --------------------------------------
     this.thermals.setPxScale(pxScale);
@@ -286,6 +297,13 @@ export class Fx implements FxSystem {
       const amt = flapDustAmount(pos.y - groundY, span, strength);
       if (amt > 0.05) this.dustRing(pos.x, groundY + 0.25, pos.z, amt, span, this.surfaceAt(pos.x, pos.y, pos.z));
     }
+    // Over the cloud sea the downwash presses a ring into the billows and throws spray outward.
+    const seaAt = this.deps.seaSurfaceAt;
+    if (seaAt && player.mode === 'flying') {
+      const seaY = seaAt(pos.x, pos.z);
+      const amt = seaDownwashAmount(pos.y - seaY, span, strength) * breedMassFactor(player.breed.mass);
+      if (amt > 0.05) this.seaDownwash(pos.x, seaY, pos.z, Math.min(1, amt), span);
+    }
     // A breath of downwash off each wingtip on strong beats in open air.
     if (strength > 0.55 && this.wyvern && (groundY === null || pos.y - groundY > span)) {
       this.wyvern.getWingtips(this.tipL, this.tipR);
@@ -310,6 +328,47 @@ export class Fx implements FxSystem {
           this.soft.emit(s);
         }
       }
+    }
+  }
+
+  /**
+   * A wingbeat's downwash on the cloud sea: a soft shadowed ring racing out across the billow
+   * tops, and spray thrown outward from under the body.
+   */
+  private seaDownwash(cx: number, seaY: number, cz: number, amt: number, span: number): void {
+    // Premultiplied: a cool, dim ring darkens the bright cloud a little, like a pressed hollow.
+    this.rings.spawn(cx, seaY + 0.6, cz, 0, 1, 0, 0.25 * span, 1.1 * span, 1.1, 0.52, 0.58, 0.7, 0.45 * amt);
+    const v = this.player?.flight.velocity ?? this.zero;
+    const n = scaledCount(16 * amt, this.particles, 3);
+    const scale = span / 12;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + this.rand() * 0.5;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const r0 = span * (0.15 + 0.2 * this.rand());
+      const sp = (5 + 6 * this.rand()) * (0.6 + 0.4 * amt);
+      const s = this.spec;
+      this.reset(s);
+      s.x = cx + ca * r0;
+      s.y = seaY + 0.5 + this.rand() * 1.5;
+      s.z = cz + sa * r0;
+      s.vx = v.x * 0.3 + ca * sp;
+      s.vy = 0.8 + this.rand() * 1.6;
+      s.vz = v.z * 0.3 + sa * sp;
+      s.life = 1.3 + this.rand() * 0.9;
+      s.drag = 1.8;
+      s.gravity = 0.04;
+      s.size0 = (1.4 + 0.8 * this.rand()) * scale;
+      s.size1 = (4.5 + 3 * this.rand()) * scale;
+      s.rotation = this.rand() * 6.28;
+      s.spin = (this.rand() - 0.5) * 0.5;
+      s.r = 0.97;
+      s.g = 0.98;
+      s.b = 1.0;
+      s.a = 0.36 * amt;
+      s.fadeIn = 0.08;
+      s.wind = 0.6;
+      this.soft.emit(s);
     }
   }
 
