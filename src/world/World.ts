@@ -190,7 +190,7 @@ export class World implements WorldSystem {
   private install(f: Feature, level: number, result: { data: MeshData; splitIndex?: number }): void {
     const data = result.data;
     const mesh = new Mesh(toGeometry(data), terrainMaterial());
-    mesh.userData.split = result.splitIndex ?? -1;
+    mesh.geometry.userData.split = result.splitIndex ?? -1;
     applyPart(mesh, f.part);
     mesh.name = `${f.name}-lod${level}`;
     // The stand-in casts instead (see updateProxy).
@@ -257,10 +257,13 @@ export class World implements WorldSystem {
     if (level === 0) this.evictShadow(f);
   }
 
-  private installShadow(f: Feature, result: { data: MeshData }): void {
+  private installShadow(f: Feature, result: { data: MeshData; splitIndex?: number }): void {
     f.shadowGeo?.dispose();
     f.shadowGeo = toGeometry(result.data);
     f.shadowGeo.name = `${f.name}-shadow`;
+    // The hidden part casts nothing either, as with the drawn levels (cullHiddenParts).
+    f.shadowGeo.userData.split = result.splitIndex ?? -1;
+    applyPartTo(f.shadowGeo, f.part);
     this.resyncProxy(f);
   }
 
@@ -364,6 +367,7 @@ export class World implements WorldSystem {
       if (part === f.part) continue;
       f.part = part;
       for (const m of f.meshes) if (m) applyPart(m, part);
+      if (f.shadowGeo) applyPartTo(f.shadowGeo, part);
     }
   }
 
@@ -429,9 +433,14 @@ function runBuilder<T>(gen: Generator<void, T>): T {
 
 /** Limit an island mesh's draw range to the part that can be seen. */
 function applyPart(mesh: Mesh, part: Part): void {
-  const split = mesh.userData.split as number;
-  const total = mesh.geometry.index?.count ?? 0;
-  if (split < 0 || part === 'all') mesh.geometry.setDrawRange(0, Infinity);
-  else if (part === 'top') mesh.geometry.setDrawRange(0, split);
-  else mesh.geometry.setDrawRange(split, total - split);
+  applyPartTo(mesh.geometry, part);
+}
+
+/** Same for a bare geometry; the split (index count of the top part) is in userData.split. */
+function applyPartTo(geometry: BufferGeometry, part: Part): void {
+  const split = (geometry.userData.split as number | undefined) ?? -1;
+  const total = geometry.index?.count ?? 0;
+  if (split < 0 || part === 'all') geometry.setDrawRange(0, Infinity);
+  else if (part === 'top') geometry.setDrawRange(0, split);
+  else geometry.setDrawRange(split, total - split);
 }
