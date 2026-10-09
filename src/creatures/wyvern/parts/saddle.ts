@@ -392,8 +392,11 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string, res: Res = R
 
   switch (id) {
     case 'racing': {
-      // A light seat low on the frame; the rider lies along the neck and holds two neck handles.
-      const pTop = frame({ lift: 0.2, len: 0.85, cantle: 0.09, pommel: 0.02, seatRegion: REGION.leather, flapRegion: REGION.leather, trim: REGION.cloth, barRegion: REGION.leather });
+      // A light seat on the frame; the rider lies along the neck and holds two neck handles. The
+      // seat stands as high as the touring saddle's: the rider's legs hang straight down the flank
+      // (the jockey's tucked knees on the short stirrups wait for the rider retune, C11), and 5 cm
+      // lower put the boots into the sweep of the skimmer's raised inner wing (mounted.test.ts).
+      const pTop = frame({ lift: 0.25, len: 0.85, cantle: 0.09, pommel: 0.02, seatRegion: REGION.leather, flapRegion: REGION.leather, trim: REGION.cloth, barRegion: REGION.leather });
       // Racing stripe down the middle of the seat.
       shell(b, rig, {
         s0: sc - m(0.4),
@@ -402,8 +405,8 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string, res: Res = R
         th1: 0.06,
         ns: 6,
         nt: 1,
-        top: (u) => 0.215 + rise + 0.09 * smoothstep(0.62, 1, u) * 0.92,
-        bottom: 0.18 + rise,
+        top: (u) => 0.265 + rise + 0.09 * smoothstep(0.62, 1, u) * 0.92,
+        bottom: 0.23 + rise,
         region: () => REGION.cloth,
         skin: hug,
       }, res);
@@ -414,7 +417,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string, res: Res = R
         plan.surface(s, 0.35 * sx, p, n);
         base.copy(p);
         // Tall enough to reach from the raised seat.
-        const tip = base.clone().add(new Vector3(0.04 * sx, 0.45, 0.12));
+        const tip = base.clone().add(new Vector3(0.04 * sx, 0.5, 0.12));
         b.begin(0);
         spike(b, [base.clone().addScaledVector(n, -0.05), base.clone().lerp(tip, 0.6), tip], 0.03, skin, { region: REGION.metal }, sides(res, 5), new Vector3(1, 0, 0), 1, 0);
         const g0 = tip.clone().add(new Vector3(-0.02 * sx, -0.02, -0.02));
@@ -422,8 +425,8 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string, res: Res = R
         b.end();
       }
       void pTop;
-      seat.y = topY + 0.25 + rise;
-      grip.set(0, 0.43 + (topY - seat.y), m(0.72));
+      seat.y = topY + 0.3 + rise;
+      grip.set(0, 0.48 + (topY - seat.y), m(0.72));
       // Short stirrups set back so the knees tuck up.
       stirrups(sc + m(0.2), 0.42);
       break;

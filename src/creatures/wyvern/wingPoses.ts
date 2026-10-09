@@ -133,27 +133,24 @@ const EASE_UP_X2 = 0.9;
 /**
  * Stroke plane tilt: over the downstroke the shoulder sweeps forward by this fraction of the
  * elevation range, so the wing drives down AND forward and the wingtip traces a tilted loop in
- * side view (about 23° from the body's vertical), not a hinge. TILT_BACK of that sweep lies
- * behind the shoulder's neutral (the raised wing at the top), the rest ahead of it (the reach at
- * the bottom): the raised wing stays clear of the rider's legs and out of the chase camera's line
- * to the rider.
+ * side view (about 23° from the body's vertical), not a hinge. The style's `tiltBack` of that
+ * sweep lies behind the shoulder's neutral (the raised wing at the top), the rest ahead of it (the
+ * reach at the bottom): the raised wing stays clear of the rider's legs and out of the chase
+ * camera's line to the rider.
  */
 const STROKE_TILT = 0.54;
-const TILT_BACK = 0.25;
 
 /**
  * Leading-edge twist of the arm (degrees, + pronated): pronated through the downstroke so the
  * wing bites as it drives down, flipped to supination within the first 15 % of the recovery
  * (the quick flip at the bottom), held while the wing rises, and flipped back to pronation
- * through the top reversal: from the last PRON_OUT of the recovery to the first PRON_IN of the
- * downstroke. The arm passes the top near neutral rather than already pronated, so the raised
- * wing root doesn't roll its trailing edge up into the rider's legs.
+ * through the top reversal: from the last `pronOut` of the recovery to the first `pronIn` of the
+ * downstroke (the style's). The arm passes the top near neutral rather than already pronated, so
+ * the raised wing root doesn't roll its trailing edge up into the rider's legs.
  */
 const PRONATE = 15;
 const SUPINATE = -22;
 const SUP_FLIP = 0.15;
-const PRON_OUT = 0.2;
-const PRON_IN = 0.1;
 
 /** Samples of a style's strokeWarp over one beat (the hot path reads these, see flapPose). */
 const WARP_N = 256;
@@ -237,16 +234,29 @@ export interface FlapStyle {
    * ends (measured on the rig with the chest's beat pitch: wyvern.flight.test.ts).
    */
   readonly lead: number;
+  /**
+   * The share of the stroke plane's sweep that lies behind the shoulder's neutral at the top
+   * (0.5 = centred on the shoulder; less puts more of the stroke ahead of it).
+   */
+  readonly tiltBack: number;
+  /**
+   * The pronation flip through the top: it starts `pronOut` of the recovery before the top and
+   * ends `pronIn` of the downstroke after it. A short downstroke fraction puts the flip early
+   * relative to the top, pronating the arm while the wing is still raised, which rolls the trailing
+   * edge of the inner wing up beside the rider's legs; the timing is per style for that reason.
+   */
+  readonly pronOut: number;
+  readonly pronIn: number;
   /** strokeWarp(i / WARP_N, down) for i = 0..WARP_N (derived; built by flapStyle). */
   readonly warp: Float32Array;
 }
 
 /**
  * Where the tilted stroke plane sits on average (radians of shoulder sweep, − = forward of the
- * shoulder's neutral): TILT_BACK < 0.5 puts most of the plane's sweep ahead of the shoulder.
+ * shoulder's neutral): tiltBack < 0.5 puts most of the plane's sweep ahead of the shoulder.
  */
 export function strokePlaneMean(style: FlapStyle): number {
-  return STROKE_TILT * (TILT_BACK - 0.5) * (style.humTop - style.humBot) * DEG;
+  return STROKE_TILT * (style.tiltBack - 0.5) * (style.humTop - style.humBot) * DEG;
 }
 
 /** A FlapStyle for a downstroke fraction, with its warp table. */
@@ -264,12 +274,19 @@ const breedStyle = (id: BreedId, s: Omit<FlapStyle, 'down' | 'warp'>) => flapSty
  * all-rounder; the galewing's long, high-aspect wing beats shallow from the shoulder, its hand
  * never fully folds and the flexing tips do the work (an albatross, not a bat); the ironback
  * drives a deep, heavy downstroke on stiff tips.
+ *
+ * The skimmer's raised wing passes closest to a seated rider: on the smallest body the rider's
+ * boots hang at the flank's equator, just above the inner membrane's root, and its stroke reaches
+ * highest. So its arm sits a little further back at the top (tiltBack 0.3) and its pronation flip,
+ * which a 0.54 downstroke would otherwise put early (centred 0.02 of a beat before the top, the arm
+ * fully pronated while the wing is still up), is centred on the top: the membrane root stays
+ * ≥ 3 cm below the boots on every saddle (mounted.test.ts).
  */
 export const FLAP_STYLES: Readonly<Record<BreedId, FlapStyle>> = {
-  skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05 }),
-  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064 }),
-  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.093 }),
-  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056 }),
+  skimmer: breedStyle('skimmer', { humTop: 46, humBot: -36, sweepDown: -14, sweepUp: 18, fold: 1.0, tipFlex: 16, tipLag: 0.12, lead: 0.05, tiltBack: 0.3, pronOut: 0.13, pronIn: 0.14 }),
+  harrier: breedStyle('harrier', { humTop: 38, humBot: -36, sweepDown: -16, sweepUp: 20, fold: 0.9, tipFlex: 18, tipLag: 0.15, lead: 0.064, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
+  galewing: breedStyle('galewing', { humTop: 24, humBot: -22, sweepDown: -8, sweepUp: 10, fold: 0.55, tipFlex: 24, tipLag: 0.2, lead: 0.093, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
+  ironback: breedStyle('ironback', { humTop: 32, humBot: -44, sweepDown: -14, sweepUp: 16, fold: 0.8, tipFlex: 14, tipLag: 0.18, lead: 0.056, tiltBack: 0.25, pronOut: 0.2, pronIn: 0.1 }),
 };
 
 /**
@@ -324,6 +341,8 @@ export function flapPoseAt(beat: BeatInput, out: WingPose, style: FlapStyle): Wi
   const D = style.down;
   const fold = style.fold;
   const lut = style.warp;
+  const pronOut = style.pronOut;
+  const pronIn = style.pronIn;
   const base = beatPhase + style.lead;
   // The warped phase at each lag (linear in the table).
   for (let i = 0; i < LAGS.length; i++) {
@@ -343,13 +362,13 @@ export function flapPoseAt(beat: BeatInput, out: WingPose, style: FlapStyle): Wi
       // The supination flip at the bottom.
       const t = r / SUP_FLIP;
       tw = PRONATE + (SUPINATE - PRONATE) * t * t * (3 - 2 * t);
-    } else if (r >= 0 && r < 1 - PRON_OUT) {
+    } else if (r >= 0 && r < 1 - pronOut) {
       tw = SUPINATE;
-    } else if (r >= 0 || p < PRON_IN * D) {
+    } else if (r >= 0 || p < pronIn * D) {
       // The pronation flip through the top: time from the top, the recovery counted negative.
       const q = r >= 0 ? p - 1 : p;
-      const q0 = -PRON_OUT * (1 - D);
-      const t = (q - q0) / (PRON_IN * D - q0);
+      const q0 = -pronOut * (1 - D);
+      const t = (q - q0) / (pronIn * D - q0);
       tw = SUPINATE + (PRONATE - SUPINATE) * t * t * (3 - 2 * t);
     }
     _tw[i] = tw;
@@ -368,7 +387,7 @@ export function flapPoseAt(beat: BeatInput, out: WingPose, style: FlapStyle): Wi
   // Sweep: the tilted stroke plane (a little back at the top, forward at the bottom), plus a forward reach
   // late in the downstroke and a draw back through the recovery: a loop, not a hinge.
   const loop = w0 < 0.5 ? style.sweepDown * Math.sin(Math.PI * Math.pow(s, 1.94)) : style.sweepUp * Math.sin(Math.PI * s);
-  out[W.humSw] = (STROKE_TILT * (TILT_BACK - s) * (style.humTop - style.humBot) + loop) * DEG;
+  out[W.humSw] = (STROKE_TILT * (style.tiltBack - s) * (style.humTop - style.humBot) + loop) * DEG;
   out[W.humTw] = _tw[0] * DEG;
   const sw = Math.sin(2 * Math.PI * _w[6]);
   out[W.foreEl] = k * (12 - 22 * (wf < 0.5 ? 2 * wf : 2 - 2 * wf)) * DEG;
