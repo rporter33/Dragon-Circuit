@@ -262,7 +262,19 @@ export class ColliderIndex {
    * wall tops — as walkable ground. Null if none.
    */
   groundAt(x: number, z: number, fromY: number, stepUp: number): { y: number; surface: SurfaceKind } | null {
-    if (this.entries.length === 0) return null;
+    const y = this.groundTop(x, z, fromY, stepUp);
+    return y > -Infinity ? { y, surface: this.groundTopSurface } : null;
+  }
+
+  /** What the last groundTop() hit is made of. */
+  groundTopSurface: SurfaceKind = 'wood';
+
+  /**
+   * groundAt without allocating: the top's height, or -Infinity if none (its surface is left in
+   * groundTopSurface).
+   */
+  groundTop(x: number, z: number, fromY: number, stepUp: number): number {
+    if (this.entries.length === 0) return -Infinity;
     let best: Entry | null = null;
     const list = this.near(x, z, 0);
     this.work.queries++;
@@ -276,7 +288,9 @@ export class ColliderIndex {
       if (!insideTopFace(c, x, z)) continue;
       best = e;
     }
-    return best ? { y: best.top, surface: best.c.surface ?? 'wood' } : null;
+    if (!best) return -Infinity;
+    this.groundTopSurface = best.c.surface ?? 'wood';
+    return best.top;
   }
 }
 

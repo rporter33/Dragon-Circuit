@@ -270,9 +270,10 @@ export interface RayHit {
 export interface TerrainQuery {
   /**
    * The walkable surface directly below (x, z): the highest island top that is at or below
-   * `fromY + 2`. Null over open sky.
+   * `fromY + 2`. Null over open sky. Optional `out`: the hit is written into it and returned (no
+   * allocation per call); implementations may ignore it and return a new object.
    */
-  groundAt(x: number, z: number, fromY: number): GroundHit | null;
+  groundAt(x: number, z: number, fromY: number, out?: GroundHit): GroundHit | null;
   /**
    * Push a sphere out of any solid it overlaps. Returns true on contact and writes the
    * correction vector (add it to the center) and the contact normal.

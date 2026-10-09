@@ -108,33 +108,58 @@ export class Terrain implements TerrainQuery {
     return best;
   }
 
-  groundAt(x: number, z: number, fromY: number): GroundHit | null {
-    let best: GroundHit | null = null;
-    for (const s of this.candidates(x, z, 0)) {
+  /**
+   * See TerrainQuery.groundAt. Pass `out` to have the hit written into it (no allocation; the
+   * walkers and the flight model ask several times per step); it is returned on a hit.
+   */
+  groundAt(x: number, z: number, fromY: number, out?: GroundHit): GroundHit | null {
+    // Find the winner first, then fill one result: no objects per candidate.
+    let found: 'island' | 'spire' | 'structure' | null = null;
+    let bestY = -Infinity;
+    let island: IslandShape | null = null;
+    let spireId = 0;
+    const list = this.candidates(x, z, 0);
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
       if (s.type === 'island') {
         const shape = s.shape;
         if (shape.normRadius(x, z) > 1) continue;
         const y = shape.topHeight(x, z);
         if (y > fromY + 2) continue;
-        if (best && y <= best.y) continue;
-        const normal = shape.topNormal(x, z, new Vector3());
-        best = { y, normal, islandId: shape.def.id, surface: shape.surfaceAt(x, z, normal.y) };
+        if (found && y <= bestY) continue;
+        found = 'island';
+        bestY = y;
+        island = shape;
       } else if (s.type === 'spire') {
         const d = s.shape.def;
-        const r = Math.hypot(x - d.x, z - d.z);
-        if (r > d.topRadius) continue;
+        if (hyp(x - d.x, z - d.z) > d.topRadius) continue;
         if (d.topY > fromY + 2) continue;
-        if (best && d.topY <= best.y) continue;
-        best = { y: d.topY, normal: new Vector3(0, 1, 0), islandId: -1 - d.id, surface: 'stone' as SurfaceKind };
+        if (found && d.topY <= bestY) continue;
+        found = 'spire';
+        bestY = d.topY;
+        spireId = d.id;
       }
     }
     // Roofs, decks and other structure tops you can stand on (only a small step up, so walls and
     // chest-high props block instead of teleporting you onto them).
-    const top = this.colliders.groundAt(x, z, fromY, STRUCTURE_STEP);
-    if (top && (!best || top.y > best.y)) {
-      best = { y: top.y, normal: new Vector3(0, 1, 0), islandId: STRUCTURE_GROUND_ID, surface: top.surface };
+    const topY = this.colliders.groundTop(x, z, fromY, STRUCTURE_STEP);
+    if (topY > -Infinity && (!found || topY > bestY)) {
+      found = 'structure';
+      bestY = topY;
     }
-    return best;
+    if (!found) return null;
+    const hit = out ?? { y: 0, normal: new Vector3(), islandId: 0, surface: 'grass' as SurfaceKind };
+    hit.y = bestY;
+    if (found === 'island') {
+      island!.topNormal(x, z, hit.normal);
+      hit.islandId = island!.def.id;
+      hit.surface = island!.surfaceAt(x, z, hit.normal.y);
+    } else {
+      hit.normal.set(0, 1, 0);
+      hit.islandId = found === 'spire' ? -1 - spireId : STRUCTURE_GROUND_ID;
+      hit.surface = found === 'spire' ? 'stone' : this.colliders.groundTopSurface;
+    }
+    return hit;
   }
 
   collideSphere(center: Vector3, radius: number, outPush: Vector3, outNormal: Vector3, outInfo?: ContactInfo): boolean {
