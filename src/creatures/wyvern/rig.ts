@@ -13,7 +13,7 @@
 
 import { Vector3 } from 'three';
 import { clamp, lerp, smoothstep } from '../../core/math';
-import { LEG_ANGLES, azDir, computeProportions, type WyvernProportions } from './proportions';
+import { azDir, computeProportions, type WyvernProportions } from './proportions';
 import { keyed } from './parts/shape';
 import type { BreedId } from '../../core/types';
 
@@ -415,9 +415,9 @@ export function buildRig(breed: BreedId): RigDef {
   const G = P.leg;
   const hip = v(P.hip);
   const legDir = (a: number) => new Vector3(0, -Math.cos(a), Math.sin(a));
-  const knee = hip.clone().addScaledVector(legDir(LEG_ANGLES.thigh), G.thigh);
-  const ankle = knee.clone().addScaledVector(legDir(LEG_ANGLES.shin), G.shin);
-  const ball = ankle.clone().addScaledVector(legDir(LEG_ANGLES.meta), G.meta);
+  const knee = hip.clone().addScaledVector(legDir(S.legAngles.thigh), G.thigh);
+  const ankle = knee.clone().addScaledVector(legDir(S.legAngles.shin), G.shin);
+  const ball = ankle.clone().addScaledVector(legDir(S.legAngles.meta), G.meta);
   const legs = [0, 1].map((side) => {
     const n = side === 0 ? 'L' : 'R';
     const thigh = add(`thigh${n}`, pelvis, mirror(hip, side));

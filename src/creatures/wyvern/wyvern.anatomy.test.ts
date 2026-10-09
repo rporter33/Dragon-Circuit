@@ -191,3 +191,143 @@ describe('the folded wing contracts (Q3, A2 rig side)', () => {
     }
   });
 });
+
+describe('reptile head (A6)', () => {
+  it('keeps the expert-approved horn placement: swept horn roots within 1 mm of before', () => {
+    // Base-ring centres of the default swept horns before the anatomy pass (head space, m),
+    // harrier (its head dimensions are unchanged): left big horn, left lower horn.
+    const before = [
+      [0.132, 0.3198, 0.264],
+      [0.308, 0.189, 0.132],
+    ];
+    const rig = rigFor('harrier');
+    const H = rig.bones[rig.idx.head].pos;
+    const L = rig.props.shape.headLength;
+    const Wd = rig.props.shape.headHalfWidth;
+    const Hh = rig.props.shape.headHalfHeight;
+    // The same construction as cosmetics.buildHorns 'swept' (the roots are the first path points).
+    const at = (x: number, y: number, z: number) => new Vector3(x * Wd, y * Hh, z * L);
+    const big = at(0.6, 0.95, 0.14).add(new Vector3(-0.1 * L, -0.06 * L, 0.06 * L));
+    const low = at(0.88, 0.45, 0.06).add(new Vector3(-0.06 * L, 0, 0.04 * L));
+    for (const [p, ref] of [
+      [big, before[0]],
+      [low, before[1]],
+    ] as const) {
+      expect(Math.hypot(p.x - ref[0], p.y - ref[1], p.z - ref[2])).toBeLessThan(0.001);
+    }
+    // And the mesh really roots its horns there: horn vertices ring each root.
+    const g = buildWyvernGeometry(rig, look('harrier'), 0).geometry;
+    const pos = g.getAttribute('position');
+    const mat = g.getAttribute('aMat');
+    for (const p of [big, low]) {
+      let near = 0;
+      for (let i = 0; i < pos.count; i++) {
+        if (Math.round(mat.getX(i)) !== 1) continue;
+        const d = Math.hypot(pos.getX(i) - H.x - p.x, pos.getY(i) - H.y - p.y, pos.getZ(i) - H.z - p.z);
+        if (d < 0.12 * L * 1.05) near++;
+      }
+      expect(near).toBeGreaterThan(8);
+    }
+    g.dispose();
+  });
+
+  it('has 58 bones with the gular bone under the jaw, the throat floor skinned to it', () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      expect(rig.bones.length).toBe(58);
+      expect(rig.bones[rig.idx.gular].name).toBe('gular');
+      expect(rig.bones[rig.idx.gular].parent).toBe(rig.idx.jaw);
+      expect(rig.bones[rig.idx.gular].pos.y).toBeLessThan(rig.bones[rig.idx.jaw].pos.y);
+      const g = buildWyvernGeometry(rig, look(breed), 0).geometry;
+      const si = g.getAttribute('skinIndex');
+      let n = 0;
+      for (let v = 0; v < si.count; v++) for (let k = 0; k < 4; k++) if (si.getComponent(v, k) === rig.idx.gular) n++;
+      expect(n).toBeGreaterThan(20);
+      g.dispose();
+    }
+  });
+
+  it('sets the eye in a socket under a brow ledge, with lid rims, nostrils, teeth and zones', () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      const info = buildWyvernGeometry(rig, look(breed), 0);
+      const g = info.geometry;
+      const pos = g.getAttribute('position');
+      const mat = g.getAttribute('aMat');
+      const ex = g.getAttribute('aExtra');
+      const H = rig.bones[rig.idx.head].pos;
+      // The brow juts out past the eyeball (left side, near the eye's station).
+      const eyeOuter = info.eyeCenter.x + info.eyeAxis.x * info.eyeRadius;
+      let browX = 0;
+      let teeth = 0;
+      const zones = new Set<number>();
+      for (let i = 0; i < pos.count; i++) {
+        const r = Math.round(mat.getX(i));
+        if (r === 13) teeth++;
+        zones.add(Math.round(ex.getZ(i)));
+        if (r !== 0) continue;
+        const y = pos.getY(i);
+        const z = pos.getZ(i);
+        if (Math.abs(z - info.eyeCenter.z) < 0.5 * info.eyeRadius && y > info.eyeCenter.y + 0.6 * info.eyeRadius && y < H.y + rig.props.shape.headHalfHeight * 2)
+          browX = Math.max(browX, pos.getX(i));
+      }
+      expect(browX, breed).toBeGreaterThan(eyeOuter);
+      // 9 + 8 teeth a side at LOD0 (each several vertices).
+      expect(teeth).toBeGreaterThan(34 * 10);
+      for (const z of [1, 2, 3, 4, 5]) expect(zones.has(z), `${breed} zone ${z}`).toBe(true);
+      g.dispose();
+    }
+  });
+});
+
+describe('wing-walker hand and reptile foot (A5, A7)', () => {
+  it('walks on a stout wrist with a sole pad and three clawed digits', () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      const g = buildWyvernGeometry(rig, look(breed), 0).geometry;
+      const si = g.getAttribute('skinIndex');
+      const sw = g.getAttribute('skinWeight');
+      const mat = g.getAttribute('aMat');
+      const pos = g.getAttribute('position');
+      const claw = rig.idx.wings[0].claw;
+      // Digit claws: claw-region vertices on the claw bone, clustered into three tips ahead of
+      // the wrist.
+      const tips: number[] = [];
+      let pale = 0;
+      for (let v = 0; v < si.count; v++) {
+        if (si.getComponent(v, 0) !== claw || sw.getComponent(v, 0) < 0.99) continue;
+        if (Math.round(mat.getX(v)) === 9) tips.push(pos.getX(v));
+        else if (mat.getY(v) > 0.55) pale++;
+      }
+      expect(pale, `${breed} pad`).toBeGreaterThan(10);
+      const xs = [...new Set(tips.map((x) => Math.round(x * 20)))];
+      expect(xs.length, breed).toBeGreaterThanOrEqual(3);
+      g.dispose();
+    }
+  });
+
+  it('plants a lizard\'s foot: four toes forward, a short fifth outside, none behind; a wider stance', () => {
+    for (const breed of BREED_ORDER) {
+      const rig = rigFor(breed);
+      const g = buildWyvernGeometry(rig, look(breed), 0).geometry;
+      const si = g.getAttribute('skinIndex');
+      const mat = g.getAttribute('aMat');
+      const pos = g.getAttribute('position');
+      const toes = rig.idx.legs[0].toes;
+      const ball = rig.ball;
+      let behind = 0;
+      let scutate = 0;
+      for (let v = 0; v < si.count; v++) {
+        if (si.getComponent(v, 0) !== toes) continue;
+        if (Math.round(mat.getX(v)) === 9 && pos.getZ(v) < ball.z - 0.15) behind++;
+        if (Math.round(g.getAttribute('aExtra').getZ(v)) === 5) scutate++;
+      }
+      // No backward hallux: no toe claw behind the ball of the foot.
+      expect(behind, breed).toBe(0);
+      expect(scutate).toBeGreaterThan(10);
+      // Hips (and so the hind feet) at least 1.2x the old 0.6 torso half-widths apart.
+      expect(rig.props.hip[0] / (0.6 * rig.props.shape.torsoHalfWidth), breed).toBeGreaterThanOrEqual(1.2);
+      g.dispose();
+    }
+  });
+});

@@ -51,6 +51,8 @@ export interface BreedShape {
   shoulder: [number, number, number];
   hip: [number, number, number];
   wing: WingShape;
+  /** Bind-pose leg angles from vertical (radians, + = the lower end forward). */
+  legAngles: LegAngles;
   /** Leg ratios; the leg unit is solved from standHeight. */
   thigh: number;
   shin: number;
@@ -67,8 +69,18 @@ export interface BreedShape {
   plates: boolean;
 }
 
-/** Bind-pose leg angles from vertical (radians, + = the lower end forward). */
-export const LEG_ANGLES = { thigh: 30 * DEG, shin: -40 * DEG, meta: 24 * DEG } as const;
+export interface LegAngles {
+  thigh: number;
+  shin: number;
+  /** The metatarsus: steep on a runner, near flat on the plantigrade-leaning ironback. */
+  meta: number;
+}
+
+/**
+ * Bind-pose leg angles from vertical (radians, + = the lower end forward) of the default
+ * (harrier) leg. Each breed has its own in BreedShape.legAngles, which the leg IK should read.
+ */
+export const LEG_ANGLES: Readonly<LegAngles> = { thigh: 30 * DEG, shin: -40 * DEG, meta: 24 * DEG };
 
 const W = (w: Partial<WingShape>): WingShape => ({
   humerus: 0.22,
@@ -104,8 +116,9 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     tailLength: 4.4,
     tailBaseRadius: 0.62,
     shoulder: [0.62, 0.28, 0.3],
-    hip: [0.6, -0.3, -0.33],
+    hip: [0.74, -0.3, -0.33],
     wing: W({}),
+    legAngles: { ...LEG_ANGLES },
     thigh: 0.36,
     shin: 0.38,
     meta: 0.26,
@@ -129,7 +142,7 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     tailLength: 3.2,
     tailBaseRadius: 0.44,
     shoulder: [0.62, 0.28, 0.3],
-    hip: [0.6, -0.3, -0.33],
+    hip: [0.74, -0.3, -0.33],
     wing: W({
       fingers: [
         [0.23, 0.2],
@@ -139,9 +152,10 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
       azFingers: [-8 * DEG, -40 * DEG, -76 * DEG],
       scallop: 0.2,
     }),
+    legAngles: { ...LEG_ANGLES },
     thigh: 0.36,
     shin: 0.4,
-    meta: 0.28,
+    meta: 0.33,
     toe: 0.22,
     thighRadius: 0.33,
     eye: 0.105,
@@ -162,7 +176,7 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     tailLength: 4.5,
     tailBaseRadius: 0.44,
     shoulder: [0.62, 0.3, 0.3],
-    hip: [0.6, -0.3, -0.33],
+    hip: [0.74, -0.3, -0.33],
     wing: W({
       humerus: 0.18,
       forearm: 0.3,
@@ -178,6 +192,7 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
       trailZ: -0.3,
       scallop: 0.12,
     }),
+    legAngles: { ...LEG_ANGLES },
     thigh: 0.36,
     shin: 0.38,
     meta: 0.26,
@@ -201,7 +216,7 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
     tailLength: 4.0,
     tailBaseRadius: 0.84,
     shoulder: [0.6, 0.26, 0.3],
-    hip: [0.6, -0.28, -0.32],
+    hip: [0.8, -0.28, -0.32],
     wing: W({
       humerus: 0.23,
       forearm: 0.35,
@@ -214,9 +229,10 @@ export const BREED_SHAPES: Record<BreedId, BreedShape> = {
       trailZ: -0.5,
       scallop: 0.14,
     }),
+    legAngles: { ...LEG_ANGLES, meta: 50 * DEG },
     thigh: 0.36,
     shin: 0.37,
-    meta: 0.25,
+    meta: 0.19,
     toe: 0.2,
     thighRadius: 0.62,
     armBulk: 1.25,
@@ -289,7 +305,8 @@ export function computeProportions(breed: BreedId): WyvernProportions {
   // Legs: the standing bind pose drops from the hip to the ground at standHeight.
   const sole = 0.045 * stats.standHeight;
   const drop = stats.standHeight + hip[1] - sole;
-  const per = s.thigh * Math.cos(LEG_ANGLES.thigh) + s.shin * Math.cos(LEG_ANGLES.shin) + s.meta * Math.cos(LEG_ANGLES.meta);
+  const A = s.legAngles;
+  const per = s.thigh * Math.cos(A.thigh) + s.shin * Math.cos(A.shin) + s.meta * Math.cos(A.meta);
   const legUnit = drop / per;
   const leg: LegLengths = {
     thigh: s.thigh * legUnit,
