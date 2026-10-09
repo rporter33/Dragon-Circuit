@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PerspectiveCamera, Scene, Vector3 } from 'three';
+import { Color, PerspectiveCamera, SRGBColorSpace, Scene, Vector3, type Points } from 'three';
 import { EventBus } from '../core/events';
 import type { GameEvents, PlayerMode } from '../core/types';
 import type { PlayerSystem } from '../game/contracts';
@@ -12,6 +12,7 @@ import { Collectibles, PICKUP_RADIUS } from './Collectibles';
 import { ColliderIndex } from '../world/colliders';
 import { discoveryZones, inZone, newlyDiscovered } from './discovery';
 import { featherId } from './relics';
+import { FEATHER_COLORS, FEATHER_GLINT } from './collectibleVisuals';
 
 const terrain = new Terrain(LAYOUT);
 const camera = new PerspectiveCamera(60, 16 / 9, 0.5, 5000);
@@ -173,5 +174,31 @@ describe('relic bases are solid', () => {
       const reach = r.position.clone().add(new Vector3(PICKUP_RADIUS.foot - 1.5, 0, 0));
       expect(index.resolveSphere(reach, 0.3, n), r.id).toBe(false);
     }
+  });
+});
+
+describe('feathers look like treasure (VIS-23)', () => {
+  const hsl = { h: 0, s: 0, l: 0 };
+  it('every colorway runs from a saturated base out to a gold tip, and every feather glints gold', () => {
+    for (const [base, tip] of FEATHER_COLORS) {
+      new Color(tip).getHSL(hsl, SRGBColorSpace);
+      expect(hsl.h * 360, tip).toBeGreaterThan(28);
+      expect(hsl.h * 360, tip).toBeLessThan(50);
+      expect(hsl.s, tip).toBeGreaterThan(0.6);
+      // The base is a different, deeper color than the gilding (pearl is the one pale exception).
+      new Color(base).getHSL(hsl, SRGBColorSpace);
+      expect(hsl.l, base).toBeLessThan(0.75);
+    }
+    new Color(FEATHER_GLINT).getHSL(hsl, SRGBColorSpace);
+    expect(hsl.h * 360).toBeGreaterThan(28);
+    expect(hsl.h * 360).toBeLessThan(50);
+    const { sys } = setup();
+    const halo = sys.group.children.find((c) => (c as { isPoints?: boolean }).isPoints) as Points;
+    const color = halo.geometry.getAttribute('aColor');
+    const glint = new Color(FEATHER_GLINT);
+    sys.items.forEach((c, i) => {
+      if (c.kind !== 'feather') return;
+      expect([color.getX(i), color.getY(i), color.getZ(i)]).toEqual([glint.r, glint.g, glint.b].map((v) => Math.fround(v)));
+    });
   });
 });

@@ -31,7 +31,7 @@ import type { Terrain } from '../world/terrain';
 import { lightPoolMesh } from '../world/dressing/structures/lightPools';
 import { relicById, FEATHER_COUNT, RELICS } from './relics';
 import { placeCollectibles, type Collectible } from './collectibleDefs';
-import { FEATHER_COLORS, RELIC_SCALE, buildRelic, featherGeometry, featherMaterial, haloMaterial } from './collectibleVisuals';
+import { FEATHER_COLORS, FEATHER_GLINT, RELIC_SCALE, buildRelic, featherGeometry, featherMaterial, haloMaterial } from './collectibleVisuals';
 import { grantUnlocks } from './unlocks';
 import { discoveryZones, newlyDiscovered, type DiscoveryZone } from './discovery';
 import { beaconMaterial } from '../race/raceMaterials';
@@ -162,8 +162,8 @@ export class Collectibles implements CollectibleSystem {
     const state = new Float32Array(n * 2);
     this.live.forEach((l, i) => {
       pos.set([l.c.position.x, l.c.position.y + (l.c.kind === 'relic' ? 0.4 : 0), l.c.position.z], i * 3);
-      size[i] = l.c.kind === 'relic' ? 7 : 4.5;
-      const light = l.c.kind === 'relic' ? new Color(relicLight(l.c.id)) : new Color(FEATHER_COLORS[hashString(l.c.id) % FEATHER_COLORS.length][1]);
+      size[i] = l.c.kind === 'relic' ? 7 : 6.5;
+      const light = new Color(l.c.kind === 'relic' ? relicLight(l.c.id) : FEATHER_GLINT);
       col.set([light.r, light.g, light.b], i * 3);
       state.set([(hashString(l.c.id) % 101) / 101, l.collect === 2 ? 0 : 1], i * 2);
     });
