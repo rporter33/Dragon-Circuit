@@ -214,7 +214,7 @@ export const COURSE_SPECS: CourseSpec[] = [
     difficulty: 4,
     landmark: 'shelves',
     start: { p: [1280, 575, -1150] },
-    rings: [{ p: [-1500, 472, 150], n: [-0.6, -0.25, -0.76] }],
+    rings: [{ p: [-1500, 472, 150], n: [-0.522, -0.401, -0.753] }],
     via: [
       { before: 0, point: [1180, 690, -1100], climbTo: 690 },
       { before: 0, point: [620, 650, -240], climbTo: 650 },
