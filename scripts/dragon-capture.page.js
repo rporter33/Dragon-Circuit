@@ -612,6 +612,26 @@
    * gl.finish(): a CPU-rasterizer proxy, only good for before/after comparisons on one machine.
    */
   C.gpu = async (o = {}) => {
+    // `detail`: time the wyvern materials compiled at another shading level (DW_DETAIL 0..2,
+    // materials.ts) without the LOD chain having to pick it; restored afterwards.
+    if (o.detail !== undefined) {
+      const mats = C.wyvernMaterials();
+      const saved = mats.map((m) => [m, m.defines?.DW_DETAIL]);
+      for (const m of mats) {
+        m.defines = { ...(m.defines ?? {}), DW_DETAIL: o.detail };
+        m.needsUpdate = true;
+      }
+      try {
+        const r = await C.gpu({ ...o, detail: undefined });
+        return { ...r, detail: o.detail };
+      } finally {
+        for (const [m, d] of saved) {
+          if (d === undefined) delete m.defines.DW_DETAIL;
+          else m.defines.DW_DETAIL = d;
+          m.needsUpdate = true;
+        }
+      }
+    }
     const gl3 = R.gl;
     const ctx = gl3.getContext();
     const ext = ctx.getExtension('EXT_disjoint_timer_query_webgl2');
@@ -709,13 +729,62 @@
     };
     const on = [];
     const off = [];
-    for (let i = 0; i < frames; i++) {
+    // isoOnly: skip the whole-frame timing (slow on a CPU rasterizer) and keep the wyvern-only one.
+    for (let i = 0; i < (o.isoOnly ? 0 : frames); i++) {
       on.push(timeFrame(true));
       off.push(timeFrame(false));
     }
-    const mOn = median(on);
-    const mOff = median(off);
-    return { ...info, method: 'wallclock-swiftshader-proxy', frameMs: +mOn.toFixed(2), frameWithoutWyvernsMs: +mOff.toFixed(2), wyvernMs: +(mOn - mOff).toFixed(2) };
+    const mOn = on.length ? median(on) : 0;
+    const mOff = off.length ? median(off) : 0;
+    // The whole-frame difference drowns in the world's cost on a shared CPU rasterizer, so also
+    // time the wyverns alone: the camera on the isolation layer, no background, no shadow-map
+    // update, scene pass only, against the same render with the wyverns hidden. That isolates the
+    // wyvern draws (vertex + fragment work): the proxy to compare shader cost before and after.
+    const iso = { on: [], off: [] };
+    {
+      const undo = C.isolateWyverns(meshes);
+      const layers = g.camera.layers.mask;
+      const bg = g.scene.background;
+      const autoShadow = gl3.shadowMap.autoUpdate;
+      try {
+        g.camera.layers.set(31);
+        g.scene.background = null;
+        gl3.shadowMap.autoUpdate = false;
+        gl3.setRenderTarget(null);
+        const timeIso = (withW) => {
+          setWyv(withW);
+          const t0 = performance.now();
+          gl3.clear(true, true, true);
+          gl3.render(g.scene, g.camera);
+          ctx.readPixels(0, 0, 1, 1, ctx.RGBA, ctx.UNSIGNED_BYTE, px); // forces completion
+          const t = performance.now() - t0;
+          setWyv(true);
+          return t;
+        };
+        for (let i = 0; i < 2; i++) timeIso(true);
+        for (let i = 0; i < frames * 2; i++) {
+          iso.on.push(timeIso(true));
+          iso.off.push(timeIso(false));
+        }
+      } finally {
+        gl3.setRenderTarget(null);
+        gl3.shadowMap.autoUpdate = autoShadow;
+        g.scene.background = bg;
+        g.camera.layers.mask = layers;
+        undo();
+      }
+    }
+    const isoOn = median(iso.on);
+    const isoOff = median(iso.off);
+    return {
+      ...info,
+      method: 'wallclock-swiftshader-proxy',
+      frameMs: +mOn.toFixed(2),
+      frameWithoutWyvernsMs: +mOff.toFixed(2),
+      wyvernMs: +(mOn - mOff).toFixed(2),
+      wyvernOnlyMs: +(isoOn - isoOff).toFixed(2),
+      wyvernOnlySpread: [+Math.min(...iso.on).toFixed(1), +Math.max(...iso.on).toFixed(1)],
+    };
   };
 
   /** Extra wyverns for timing scenes: copies of the player's look gliding at the given offsets. */
