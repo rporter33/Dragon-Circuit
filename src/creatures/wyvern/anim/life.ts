@@ -404,7 +404,11 @@ export class LifeLayer {
       // The neck base takes out most of the chest's beat pitch (the head is held, not flung).
       if (i === 0) pitch -= 1.6 * chestLift * 0.85;
       pitch += -lp * 0.35 * NECK_YAW_SHARE[i];
-      pitch += breath * breathAmp * 0.2;
+      // Breathing nods the neck on the ground; in the air the head is held (the ribs still
+      // breathe). The height hold can't take it out there: its low-pass follows anything slower
+      // than 0.6 of the beat, and laboured breathing (0.8-1.2 Hz) is slower than a quick beat
+      // (the skimmer's 1.6 Hz), so each breath bobbed the head more than the held wingbeat did.
+      pitch += breath * breathAmp * 0.2 * (1 - airW);
       const e = this.neckAng;
       e[0] = pitch;
       e[1] = neckYaw * NECK_YAW_SHARE[i] + (moving ? -gaitSway * 0.4 : 0);
