@@ -94,31 +94,30 @@ void main() {
   vec3 N = normalize(vN);
   vec3 V = normalize(cameraPosition - vDwWorldPos);
   float grazing = 1.0 - abs(dot(N, V));
-  // Light running back along the body, like the rings' chasing bands.
-  float band = 0.5 + 0.5 * sin(vBodyZ * 2.6 - uTime * 4.5);
-  vec3 deep = uTint * 0.42;
-  vec3 light = mix(uTint, vec3(1.0), 0.55);
-  vec3 ink = mix(uTint * 0.16, vec3(0.03, 0.04, 0.08), 0.5);
-  // Night: the ink line turns into a glowing outline instead.
-  vec3 outline = mix(ink, uTint * 1.6 + 0.2, uNight);
+  float day = 1.0 - uNight;
+  // Narrow bands of light running back along the body: what makes it read as a spirit.
+  float band = 0.5 + 0.5 * sin(vBodyZ * 2.2 - uTime * 4.5);
+  band = band * band * band * band;
+  vec3 deep = uTint * 0.45;
+  vec3 light = mix(uTint, vec3(1.0), 0.5);
+  vec3 ink = mix(uTint * 0.12, vec3(0.02, 0.03, 0.07), 0.5);
+  // By day the outline is dark ink (reads on white cloud); at night it glows.
+  vec3 outline = mix(ink, uTint * 1.6 + 0.15, uNight);
 #ifdef MEMBRANE
   // Flat skin: an even tint, its edges inked.
-  float rim = 0.0;
-  float edge = smoothstep(0.86, 0.97, vEdge);
-  vec3 col = mix(deep, light, 0.18 + 0.12 * band);
-  float a = 0.36 + 0.06 * band;
+  float edge = smoothstep(0.8, 0.95, vEdge);
+  float a = 0.6;
 #else
-  float rim = smoothstep(0.42, 0.66, grazing);
-  float edge = smoothstep(0.74, 0.9, grazing);
-  vec3 col = deep * (0.9 + 0.45 * band);
-  float a = 0.42 + 0.08 * band;
+  float edge = smoothstep(0.45, 0.78, grazing);
+  float a = 0.74;
 #endif
-  col = mix(col, light, rim * (1.0 - edge) * 0.85);
+  vec3 col = mix(deep, light, band * 0.55);
+  // At night the body glows softly instead of darkening the sky.
+  col = mix(col, uTint * (0.5 + 0.6 * band), uNight * 0.6);
   col = mix(col, outline, edge);
-  a = mix(a, 0.72, rim * (1.0 - edge));
-  a = mix(a, 0.92, edge);
+  a = mix(a + 0.15 * band, 0.95, edge);
   // Haze softens it with distance but never swallows it.
-  col = mix(dwApplyFog(col, vDwWorldPos, cameraPosition), col, 0.55);
+  col = mix(dwApplyFog(col, vDwWorldPos, cameraPosition), col, 0.6);
   gl_FragColor = vec4(col, a * uOpacity);
 }
 `;
@@ -160,6 +159,10 @@ export function createGhostMaterials(): GhostMaterials {
       transparent: true,
       colorWrite: false,
       depthWrite: true,
+      // Pushed back a hair so the color pass (same surface, another program) always passes.
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 4,
       side: membrane ? DoubleSide : FrontSide,
     });
   return { body: color(false), membrane: color(true), depth: depth(false), depthMembrane: depth(true), tint, opacity };

@@ -17,14 +17,18 @@ export interface CourseColors {
   light: string;
 }
 
+/**
+ * Lights are saturated mid-tones (relative luminance at most ~0.35), never pastel: they have to
+ * read against white cloud and pale sky (luminance ~0.75), where a pale glow disappears.
+ */
 export const COURSE_COLORS: Record<string, CourseColors> = {
-  'roost-loop': { cloth: PALETTE.bannerBlue, trim: PALETTE.gold, light: '#7fd6ff' },
-  'cascade-run': { cloth: '#2f6f7a', trim: PALETTE.cream, light: '#7ff0d8' },
-  'archway-thread': { cloth: '#a8582a', trim: PALETTE.cream, light: '#ffc46b' },
-  underspan: { cloth: '#4b6a2e', trim: PALETTE.gold, light: '#b8ff7a' },
-  'needle-slalom': { cloth: PALETTE.bannerRed, trim: PALETTE.gold, light: '#ff8a6b' },
-  'lantern-dash': { cloth: '#8a3a2a', trim: PALETTE.gold, light: '#ffb459' },
-  'long-drift': { cloth: '#4b3a6b', trim: PALETTE.cream, light: '#c9a8ff' },
+  'roost-loop': { cloth: PALETTE.bannerBlue, trim: PALETTE.gold, light: '#2f9dff' },
+  'cascade-run': { cloth: '#2f6f7a', trim: PALETTE.cream, light: '#0fa88a' },
+  'archway-thread': { cloth: '#a8582a', trim: PALETTE.cream, light: '#f08a1c' },
+  underspan: { cloth: '#4b6a2e', trim: PALETTE.gold, light: '#4fa61c' },
+  'needle-slalom': { cloth: PALETTE.bannerRed, trim: PALETTE.gold, light: '#ff6a45' },
+  'lantern-dash': { cloth: '#8a3a2a', trim: PALETTE.gold, light: '#f07a18' },
+  'long-drift': { cloth: '#4b3a6b', trim: PALETTE.cream, light: '#a07cff' },
 };
 
 export function courseColors(id: string): CourseColors {
