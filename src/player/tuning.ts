@@ -108,8 +108,29 @@ export const PLAYER_TUNING = {
   /** The wyvern follows a rider who wanders further than this, stopping this close. */
   followDistance: 30,
   followStop: 8,
-  /** A called wyvern comes closer than that: right up to its rider, facing them. */
-  calledStop: 3.5,
+  /**
+   * A called wyvern walks up alongside its rider and stops with them beside its shoulder, on its
+   * near (left) side, ready to mount — never standing over them. The rider ends this far out from
+   * the line of its wrists (m; the wrists stand `greetWrist` × standHeight either side of its
+   * midline), level with a point `greetAlong` × standHeight ahead of its body center.
+   */
+  greetSide: 1.2,
+  greetWrist: 0.42,
+  greetAlong: 0.4,
+  /** ...and its chest (0.6 × standHeight ahead of the body center) stays at least this far from them (m). */
+  calledStop: 2.2,
+  /** Walking, the wyvern's chest never comes nearer its rider than this (m). */
+  riderKeepOut: 1.5,
+  /**
+   * The approach, called or following: a big animal walks (this fraction of its groundSpeed) to a
+   * rider nearer than `approachRunFrom` m and only runs from further; it slows ahead of its stop
+   * at `approachDecel` m/s² and covers the last `approachSlowFrom` m at `approachSlowSpeed` m/s.
+   */
+  approachWalk: 0.35,
+  approachRunFrom: 25,
+  approachDecel: 3,
+  approachSlowFrom: 4,
+  approachSlowSpeed: 1.5,
   /** Opening the Stable, a wyvern further than this from its rider comes to a stall beside it. */
   stableSettleRange: 15,
   /** Seconds a wave (calling the wyvern) lasts. */
