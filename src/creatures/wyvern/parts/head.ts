@@ -6,7 +6,7 @@
 import { Vector3 } from 'three';
 import { smoothstep } from '../../../core/math';
 import { GeoBuilder, REGION, Skin } from '../builder';
-import type { RigDef } from '../rig';
+import { TONGUE, type RigDef } from '../rig';
 import { ellipsoid } from '../builder';
 import { keyed, spike, spow } from './shape';
 
@@ -258,6 +258,38 @@ export function buildHead(b: GeoBuilder, rig: RigDef): HeadInfo {
     }
     b.end();
   }
+
+  // --- Tongue ------------------------------------------------------------------------------------
+  // A long forked tongue lying on the jaw floor, wholly inside the closed mouth at rest; flicks
+  // slide it out through the front to taste the air. Flat and broad at the root, then two prongs.
+  const [tb0, tb1] = rig.idx.tongue;
+  const T0 = rig.bones[tb0].pos;
+  const T1 = rig.bones[tb1].pos;
+  const tipZ = H.z + TONGUE.tip * L;
+  const body: Vector3[] = [];
+  for (let i = 0; i <= 6; i++) body.push(T0.clone().lerp(T1, i / 6));
+  body.push(T1.clone().add(new Vector3(0, 0, 0.05 * L)));
+  b.begin(0);
+  spike(
+    b,
+    body,
+    0.06 * L,
+    (i) => (i < 4 ? Skin.of(tb0) : new Skin().add(tb0, 1 - (i - 3) / 4).add(tb1, (i - 3) / 4)),
+    { region: REGION.tongue },
+    8,
+    new Vector3(0, 1, 0),
+    0.42,
+    0.35,
+  );
+  for (const side of [1, -1]) {
+    const prong: Vector3[] = [];
+    for (let i = 0; i <= 4; i++) {
+      const f = i / 4;
+      prong.push(new Vector3(H.x + side * (0.012 + 0.045 * f * f) * L, T1.y - 0.01 * Hh * f, T1.z + (tipZ - T1.z) * f));
+    }
+    spike(b, prong, 0.028 * L, Skin.of(tb1), { region: REGION.tongue }, 6, new Vector3(0, 1, 0), 0.55, 1);
+  }
+  b.end();
 
   return {
     eyeCenter,

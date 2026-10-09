@@ -13,8 +13,9 @@ import type { EventBus } from '../../core/events';
 import type { RiderRenderable } from '../../game/contracts';
 import type { QualityProfile } from '../../render/quality';
 import { PLAYER_TUNING } from '../../player/tuning';
-import { buildRiderModel, type RiderModel } from './model';
-import { RiderAnimator, type AnimContext } from './animator';
+import { buildRiderModel, recolorRiderModel, type RiderModel } from './model';
+import { riderShapeKey } from './palette';
+import { RiderAnimator, type AnimContext, type SaddleFlank } from './animator';
 import { ClothRig, type ClothLod } from './clothRig';
 import { allClothSpecs, type ColliderName } from './accessories';
 import type { Capsule } from './cloth';
@@ -142,6 +143,7 @@ export class Rider implements RiderRenderable {
       anchor: this.group.matrixWorld,
       halfWidth: 0.55,
       grip: new Vector3(0, 0.35, 0.45),
+      flank: null,
       rideOffset: this.rideOffset,
       ridePitch: 0,
       ground,
@@ -158,7 +160,14 @@ export class Rider implements RiderRenderable {
   }
 
   setLook(look: RiderLook): void {
+    const sameShape = riderShapeKey(look) === riderShapeKey(this.look);
     this.look = { ...look };
+    if (sameShape) {
+      // Colors only (every swatch click in the Stable): retint in place, no rebuild.
+      recolorRiderModel(this.model, this.look);
+      this.cloth.recolor(this.look);
+      return;
+    }
     const old = this.model;
     this.group.remove(old.mesh);
     old.geometry.dispose();
@@ -266,9 +275,10 @@ export class Rider implements RiderRenderable {
     if (sad && this.anchorW > 0) {
       sad.updateWorldMatrix(true, false);
       sad.matrixWorld.decompose(_sp, _sq, _s);
-      const ud = sad.userData as { halfWidth?: number; gripOffset?: Vector3 };
+      const ud = sad.userData as { halfWidth?: number; gripOffset?: Vector3; flank?: SaddleFlank };
       this.ctx.halfWidth = typeof ud.halfWidth === 'number' ? ud.halfWidth : 0.55;
       if (ud.gripOffset) this.ctx.grip.copy(ud.gripOffset);
+      this.ctx.flank = ud.flank ?? null;
     }
     _p.copy(_fp);
     _q.copy(_fq);
@@ -419,20 +429,23 @@ export class Rider implements RiderRenderable {
       c.by = _v.y;
       c.bz = _v.z;
     }
-    // The wyvern's back under the saddle, only while (nearly) seated.
+    // The wyvern's back under the saddle, only while (nearly) seated: the barrel when the saddle
+    // describes it (a cape drapes over the real back), else a capsule under the grip width.
     const mc = this.capsules.mount;
     if (sad && this.anchorW > 0.5) {
-      const hw = this.ctx.halfWidth;
+      const fl = this.ctx.flank;
+      const r = fl ? Math.min(fl.rx, -fl.cy - 0.08) : this.ctx.halfWidth;
+      const cy = fl ? fl.cy : -0.12 - r;
       const m = sad.matrixWorld;
-      _v.set(0, -0.12 - hw, 0.9).applyMatrix4(m).sub(o);
+      _v.set(0, cy, 0.9).applyMatrix4(m).sub(o);
       mc.ax = _v.x;
       mc.ay = _v.y;
       mc.az = _v.z;
-      _v.set(0, -0.1 - hw * 0.85, -3.2).applyMatrix4(m).sub(o);
+      _v.set(0, cy + 0.02, -3.2).applyMatrix4(m).sub(o);
       mc.bx = _v.x;
       mc.by = _v.y;
       mc.bz = _v.z;
-      mc.r = hw;
+      mc.r = r;
     } else {
       mc.ay = mc.by = -1e4;
       mc.r = 0.01;

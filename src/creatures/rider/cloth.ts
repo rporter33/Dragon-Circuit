@@ -39,6 +39,17 @@ export interface ClothConfig {
   flutterPhase?: number;
   /** Gravity scale (hair a little lighter than cloth feels better). */
   gravity?: number;
+  /**
+   * Drag multiplier at walking/running air speeds (a run into a breeze: below ~10 m/s, back to 1
+   * by ~22 m/s, under any flying speed). Light ribbons need less: at full drag a running pace
+   * already holds a scarf out like a rod, where a real one droops and swings. Default 1.
+   */
+  dragLow?: number;
+  /**
+   * Fraction of the flutter wave that stays on at low air speed (default 0: flutter grows with
+   * the square of the air speed), so a scarf still ripples and swings at a jog.
+   */
+  flutterFloor?: number;
 }
 
 /** A collision capsule (segment a→b with radius r) in the simulation frame. */
@@ -298,9 +309,14 @@ export class Cloth {
     }
     const g = -9.81 * (cfg.gravity ?? 1);
     const damp = Math.exp(-cfg.damping * h);
+    // Less drag at on-foot speeds for light pieces (see dragLow).
+    const low = cfg.dragLow ?? 1;
+    const lt = Math.min(1, Math.max(0, (airSpeed - 10) / 12));
+    const dragScale = low + (1 - low) * lt * lt * (3 - 2 * lt);
     // Flutter: a travelling wave across the surface, stronger toward the free end and with speed.
     const speedK = Math.min(1, airSpeed / 22);
-    const flutterAmp = cfg.flutter * speedK * speedK;
+    const floor = (cfg.flutterFloor ?? 0) * Math.min(1, airSpeed / 2.5);
+    const flutterAmp = cfg.flutter * Math.max(speedK * speedK, floor);
     const omega = Math.PI * 2 * cfg.flutterHz * (0.35 + 0.65 * Math.min(1.6, airSpeed / 20));
     // Side direction for chains: perpendicular to the air and to up.
     let sx = -az;
@@ -325,7 +341,7 @@ export class Cloth {
       const wy = ay - vy;
       const wz = az - vz;
       const wl = Math.sqrt(wx * wx + wy * wy + wz * wz);
-      const base = cfg.drag * (1 + cfg.dragQuad * wl);
+      const base = cfg.drag * dragScale * (1 + cfg.dragQuad * wl);
       if (sheet) {
         const nx = this.normal[j];
         const ny = this.normal[j + 1];

@@ -1,5 +1,10 @@
 // Colors for one rider look: the player's picks plus the fixed materials (leathers, brass,
 // steel) every outfit shares, all as linear Colors ready for vertex colors.
+//
+// Every color derived from a player pick remembers how it was made (a ColorRecipe: which pick,
+// then which tone/mix steps), and the mesh builder records the recipe of each vertex. A
+// color-only look change then re-evaluates the recipes and rewrites the vertex colors in place
+// instead of rebuilding the whole skinned mesh (Rider.setLook).
 
 import { Color } from 'three';
 import type { RiderLook } from '../../core/types';
@@ -36,15 +41,40 @@ export interface RiderPalette {
 
 const c = (hex: string) => new Color(hex);
 
-/** Perceptual-ish mix in sRGB space so color picks blend the way artists expect. */
-export function mixSrgb(a: Color, b: Color, t: number): Color {
+/** The look fields a rider color can come from. */
+export type ColorSlot = 'skin' | 'hairColor' | 'outfitPrimary' | 'outfitSecondary' | 'scarfColor' | 'capeColor';
+
+/** How a color was derived from the look's picks; constants are stored by value. */
+export type ColorRecipe =
+  | { k: 'slot'; s: ColorSlot }
+  | { k: 'const'; r: number; g: number; b: number }
+  | { k: 'tone'; a: ColorRecipe; f: number }
+  | { k: 'mix'; a: ColorRecipe; b: ColorRecipe; t: number }
+  | { k: 'lmix'; a: ColorRecipe; b: ColorRecipe; t: number }
+  | { k: 'scale'; a: ColorRecipe; f: number };
+
+const recipes = new WeakMap<Color, ColorRecipe>();
+
+/** The recipe of a color that depends on a player pick, or undefined for a constant. */
+export function recipeOf(color: Color): ColorRecipe | undefined {
+  return recipes.get(color);
+}
+
+/** Tag a color as derived (or tag a fresh pick); returns it. */
+export function withRecipe(color: Color, r: ColorRecipe | undefined): Color {
+  if (r) recipes.set(color, r);
+  return color;
+}
+
+const asRecipe = (x: Color): ColorRecipe => recipes.get(x) ?? { k: 'const', r: x.r, g: x.g, b: x.b };
+
+function mixRaw(a: Color, b: Color, t: number): Color {
   const x = a.clone().convertLinearToSRGB();
   const y = b.clone().convertLinearToSRGB();
   return x.lerp(y, t).convertSRGBToLinear();
 }
 
-/** Darken/lighten in sRGB space (k < 1 darker). */
-export function tone(a: Color, k: number): Color {
+function toneRaw(a: Color, k: number): Color {
   const x = a.clone().convertLinearToSRGB();
   x.r = Math.min(1, x.r * k);
   x.g = Math.min(1, x.g * k);
@@ -52,11 +82,80 @@ export function tone(a: Color, k: number): Color {
   return x.convertSRGBToLinear();
 }
 
+/** Perceptual-ish mix in sRGB space so color picks blend the way artists expect. */
+export function mixSrgb(a: Color, b: Color, t: number): Color {
+  const out = mixRaw(a, b, t);
+  if (recipes.has(a) || recipes.has(b)) recipes.set(out, { k: 'mix', a: asRecipe(a), b: asRecipe(b), t });
+  return out;
+}
+
+/** Darken/lighten in sRGB space (k < 1 darker). */
+export function tone(a: Color, k: number): Color {
+  const out = toneRaw(a, k);
+  const r = recipes.get(a);
+  if (r) recipes.set(out, { k: 'tone', a: r, f: k });
+  return out;
+}
+
+/** Linear-space lerp (meshKit's mixCol), recipe-aware. */
+export function mixLinear(a: Color, b: Color, t: number): Color {
+  const out = a.clone().lerp(b, t);
+  if (recipes.has(a) || recipes.has(b)) recipes.set(out, { k: 'lmix', a: asRecipe(a), b: asRecipe(b), t });
+  return out;
+}
+
+/** Linear-space scale (meshKit's shade), recipe-aware. */
+export function scaleLinear(a: Color, k: number): Color {
+  const out = a.clone().multiplyScalar(k);
+  const r = recipes.get(a);
+  if (r) recipes.set(out, { k: 'scale', a: r, f: k });
+  return out;
+}
+
+/**
+ * Evaluate a recipe for a look. `memo` caches shared sub-recipes (many vertices share one), so
+ * recoloring a whole rider evaluates each distinct recipe once.
+ */
+export function evalRecipe(r: ColorRecipe, look: RiderLook, memo: Map<ColorRecipe, Color>): Color {
+  const hit = memo.get(r);
+  if (hit) return hit;
+  let out: Color;
+  switch (r.k) {
+    case 'slot':
+      out = new Color(look[r.s]);
+      break;
+    case 'const':
+      out = new Color(r.r, r.g, r.b);
+      break;
+    case 'tone':
+      out = toneRaw(evalRecipe(r.a, look, memo), r.f);
+      break;
+    case 'mix':
+      out = mixRaw(evalRecipe(r.a, look, memo), evalRecipe(r.b, look, memo), r.t);
+      break;
+    case 'lmix':
+      out = evalRecipe(r.a, look, memo).clone().lerp(evalRecipe(r.b, look, memo), r.t);
+      break;
+    case 'scale':
+      out = evalRecipe(r.a, look, memo).clone().multiplyScalar(r.f);
+      break;
+  }
+  memo.set(r, out);
+  return out;
+}
+
+/** The look fields that change the rider's geometry; anything else is a color. */
+export function riderShapeKey(look: RiderLook): string {
+  return `${look.build}|${look.hair}|${look.outfit}|${look.headgear}|${look.scarf}|${look.cape}`;
+}
+
+const pick = (look: RiderLook, s: ColorSlot) => withRecipe(c(look[s]), { k: 'slot', s });
+
 export function riderPalette(look: RiderLook): RiderPalette {
-  const skin = c(look.skin);
-  const hair = c(look.hairColor);
-  const primary = c(look.outfitPrimary);
-  const secondary = c(look.outfitSecondary);
+  const skin = pick(look, 'skin');
+  const hair = pick(look, 'hairColor');
+  const primary = pick(look, 'outfitPrimary');
+  const secondary = pick(look, 'outfitSecondary');
   return {
     skin,
     skinShade: mixSrgb(tone(skin, 0.86), c('#a0503c'), 0.12),
@@ -72,8 +171,8 @@ export function riderPalette(look: RiderLook): RiderPalette {
     primaryLight: mixSrgb(primary, c('#fff4e0'), 0.25),
     secondary,
     secondaryDark: tone(secondary, 0.7),
-    scarf: c(look.scarfColor),
-    cape: c(look.capeColor),
+    scarf: pick(look, 'scarfColor'),
+    cape: pick(look, 'capeColor'),
     leather: c('#6a4630'),
     leatherDark: c('#3c2a20'),
     boot: c('#45301f'),

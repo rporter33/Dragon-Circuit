@@ -63,18 +63,31 @@ export function buildBody(b: GeoBuilder, rig: RigDef): void {
       const bump = ridge * Math.exp(-(th > Math.PI ? (th - Math.PI * 2) ** 2 : th * th) / 0.08) * st.upper;
       p.addScaledVector(st.up, bump);
       const skin = chain.skin(s);
-      // Ribs and belly breathe: part of the torso's lower flanks follows the breath bone.
+      // Angle around the tube for the scale rows (aMat.w = 2 + θ/π, θ in (−π, π], 0 on the spine;
+      // the body material reads it, membranes use the channel for flutter instead).
+      const around = 2 + (th > Math.PI ? th - Math.PI * 2 : th) / Math.PI;
+      // Reptiles breathe with their ribs: the flanks over the ribcage swing out on each breath
+      // (most at the sides, a little under the belly, the spine still), driven by the breath bone.
       const torso = smoothstep(sNeckBase, sChest, s) * (1 - smoothstep(sChest + (sRear - sChest) * 0.7, sRear, s));
-      const lower = smoothstep(0.55, -0.35, c);
-      if (torso * lower > 0) {
-        const w = 0.55 * torso * lower;
+      const sn = Math.sin(th);
+      const ribs = 0.8 * sn * sn * smoothstep(0.85, 0.2, c) + 0.3 * smoothstep(-0.2, -0.9, c);
+      if (torso * ribs > 0) {
+        const w = torso * ribs;
         const blended = new Skin().mix(skin, 1 - w).add(idx.breath, w);
         ring.push(
-          b.vertex(p, blended, { region: REGION.skin, belly: smoothstep(-0.25, -0.72, c), dorsal: smoothstep(0.25, 0.95, c) }, s, Math.sin(th)),
+          b.vertex(
+            p,
+            blended,
+            { region: REGION.skin, belly: smoothstep(-0.25, -0.72, c), dorsal: smoothstep(0.25, 0.95, c), flutter: around },
+            s,
+            Math.sin(th),
+          ),
         );
         continue;
       }
-      ring.push(b.vertex(p, skin, { region: REGION.skin, belly: smoothstep(-0.25, -0.72, c), dorsal: smoothstep(0.25, 0.95, c) }, s, Math.sin(th)));
+      ring.push(
+        b.vertex(p, skin, { region: REGION.skin, belly: smoothstep(-0.25, -0.72, c), dorsal: smoothstep(0.25, 0.95, c), flutter: around }, s, Math.sin(th)),
+      );
     }
     rings.push(ring);
   }

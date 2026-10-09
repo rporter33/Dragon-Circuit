@@ -1,29 +1,72 @@
 // Procedural animation: turns a WyvernPose (plus time) into local bone rotations every frame.
 //
 // Layers, in the order they are solved:
-//   trunk   root heave/dip, spine bend into turns, chest lift on the downstroke, breathing
-//   neck    a posture per state (S-curve standing, stretched in flight) plus most of the look
-//   head    aimed at lookTarget in body space and held level against the bank (stabilized)
+//   trunk   root heave/dip, spine bend into turns, chest lift on the downstroke, rib breathing
+//           (the flanks swell sideways; faster and deeper after hard work), the landing settle,
+//           and a reptile's stretch-and-bask after resting
+//   neck    a posture per state (S-curve standing, stretched in flight) plus most of the look,
+//           trailing the body's heave on a spring so the head lags each wingbeat and landing
+//   head    aimed at lookTarget in body space and held level against the bank (stabilized);
+//           outer blinks, quicker sideways sweeps of the nictitating membrane (held half-drawn
+//           like goggles in a fast dive), and forked-tongue flicks tasting the air when idle
 //   tail    a verlet chain in world space carried by the body: it lags turns, whips on
-//           landings and streams in the airflow, pulled toward a rest curve per state
-//   wings   flight poses as joint channels (glide, flap cycle, tuck, flare, stall buffet, bank
-//           asymmetry), blended with a two-bone-IK folded stance on the ground where the wing
-//           knuckles are front feet
+//           landings and wingbeats, and streams in the airflow, pulled toward a rest curve; a
+//           counterweight that swings opposite the head and out of turns
+//   wings   flight poses as joint channels (glide, a heavy flap cycle, tuck, flare, stall
+//           buffet, bank asymmetry where the outer wing works harder), the fingers bending
+//           under the air load, blended with a two-bone-IK folded stance on the ground where
+//           the wing knuckles are front feet and the fingers fold back along the flank
 //   legs    flight poses (tucked at speed, dangling when slow, reaching on the flare, pushing off
 //           at takeoff) blended with ground IK to feet planted by the gait
-// Everything is smoothed with springs so it moves with weight. No allocations per frame.
+//
+// Weight: amplitudes and spring rates scale with the breed's heft (its mass): the ironback
+// heaves, lags and settles slowest, the skimmer quickest — but all of them are big animals.
+// Everything is smoothed with springs. No allocations per frame (scalar math in the hot loops).
 
 import { Euler, Quaternion, Vector3 } from 'three';
 import type { WyvernPose } from '../../core/types';
 import type { TerrainQuery } from '../../core/types';
-import { DEG, clamp, clamp01, damp, lerp, smoothstep } from '../../core/math';
-import { SIDE_SIGN, type RigDef } from './rig';
+import { DEG, TAU, clamp, clamp01, damp, lerp, smoothstep } from '../../core/math';
+import { BREEDS } from '../../flight/breeds';
+import { SIDE_SIGN, TONGUE, type RigDef } from './rig';
+import { globalUniforms } from '../../render/uniforms';
 import { LEG_ANGLES } from './proportions';
 import { Bouncy, Spring, aimRotation, mirrorQuat, noise1, rotateAbout, solveTwoBone } from './ik';
-import { FOOT_COUNT, Gait, type GaitContext } from './gait';
-import { FLARE, FOLDED, GLIDE, SETTLE, TUCK, W, WING_CHANNELS, adjustPose, blendPose, flapPose, stroke, type WingPose } from './wingPoses';
+import { Gait, type GaitContext } from './gait';
+import {
+  BASK,
+  FLARE,
+  FOLDED,
+  GLIDE,
+  SETTLE,
+  TUCK,
+  W,
+  WING_CHANNELS,
+  adjustPose,
+  blendPose,
+  flapPose,
+  loadPose,
+  strokeLoad,
+  type WingPose,
+} from './wingPoses';
 import type { WyvernUniforms } from './materials';
 import type { Bone } from 'three';
+
+/**
+ * Root pitch while standing at rest (radians; negative = nose up). Wyvern.seatOffset reports the
+ * bind seat under this rotation, so mounting lines up with the standing animal.
+ */
+export const STAND_ROOT_PITCH = -4 * DEG;
+
+/** 0 (lightest breed) … 1 (heaviest), from the breed's mass. */
+export function heftOf(mass: number): number {
+  return clamp01((mass - 470) / 450);
+}
+
+/** A 0 → 1 → 0 window: rises over [a, b], falls over [c, d]. */
+function bump(x: number, a: number, b: number, c: number, d: number): number {
+  return smoothstep(a, b, x) * (1 - smoothstep(c, d, x));
+}
 
 const UP = new Vector3(0, 1, 0);
 const FWD = new Vector3(0, 0, 1);
@@ -49,7 +92,20 @@ const NECK_GROUND = [-7, -5, -1, 2, 5, 8];
 const NECK_FLIGHT = [4, 3.5, 3, 3, 2.5, 2];
 const NECK_TUCK = [5, 5, 4, 4, 3, 2];
 const NECK_FLARE = [-5, -4, -3, -1, 1, 3];
+/** The stretch: neck reaching out and up, the S-curve straightened. */
+const NECK_STRETCH = [-16, -8, -3, 0, 1, 3];
 const NECK_YAW_SHARE = [0.08, 0.12, 0.14, 0.15, 0.14, 0.12];
+/**
+ * Leg bone directions (pelvis space, left leg) for the flight poses, one row of 12 per bone
+ * (thigh, shin, metatarsus): tucked, dangling, reaching for the ground, pushing off (xyz each).
+ */
+const LEG_POSES = new Float64Array([
+  0.06, -0.5, -0.86, 0.1, -0.86, 0.48, 0.14, -0.62, 0.78, 0.05, -0.92, -0.38,
+  0.0, 0.25, -0.97, 0.02, -0.82, -0.56, 0.03, -0.97, 0.24, 0.0, -0.94, -0.33,
+  0.0, -0.18, -0.98, 0.0, -0.9, 0.22, 0.0, -0.94, 0.32, 0.0, -0.8, -0.6,
+]);
+/** How the neck bends when the body moves faster than the head can follow (base → top). */
+const NECK_LAG_SHARE = [0.34, 0.28, 0.2, 0.08, -0.06, -0.14];
 
 export class WyvernAnimator {
   private readonly rig: RigDef;
@@ -88,15 +144,55 @@ export class WyvernAnimator {
   private shuffleT = -1;
   private yawnTimer = 24;
   private yawnT = -1;
+  /** Nictitating membrane: countdown to the next sweep and time into the current one. */
+  private nictTimer = 1.5;
+  private nictT = -1;
+  /** Tongue: countdown to the next tasting, time into a burst of flicks and how many. */
+  private tongueTimer = 3;
+  private tongueT = -1;
+  private tongueFlicks = 0;
+  /** How far the tongue is slid out (m, along the head), for apply(). */
+  tongueExt = 0;
+  /** Stretch-and-bask: time into it (< 0 when not playing), its progress, blend weight. */
+  private baskT = -1;
+  private baskU = 1;
+  private baskW = 0;
+  private prevRuffle = 0;
+  /** Seconds the stretch-and-bask takes (heavier breeds are slower about it). */
+  readonly baskDuration: number;
   private rng = 12345;
   private jaw = new Spring(10);
   private fan = new Spring(6);
   private lookYaw = new Spring(5.5);
   private lookPitch = new Spring(5.5);
-  private dip = new Bouncy(9, 0.45);
+  private dip: Bouncy;
   private spineYaw = new Spring(5);
   private legSwing = new Bouncy(5, 0.35);
   private stallT = 0;
+
+  // Weight
+  /** 0 (lightest breed) … 1 (heaviest). Scales amplitudes and spring rates. */
+  readonly heft: number;
+  /** 0..1 how hard it has been working lately (flapping); decays while gliding or resting. */
+  exertion = 0;
+  /** Seconds since touchdown and how hard it was (0..1). */
+  private landT = 99;
+  private landImpact = 0;
+  /** Where the neck "thinks" the body is (a spring on the body's heave): the head trails it. */
+  private readonly neckLag: Bouncy;
+  /** How far the neck's bend moves the head per radian (m), for the lag mapping. */
+  private readonly neckReach: number;
+  /** Air load on each wing (left, right), smoothed: bends the fingers, billows the membrane. */
+  private readonly loadSpring: [Spring, Spring] = [new Spring(28), new Spring(28)];
+  readonly wingLoad = [0, 0];
+  /** 0..1 how folded the wings are on the ground (membranes bunch and darken). */
+  fold = 0;
+  /** The visual root offset (heave, dip) in world space, now and last frame: the tail lags it. */
+  private readonly rootOffW = new Vector3();
+  private readonly rootOffWPrev = new Vector3();
+  private readonly flapSide = new Float32Array(WING_CHANNELS);
+  /** Leg pose weights this frame: tuck, reach, push, side sign, fatigue, swing (see legDir). */
+  private readonly legW = new Float64Array(6);
 
   // Wings
   private readonly wingFK: [WingPose, WingPose] = [new Float32Array(WING_CHANNELS), new Float32Array(WING_CHANNELS)];
@@ -131,6 +227,14 @@ export class WyvernAnimator {
   constructor(rig: RigDef, terrain?: Pick<TerrainQuery, 'groundAt'>) {
     this.rig = rig;
     this.terrain = terrain;
+    this.heft = heftOf(BREEDS[rig.props.breed].mass);
+    // Heavier bodies settle slower and bounce less; their necks trail further behind.
+    this.dip = new Bouncy(8.5 - 2.5 * this.heft, 0.42 + 0.1 * this.heft);
+    // The neck's spring is tuned to the breed's wingbeat, so the head trails every beat by about
+    // a tenth of a cycle whatever the beat rate (and follows slower motions, landings, closely).
+    this.neckLag = new Bouncy(TAU * BREEDS[rig.props.breed].flapRate * 1.25, 0.5);
+    this.neckReach = 0.62 * rig.props.shape.neckLength;
+    this.baskDuration = 3.0 + 0.8 * this.heft;
     const B = rig.bones;
     this.n = B.length;
     this.parent = B.map((b) => b.parent);
@@ -206,6 +310,11 @@ export class WyvernAnimator {
     this.spreadVis = o.spreadVis;
     this.breathPhase = o.breathPhase;
     this.prevAirborne = o.prevAirborne;
+    this.exertion = o.exertion;
+    this.baskT = o.baskT;
+    this.baskU = o.baskU;
+    this.baskW = o.baskW;
+    this.prevRuffle = o.prevRuffle;
   }
 
   private groundHeight(x: number, z: number, y: number): number {
@@ -274,6 +383,7 @@ export class WyvernAnimator {
     const P = rig.props;
     const sh = P.standHeight;
     const I = rig.idx;
+    const heft = this.heft;
     this.time += dt;
     this.posW.copy(pose.position);
     this.qW.copy(pose.orientation);
@@ -291,13 +401,16 @@ export class WyvernAnimator {
       this.prevAirborne = pose.airborne;
       this.tailInit = false;
       this.dip.reset();
+      this.neckLag.reset();
       this.lookYaw.reset();
       this.lookPitch.reset();
+      this.landT = 99;
     }
 
     // Body angular velocity: the physics value when given, else derived (ghost playback).
-    if (pose.angularVelocity.lengthSq() > 1e-8) {
-      _v.copy(pose.angularVelocity);
+    const av = pose.angularVelocity;
+    if (av.x * av.x + av.y * av.y + av.z * av.z > 1e-8) {
+      _v.copy(av);
     } else if (dt > 1e-5 && !teleport) {
       _q.copy(this.lastQ).invert().multiply(pose.orientation);
       if (_q.w < 0) _q.set(-_q.x, -_q.y, -_q.z, -_q.w);
@@ -312,14 +425,16 @@ export class WyvernAnimator {
 
     // Linear acceleration (world) for inertial effects.
     const accel = this.accel.copy(pose.velocity).sub(this.lastVel).multiplyScalar(dt > 1e-5 ? 1 / dt : 0);
-    if (accel.lengthSq() > 2500) accel.setLength(50);
+    const a2 = accel.x * accel.x + accel.y * accel.y + accel.z * accel.z;
+    if (a2 > 2500) accel.multiplyScalar(50 / Math.sqrt(a2));
 
     // Air/ground blends.
     const airborne = pose.airborne;
     const touchdown = !airborne && this.prevAirborne && !teleport;
     this.airW = damp(this.airW, airborne ? 1 : 0, airborne ? 6 : 12, dt);
     this.legAirW = damp(this.legAirW, airborne ? 1 : 0, airborne ? 7 : 22, dt);
-    const groundW = 1 - this.airW;
+    const airW = this.airW;
+    const groundW = 1 - airW;
     const spreadRate = airborne ? 12 : pose.wingSpread > this.spreadVis ? 9 : 3.2;
     this.spreadVis = damp(this.spreadVis, pose.wingSpread, spreadRate, dt);
     const openAmt = clamp01((this.spreadVis - 0.22) / 0.78);
@@ -338,36 +453,92 @@ export class WyvernAnimator {
     if (pose.groundY !== null) this.groundRef = pose.groundY;
     else this.groundRef = pose.position.y - sh;
 
-    // Touchdown: plant the feet where they are and absorb the impact.
+    // Exertion: builds while beating hard (a long climb), drains slowly while gliding and faster
+    // at rest on the ground. Drives the labored breathing afterwards.
+    if (flap > 0.05 && airborne) this.exertion += dt * flap * (0.07 + 0.03 * heft) * (1 - this.exertion);
+    else this.exertion = Math.max(0, this.exertion - dt * (airborne ? 0.035 : 0.06));
+    const effort = Math.max(fatigue, this.exertion * 0.85);
+
+    // Touchdown: plant the feet where they are and absorb the impact — the body sinks into the
+    // legs (knees flex through the leg IK), pitches forward a touch and springs back.
     if (touchdown) {
       const sink = Math.max(0, -this.prevVelY);
-      this.dip.velocity -= clamp(sink, 0, 9) * 0.22 * (sh / 2.6);
+      this.dip.velocity -= clamp(sink, 1.5, 10) * (0.24 + 0.08 * heft) * (sh / 2.6);
+      this.landT = 0;
+      this.landImpact = Math.max(0.35, clamp01(sink / 8));
       this.gaitCtx.standHeight = sh;
       this.gait.plantAt(this.footWorld, this.gaitCtx);
     }
+    this.landT += dt;
+    // Wings held up and half open for balance while the weight comes down, then folded.
+    const brace = airborne ? 0 : this.landImpact * bump(this.landT, 0, 0.06, 0.3 + 0.25 * heft, 1.0 + 0.3 * heft);
+
+    // Stretch-and-bask after resting (WyvernPose.ruffle rising from 0 starts it): a reptile's
+    // slow full-body stretch — neck out and up, chest raised, tail straight — with a slight gape
+    // to shed heat, then the wings spread wide toward the sun for a moment of basking before they
+    // fold. It runs on its own clock (baskDuration, longer than the ruffle) and fades out if the
+    // wyvern walks off or takes off.
+    const rufIn = pose.ruffle ?? 0;
+    const baskOk = !airborne && pose.groundSpeed < 0.6 && pose.gait !== 'takeoff' && !teleport;
+    if (rufIn > 0 && this.prevRuffle <= 0 && baskOk) {
+      this.baskT = 0;
+      this.baskU = 0;
+    }
+    this.prevRuffle = rufIn;
+    if (this.baskT >= 0) {
+      if (!baskOk) this.baskT = -1;
+      else {
+        this.baskT += dt;
+        this.baskU = Math.min(1, this.baskT / this.baskDuration);
+        if (this.baskU >= 1) this.baskT = -1;
+      }
+    }
+    this.baskW = damp(this.baskW, this.baskT >= 0 ? 1 : 0, this.baskT >= 0 ? 10 : 3, dt);
+    const bu = this.baskU;
+    const stretch = this.baskW * bump(bu, 0, 0.2, 0.36, 0.55);
+    const gape = this.baskW * bump(bu, 0.12, 0.3, 0.7, 0.88);
+    const bask = this.baskW * bump(bu, 0.3, 0.5, 0.8, 0.98);
+    const baskOn = stretch + gape + bask > 0.002;
 
     // Idle life: blinks, breathing, the odd wing shuffle and yawn.
     const idle = !airborne && pose.gait === 'idle' && pose.groundSpeed < 0.3;
     this.idleTime = idle ? this.idleTime + dt : 0;
+    // Outer lids: an unhurried reptile blink now and then.
     this.blinkTimer -= dt;
     if (this.blinkTimer <= 0) {
-      this.blink = 0.16;
-      this.blinkTimer = 2.5 + this.rand() * 4;
+      this.blink = 0.22;
+      this.blinkTimer = 4 + this.rand() * 6;
     }
     this.blink = Math.max(0, this.blink - dt);
-    const blinkAmt = this.blink > 0 ? Math.sin((this.blink / 0.16) * Math.PI) : 0;
-    const breathRate = lerp(0.24, 1.05, fatigue) + (airborne ? 0.15 : 0);
+    const blinkAmt = this.blink > 0 ? Math.sin((this.blink / 0.22) * Math.PI) : 0;
+    // Nictitating membrane: the inner lid flicks across sideways far more often (more so in the
+    // air and after a landing's dust), and is held half-drawn like goggles at dive speeds.
+    this.nictTimer -= dt;
+    if (touchdown) this.nictTimer = Math.min(this.nictTimer, 0.12);
+    if (this.nictTimer <= 0 && this.nictT < 0) {
+      this.nictT = 0;
+      this.nictTimer = (airborne ? 1.4 : 2.4) + this.rand() * 3.5;
+    }
+    let nict = 0;
+    if (this.nictT >= 0) {
+      this.nictT += dt;
+      nict = bump(this.nictT, 0, 0.08, 0.13, 0.3);
+      if (this.nictT > 0.3) this.nictT = -1;
+    }
+    nict = Math.max(nict, 0.5 * smoothstep(36, 60, pose.airspeed) * airW);
+    // Rib breathing: slow at rest, quick and deep after hard work, slow and full while basking.
+    const breathRate = lerp(0.22 - 0.04 * heft, 1.0 - 0.15 * heft, effort) * (1 - 0.35 * bask) + (airborne ? 0.15 : 0);
     this.breathPhase = (this.breathPhase + breathRate * dt) % 1;
-    const breath = Math.sin(this.breathPhase * Math.PI * 2);
-    const breathAmp = 0.022 + 0.05 * fatigue;
-    if (idle && this.idleTime > 2) {
+    const breath = Math.sin(this.breathPhase * TAU);
+    const breathAmp = 0.03 + 0.065 * effort + 0.03 * bask;
+    if (idle && this.idleTime > 2 && !baskOn) {
       this.shuffleTimer -= dt;
       this.yawnTimer -= dt;
       if (this.shuffleTimer <= 0 && this.shuffleT < 0) {
         this.shuffleT = 0;
         this.shuffleTimer = 8 + this.rand() * 7;
       }
-      if (this.yawnTimer <= 0 && this.yawnT < 0) {
+      if (this.yawnTimer <= 0 && this.yawnT < 0 && effort < 0.3) {
         this.yawnT = 0;
         this.yawnTimer = 22 + this.rand() * 16;
       }
@@ -383,7 +554,8 @@ export class WyvernAnimator {
       this.yawnT += dt;
       if (this.yawnT > 2.4) this.yawnT = -1;
     }
-    this.shuffle = this.shuffleT >= 0 ? Math.sin((this.shuffleT / 1.5) * Math.PI) ** 2 : 0;
+    const sh1 = this.shuffleT >= 0 ? Math.sin((this.shuffleT / 1.5) * Math.PI) : 0;
+    this.shuffle = sh1 * sh1;
     const yawn = this.yawnT >= 0 ? smoothstep(0, 0.6, this.yawnT) * (1 - smoothstep(1.6, 2.4, this.yawnT)) : 0;
 
     // Gait (ground): plant feet in world space.
@@ -395,7 +567,7 @@ export class WyvernAnimator {
       c.velocity.y = 0;
       c.yawRate = om.y;
       c.standHeight = sh;
-      const gs = Math.hypot(c.velocity.x, c.velocity.z);
+      const gs = Math.sqrt(c.velocity.x * c.velocity.x + c.velocity.z * c.velocity.z);
       const runSpeed = rig.props.breed === 'galewing' ? 5 : 5.5;
       c.runBlend = smoothstep(runSpeed * 0.7, runSpeed * 1.25, gs);
       c.moving = !takeoffCrouch && (gs > 0.35 || Math.abs(om.y) > 0.35);
@@ -405,58 +577,91 @@ export class WyvernAnimator {
     const runBlend = this.gaitCtx.runBlend;
     const gaitPhase = this.gait.phase;
     const moving = this.gaitCtx.moving && !airborne;
-    const groundSpeed = moving ? Math.hypot(pose.velocity.x, pose.velocity.z) : 0;
 
     // --- Trunk -------------------------------------------------------------------------------------
-    const heave = flap * this.airW * 0.04 * sh * -Math.cos(phase * Math.PI * 2);
-    const gaitBob = moving ? -0.025 * sh * (1 + 2 * runBlend) * (0.5 - 0.5 * Math.cos(gaitPhase * Math.PI * 4)) : 0;
-    const buffet = stall * this.airW;
+    // Heave: the downstroke lifts the chest and saddle, the recovery lets them sink. The body is
+    // highest just after the bottom of the stroke (the lift lags the force).
+    const heaveAmp = (0.05 + 0.035 * heft) * sh;
+    const heave = flap * airW * heaveAmp * -Math.cos((phase - 0.08) * TAU);
+    const gaitBob = moving ? -(0.025 + 0.01 * heft) * sh * (1 + 2 * runBlend) * (0.5 - 0.5 * Math.cos(gaitPhase * Math.PI * 4)) : 0;
+    const buffet = stall * airW;
     const dipV = this.dip.step(0, dt);
+    // The stretch rises onto straightened legs; breathing barely lifts the body (the ribs swing
+    // out sideways instead).
     this.rootOffset.set(
       buffet * 0.03 * sh * noise1(this.stallT * 9, 1),
-      heave + gaitBob + dipV + breath * breathAmp * 0.08 * sh + buffet * 0.04 * sh * noise1(this.stallT * 8, 2),
+      heave + gaitBob + dipV + breath * breathAmp * 0.025 * sh + buffet * 0.04 * sh * noise1(this.stallT * 8, 2) + stretch * 0.04 * sh,
       0,
     );
     const turnBend = clamp(om.y * (airborne ? 0.16 : 0.3), -0.22, 0.22);
-    const gaitSway = moving ? 0.05 * (1 - runBlend * 0.5) * Math.sin(gaitPhase * Math.PI * 2) : 0;
+    const gaitSway = moving ? 0.05 * (1 - runBlend * 0.5) * Math.sin(gaitPhase * TAU) : 0;
     const spineYaw = this.spineYaw.step(turnBend + gaitSway, dt);
-    const rootPitch = groundW * (-4 * DEG) + (moving ? -0.03 * runBlend * Math.sin(gaitPhase * Math.PI * 4) : 0) - dipV * 0.08;
-    const rootRoll = buffet * 0.05 * noise1(this.stallT * 7, 3) + (moving ? 0.03 * Math.sin(gaitPhase * Math.PI * 2) * (1 - runBlend) : 0);
+    // Settle: the landing dip pitches the nose down a little and the body rocks back up.
+    // Stretching and basking, the chest lifts (nose up).
+    const rootPitch =
+      groundW * STAND_ROOT_PITCH +
+      (moving ? -0.03 * runBlend * Math.sin(gaitPhase * Math.PI * 4) : 0) -
+      (dipV / sh) * (0.5 + 0.2 * heft) -
+      stretch * 0.08 -
+      bask * 0.035;
+    const rootRoll = buffet * 0.05 * noise1(this.stallT * 7, 3) + (moving ? 0.03 * Math.sin(gaitPhase * TAU) * (1 - runBlend) : 0);
     this.setEuler(I.root, rootPitch, 0, rootRoll);
-    const chestLift = -flap * this.airW * 0.05 * Math.sin(phase * Math.PI * 2);
-    this.setEuler(I.spine, chestLift - flare * 0.06 * this.airW + (takeoffCrouch ? -0.08 * openAmt : 0), spineYaw * 0.6, 0);
-    this.setEuler(I.chest, chestLift * 0.6 - flare * 0.04, spineYaw * 0.5, 0);
+    // The wings drive the chest: it pitches up on the downstroke and leads the roll into a turn.
+    const chestLift = -flap * airW * (0.05 + 0.03 * heft) * Math.sin((phase - 0.02) * TAU);
+    const lean = clamp(this.bank * 0.1 + om.z * 0.06, -0.14, 0.14) * airW;
+    this.setEuler(I.spine, chestLift - flare * 0.06 * airW + (takeoffCrouch ? -0.08 * openAmt : 0) - stretch * 0.03, spineYaw * 0.6, lean);
+    this.setEuler(I.chest, chestLift * 0.6 - flare * 0.04, spineYaw * 0.5, lean * 0.5);
     this.breathScale = 1 + breath * breathAmp;
     this.local[I.breath].identity();
     this.fk(I.breath);
-    this.setEuler(I.pelvis, flare * 0.05 * this.airW - tuck * 0.02, -spineYaw * 0.55, 0);
+    // The stretch lifts the tail root level with the back.
+    this.setEuler(I.pelvis, flare * 0.05 * airW - tuck * 0.02 + stretch * 0.05, -spineYaw * 0.55, -lean * 0.6);
 
     // --- Neck & head -------------------------------------------------------------------------------
+    // The neck follows the trunk through a spring: when the body heaves up the head is left
+    // behind for a moment (the neck bows), then catches up.
+    const bodyY = heave + gaitBob + dipV;
+    const lagY = this.neckLag.step(bodyY, dt);
+    // Bend the neck so the head sits part of the way back toward where the spring says it should
+    // be (more on heavier breeds).
+    const neckSag = clamp(((0.55 + 0.15 * heft) * (bodyY - lagY)) / this.neckReach, -0.12, 0.12);
     const neckN = I.neck.length;
     this.toModel(pose.lookTarget, _v);
     _v.sub(this.modelP[I.head]);
     let lookYaw = Math.atan2(_v.x, _v.z);
-    let lookPitch = Math.atan2(_v.y, Math.hypot(_v.x, _v.z));
-    if (_v.lengthSq() < 1) {
+    let lookPitch = Math.atan2(_v.y, Math.sqrt(_v.x * _v.x + _v.z * _v.z));
+    if (_v.x * _v.x + _v.y * _v.y + _v.z * _v.z < 1) {
       lookYaw = 0;
       lookPitch = 0;
     }
     const maxYaw = airborne ? 1.0 : 1.35;
     lookYaw = clamp(lookYaw, -maxYaw, maxYaw);
     lookPitch = clamp(lookPitch, -0.85, 0.7);
-    // Yawn: head up and back; stall: looking down at what went wrong.
-    lookPitch += yawn * 0.5 - buffet * 0.25 - fatigue * 0.12 * this.airW;
+    // Basking: the head turns up toward the sun (when it is up).
+    if (bask > 0.001) {
+      const sd = globalUniforms.uSunDir.value;
+      if (sd.y > 0.02) {
+        _v2.copy(sd).applyQuaternion(this.qWInv);
+        lookYaw = lerp(lookYaw, clamp(Math.atan2(_v2.x, _v2.z), -1.1, 1.1), bask);
+        lookPitch = lerp(lookPitch, clamp(Math.atan2(_v2.y, Math.sqrt(_v2.x * _v2.x + _v2.z * _v2.z)), 0, 0.6), bask * 0.7);
+      }
+    }
+    // Yawn: head up and back; stall: looking down at what went wrong; tired: head hangs; the
+    // stretch reaches up; tasting the air lifts the nose a touch.
+    lookPitch += yawn * 0.5 - buffet * 0.25 - fatigue * 0.12 * airW - effort * 0.08 * groundW + stretch * 0.22 + (this.tongueT >= 0 ? 0.06 : 0);
     const ly = this.lookYaw.step(lookYaw, dt);
     const lp = this.lookPitch.step(lookPitch, dt);
-    const bankComp = -this.bank * this.airW;
+    const bankComp = -this.bank * airW;
     for (let i = 0; i < neckN; i++) {
       let pitch = lerp(NECK_FLIGHT[i], NECK_GROUND[i], groundW);
       pitch = lerp(pitch, NECK_TUCK[i], tuck);
-      pitch = lerp(pitch, NECK_FLARE[i], flare * this.airW);
-      pitch += fatigue * (2 + i * 0.4) * (1 - 0.4 * groundW);
+      pitch = lerp(pitch, NECK_FLARE[i], flare * airW);
+      pitch = lerp(pitch, NECK_STRETCH[i], stretch);
+      pitch += fatigue * (2 + i * 0.4) * (1 - 0.4 * groundW) + effort * 1.5 * groundW;
       pitch *= DEG;
-      // Hold the head steady against the heave and the gait bob.
-      pitch += (heave + gaitBob) * 0.06 * (i < 3 ? 1 : -1);
+      pitch += neckSag * NECK_LAG_SHARE[i];
+      // The neck base takes out most of the chest's beat pitch (the head is held, not flung).
+      if (i === 0) pitch -= 1.6 * chestLift * 0.85;
       pitch += -lp * 0.35 * NECK_YAW_SHARE[i];
       pitch += breath * breathAmp * 0.2;
       const yaw = ly * NECK_YAW_SHARE[i] + (moving ? -gaitSway * 0.4 : 0);
@@ -464,54 +669,75 @@ export class WyvernAnimator {
     }
     // Head: aim at the (clamped, smoothed) look direction, level with the horizon.
     _v.set(Math.sin(ly) * Math.cos(lp), Math.sin(lp), Math.cos(ly) * Math.cos(lp));
-    _v2.copy(UP).lerp(this.upM, 0.7 * this.airW + 0.35 * groundW).normalize();
+    _v2.copy(UP).lerp(this.upM, 0.7 * airW + 0.35 * groundW).normalize();
     aimRotation(FWD, UP, _v, _v2, _q);
-    // Small idle tilt and buffet shake.
-    _e.set(buffet * 0.08 * noise1(this.stallT * 10, 4), 0, (idle ? 0.06 * noise1(this.time * 0.3, 5) : 0), 'YXZ');
+    // Small idle tilt and the buffet shake.
+    _e.set(buffet * 0.08 * noise1(this.stallT * 10, 4), 0, idle ? 0.06 * noise1(this.time * 0.3, 5) : 0, 'YXZ');
     _q2.setFromEuler(_e);
     _q.multiply(_q2);
     this.setModel(I.head, _q);
-    // Jaw: panting when tired, a gasp on takeoff, yawns.
+    // Jaw: panting when tired or blown after a climb, a gasp on takeoff, yawns.
     const takeoffAir = airborne && pose.gait === 'takeoff' ? 1 - smoothstep(0.2, 0.6, pose.gaitTime) : 0;
     const roar = Math.max(takeoffCrouch ? 0.35 * openAmt : 0, takeoffAir * 0.35);
-    const jawT = Math.max(fatigue * (0.28 + 0.14 * breath), roar, yawn * 0.95, buffet * 0.2);
+    const pant = Math.max(fatigue, smoothstep(0.35, 0.9, this.exertion)) * (0.28 + 0.14 * breath);
+    // The bask's gape is slight and held: shedding heat through the mouth, not a yawn.
+    const jawT = Math.max(pant, roar, yawn * 0.95, buffet * 0.2, gape * 0.3);
     this.setEuler(I.jaw, this.jaw.step(jawT, dt) * 0.62, 0, 0);
-    const fanT = Math.max(roar * 2, yawn, flare * 0.5, buffet * 0.6, fatigue * 0.3) * (1 - 0.6 * smoothstep(20, 40, speed));
+    const fanT = Math.max(roar * 2, yawn, flare * 0.5, buffet * 0.6, fatigue * 0.3, bask * 0.9, stretch * 0.5) * (1 - 0.6 * smoothstep(20, 40, speed));
     const fanA = this.fan.step(fanT, dt);
     this.setEuler(I.fans[0], 0, -fanA * 1.1, -fanA * 0.15);
     this.setEuler(I.fans[1], 0, fanA * 1.1, fanA * 0.15);
+    this.updateTongue(dt, airborne, moving, touchdown, baskOn || yawn > 0.01 || pant > 0.12 || pose.gait === 'takeoff');
 
     // --- Tail --------------------------------------------------------------------------------------
-    this.updateTail(dt, pose, airborne, groundW, flare, tuck, buffet, idle, moving, gaitPhase, accel, teleport);
+    this.updateTail(dt, pose, airborne, groundW, flare, tuck, buffet, idle, moving, gaitPhase, accel, teleport, stretch, ly, lp);
 
     // --- Wings -------------------------------------------------------------------------------------
-    const asymBase = clamp(om.z * 0.55 - om.y * 0.35, -1, 1) * this.airW;
+    // Turning: the outer (rising) wing reaches and works harder, the inner one unloads.
+    const asymBase = clamp(om.z * 0.55 - om.y * 0.35 + this.bank * 0.35, -1, 1) * airW;
+    const spreadAir = (1 - tuck) * (1 - flare * 0.5);
+    // Air load: lift at 1 g holds a gentle camber; g-load and the power stroke bow the membrane up
+    // and bend the fingers, the recovery stroke lets them go slack.
+    const glideLoad = 0.3 * clamp(this.gLoad, 0, 3) * spreadAir;
+    const beatLoad = flap * strokeLoad(phase) * (1 + 0.25 * heft);
+    this.fold = groundW * (1 - openAmt) * (1 - bask);
     for (let side = 0; side < 2; side++) {
       const wp = this.wingFK[side];
+      const sgn = SIDE_SIGN[side];
+      const asym = asymBase * sgn;
       // Flight pose.
       blendPose(GLIDE, TUCK, tuck, wp);
       blendPose(wp, FLARE, flare * (1 - tuck), wp);
       if (flap > 0.001) {
-        flapPose(phase, fatigue, this.flapTmp);
+        const fp = flapPose(phase, fatigue, this.flapSide, heft);
+        // The outer wing of a turn takes the bigger stroke.
+        const amp = clamp(1 + 0.3 * asym, 0.72, 1.32);
+        fp[W.humEl] *= amp;
+        fp[W.foreEl] *= amp;
+        fp[W.handEl] *= amp;
         // Flaring beats reach forward.
         if (flare > 0) {
-          this.flapTmp[W.humSw] += -16 * DEG * flare;
-          this.flapTmp[W.humTw] += -14 * DEG * flare;
+          fp[W.humSw] += -16 * DEG * flare;
+          fp[W.humTw] += -14 * DEG * flare;
         }
-        blendPose(wp, this.flapTmp, flap, wp);
+        blendPose(wp, fp, flap, wp);
       }
-      const sgn = SIDE_SIGN[side];
       const bf = buffet * noise1(this.stallT * 9 + side * 7.3, 10 + side);
       const bt = buffet * noise1(this.stallT * 11 + side * 3.1, 20 + side);
-      adjustPose(wp, this.gLoad, asymBase * sgn, bf + buffet * 0.4 * sgn * Math.sin(this.stallT * 1.7), bt, (1 - tuck) * (1 - flare * 0.5));
-      // Ground pose (FK part): settle/shuffle, or raised for the takeoff.
+      adjustPose(wp, this.gLoad, asym, bf + buffet * 0.4 * sgn * Math.sin(this.stallT * 1.7), bt, spreadAir);
+      const loadT = airW * (glideLoad + beatLoad) * (1 + 0.35 * clamp(asym, -1, 1));
+      const load = this.loadSpring[side].step(loadT, dt);
+      this.wingLoad[side] = load;
+      loadPose(wp, load * spreadAir);
+      // Ground pose (FK part): settle/shuffle/brace, raised for the takeoff, or spread to bask.
       const groundFK = this.tmpPose;
-      if (takeoffCrouch) blendPose(SETTLE, flapPose(0, 0, this.flapTmp), openAmt, groundFK);
-      else blendPose(FOLDED, SETTLE, clamp01(openAmt * 1.4 + this.shuffle * 0.8), groundFK);
+      if (takeoffCrouch) blendPose(SETTLE, flapPose(0, 0, this.flapTmp, heft), openAmt, groundFK);
+      else blendPose(FOLDED, SETTLE, clamp01(openAmt * 1.4 + this.shuffle * 0.8 + brace), groundFK);
+      if (bask > 0.001) blendPose(groundFK, BASK, bask, groundFK);
       blendPose(wp, groundFK, groundW, wp);
       this.applyWingFK(side, wp);
-      // Ground IK: knuckles on the ground as front feet.
-      const ikW = groundW * (1 - openAmt) * (1 - this.shuffle * 0.65);
+      // Ground IK: knuckles on the ground as front feet (lifted off them to bask).
+      const ikW = groundW * (1 - openAmt) * (1 - this.shuffle * 0.65) * (1 - 0.85 * brace) * (1 - bask);
       if (ikW > 0.001) this.applyWingIK(side, ikW, sh);
     }
 
@@ -521,10 +747,13 @@ export class WyvernAnimator {
     const reach = clamp01(Math.max(flare, approach * smoothstep(26, 14, speed)));
     const push = airborne && pose.gait === 'takeoff' ? 1 - smoothstep(0.15, 0.55, pose.gaitTime) : 0;
     const tuckLegs = clamp01(smoothstep(15, 24, speed) + tuck) * (1 - reach) * (1 - push);
-    this.legSwing.step(clamp(-accel.dot(_v.copy(FWD).applyQuaternion(this.qW)) * 0.012, -0.4, 0.4), dt);
+    // Dangling legs swing with the body's fore-aft acceleration and trail the wingbeat's heave.
+    _v.copy(FWD).applyQuaternion(this.qW);
+    const fwdAcc = accel.x * _v.x + accel.y * _v.y + accel.z * _v.z;
+    this.legSwing.step(clamp(-fwdAcc * 0.012 + (heave / sh) * 0.9, -0.4, 0.4), dt);
     for (let side = 0; side < 2; side++) {
       this.applyLegFK(side, tuckLegs, reach, push, fatigue);
-      if (this.legAirW < 0.999) this.applyLegIK(side, 1 - this.legAirW, sh);
+      if (this.legAirW < 0.999) this.applyLegIK(side, 1 - this.legAirW);
     }
 
     // Contact points for the next touchdown (hind: under the ball of the foot, fore: knuckle).
@@ -534,10 +763,19 @@ export class WyvernAnimator {
     }
 
     if (uniforms) {
-      uniforms.uBlink.value = Math.max(blinkAmt, yawn * 0.6);
-      uniforms.uFlutter.value = 0.012 * sh * smoothstep(8, 40, speed) * this.airW * (1 - tuck * 0.5) + buffet * 0.03;
-      uniforms.uFlutterRate.value = 14 + speed * 0.9;
+      // Eyes half-lidded in the sun while basking.
+      uniforms.uBlink.value = Math.max(blinkAmt, yawn * 0.6, bask * 0.4);
+      uniforms.uNictitate.value = nict;
+      // Trailing-edge flutter: airspeed, the power stroke's ripple, stall buffet, a breeze on
+      // the spread membranes while basking.
+      uniforms.uFlutter.value =
+        0.012 * sh * smoothstep(8, 40, speed) * airW * (1 - tuck * 0.5) + 0.008 * sh * flap * airW + buffet * 0.03 + bask * 0.004 * sh;
+      uniforms.uFlutterRate.value = 14 + speed * 0.9 - bask * 8;
       uniforms.uRipple.value = 0.4 + 0.6 * smoothstep(5, 35, speed);
+      // Membrane billow per wing (m at full load) and how folded the wings are.
+      const billow = 0.022 * P.wingspan;
+      uniforms.uWingLoad.value.set(this.wingLoad[0] * billow * spreadAir, this.wingLoad[1] * billow * spreadAir);
+      uniforms.uFold.value = this.fold;
     }
 
     this.prevAirborne = airborne;
@@ -554,7 +792,13 @@ export class WyvernAnimator {
     const r = this.rig.idx.root;
     bones[r].position.copy(this.offset[r]).add(this.rootOffset);
     const br = bones[this.rig.idx.breath];
-    br.scale.set(this.breathScale, this.breathScale, 1 + (this.breathScale - 1) * 0.3);
+    // Rib breathing: the flanks swell sideways, the belly a little, hardly any lift.
+    const b = this.breathScale - 1;
+    br.scale.set(1 + b * 1.2, 1 + b * 0.3, 1 + b * 0.08);
+    // The tongue slides out along the jaw (its bones are at rest otherwise).
+    const t0 = this.rig.idx.tongue[0];
+    bones[t0].position.copy(this.offset[t0]);
+    bones[t0].position.z += this.tongueExt;
   }
 
   /** Model-space bone positions/rotations (after update), for tests and debugging. */
@@ -563,23 +807,65 @@ export class WyvernAnimator {
     return outP.copy(this.modelP[i]);
   }
 
+  // --- Tongue ------------------------------------------------------------------------------------
+
+  /**
+   * Forked-tongue flicks: a short burst of two or three quick in-and-out flicks with the prongs
+   * waving, tasting the air every few seconds when idle (less often walking) and once soon after
+   * landing somewhere new. Never in the air or with the mouth busy.
+   */
+  private updateTongue(dt: number, airborne: boolean, moving: boolean, touchdown: boolean, busy: boolean): void {
+    const I = this.rig.idx;
+    const canTaste = !airborne && !busy;
+    if (touchdown) this.tongueTimer = Math.min(this.tongueTimer, 0.9 + this.rand() * 0.7);
+    if (canTaste) this.tongueTimer -= dt * (moving ? 0.5 : 1);
+    if (canTaste && this.tongueTimer <= 0 && this.tongueT < 0) {
+      this.tongueT = 0;
+      this.tongueFlicks = this.rand() < 0.5 ? 2 : 3;
+      this.tongueTimer = 4.5 + this.rand() * 6;
+    }
+    let out = 0;
+    let wave = 0;
+    if (this.tongueT >= 0) {
+      this.tongueT += dt;
+      const per = 0.36;
+      const k = Math.floor(this.tongueT / per);
+      const f = this.tongueT - k * per;
+      out = smoothstep(0, 0.08, f) * (1 - smoothstep(0.2, 0.32, f));
+      wave = Math.sin(f * TAU * 10) * out;
+      if (k >= this.tongueFlicks || !canTaste) {
+        this.tongueT = -1;
+        out = 0;
+        wave = 0;
+      }
+    }
+    this.tongueExt = out * TONGUE.reach * this.rig.props.shape.headLength;
+    // Out and a little down (tasting toward the ground), the prongs flicking up and down.
+    this.setEuler(I.tongue[0], 0.1 * out, 0, 0);
+    this.setEuler(I.tongue[1], 0.4 * wave, 0, 0);
+  }
+
   // --- Wings -------------------------------------------------------------------------------------
 
   private applyWingFK(side: number, p: WingPose): void {
     const w = this.rig.idx.wings[side];
-    this.wingJoint(side, w.humerus, p[W.humEl], p[W.humSw], p[W.humTw]);
-    this.wingJoint(side, w.forearm, p[W.foreEl], p[W.foreSw], p[W.foreTw]);
-    this.wingJoint(side, w.hand, p[W.handEl], p[W.handSw], p[W.handTw]);
-    this.wingJoint(side, w.claw, p[W.clawEl], p[W.clawSw], 0);
+    this.wingJoint(side, w.humerus, p, W.humEl, W.humSw, W.humTw);
+    this.wingJoint(side, w.forearm, p, W.foreEl, W.foreSw, W.foreTw);
+    this.wingJoint(side, w.hand, p, W.handEl, W.handSw, W.handTw);
+    this.wingJoint(side, w.claw, p, W.clawEl, W.clawSw, -1);
     for (let f = 0; f < 3; f++) {
-      this.wingJoint(side, w.fingers[f][0], p[W.f0El + f * 3], p[W.f0Sw + f * 3], p[W.f0Tw + f * 3]);
-      this.wingJoint(side, w.fingers[f][1], p[W.f0bEl + f * 2], p[W.f0bSw + f * 2], 0);
+      this.wingJoint(side, w.fingers[f][0], p, W.f0El + f * 3, W.f0Sw + f * 3, W.f0Tw + f * 3);
+      this.wingJoint(side, w.fingers[f][1], p, W.f0bEl + f * 2, W.f0bSw + f * 2, -1);
     }
   }
 
-  /** One wing joint from channels (left convention, mirrored for the right wing). */
-  private wingJoint(side: number, bone: number, el: number, sw: number, tw: number): void {
-    _e.set(tw, sw, el, 'ZYX');
+  /**
+   * One wing joint from the pose's channels (left convention, mirrored for the right wing). Takes
+   * channel indices rather than angles: numbers passed into a call the JIT doesn't inline get
+   * boxed, every joint, every frame.
+   */
+  private wingJoint(side: number, bone: number, p: WingPose, iEl: number, iSw: number, iTw: number): void {
+    _e.set(iTw >= 0 ? p[iTw] : 0, p[iSw], p[iEl], 'ZYX');
     _q.setFromEuler(_e);
     if (side === 1) mirrorQuat(_q, _q);
     this.local[bone].copy(_q);
@@ -588,9 +874,11 @@ export class WyvernAnimator {
 
   /**
    * Folded stance: the wrist (with its thumb claws) is a front foot planted by the gait; humerus
-   * + forearm reach it by two-bone IK with the elbow high and back, and the hand and fingers fold
-   * back up along the forearm and past the elbow, so the wingtips rise behind the shoulders.
-   * Blended over the FK pose by `weight`.
+   * + forearm reach it by two-bone IK with the elbow high and back. The hand folds back up along
+   * the forearm and the fingers run on up beside it in a tight bundle, then their outer segments
+   * fold back along the flank toward the tail, so the folded wing reads as one strong limb with
+   * the wingtips lying along the upper flank and the membrane bunched into a narrow wedge (not a
+   * second pair of stilts with a sheet hung between them). Blended over the FK pose by `weight`.
    */
   private applyWingIK(side: number, weight: number, sh: number): void {
     const rig = this.rig;
@@ -604,8 +892,8 @@ export class WyvernAnimator {
     const foot = this.gait.feet[2 + side];
     const Wt = this.toModel(foot.pos, _v3).addScaledVector(up, 0.07 * sh);
     const S = _v2.copy(this.modelP[w.humerus]);
-    // Pole: back and up, a little out, so the folded wing lies along the flank.
-    _v4.set(0.3 * sx, 0.6, -0.75);
+    // Pole: back and up, a little out, so the elbow juts up behind the shoulder.
+    _v4.set(0.25 * sx, 0.75, -0.62);
     const E = _v5;
     solveTwoBone(S, A.humerus, A.forearm, Wt, _v4, E);
     const hum = _hum.subVectors(E, S);
@@ -618,18 +906,28 @@ export class WyvernAnimator {
     this.setModel(w.humerus, _q, weight);
     aimRotation(rest[1], UP, fore, ref, _q);
     this.setModel(w.forearm, _q, weight);
-    // Hand folds back up along the forearm, a little outside it.
+    // Hand folds back up along the forearm, just outside it.
     const back = _handD.subVectors(E, Wt).normalize();
-    _fd.copy(back).addScaledVector(LEFT, 0.22 * sx).addScaledVector(fwdG, -0.12).normalize();
+    _fd.copy(back).addScaledVector(LEFT, 0.12 * sx).addScaledVector(fwdG, -0.06).normalize();
     aimRotation(rest[2], UP, _fd, ref, _q);
     this.setModel(w.hand, _q, weight);
-    // Fingers continue past the elbow, fanned back toward the tail; the wingtip finger rises most.
     for (let f = 0; f < 3; f++) {
-      _fd.copy(back).addScaledVector(LEFT, (0.16 + 0.03 * f) * sx).addScaledVector(fwdG, -0.25 - 0.32 * f).addScaledVector(up, 0.1 - 0.06 * f).normalize();
+      // Inner segment: up beside the forearm, bundled (outside and a little behind it).
+      _fd.copy(back)
+        .addScaledVector(LEFT, (0.07 + 0.02 * f) * sx)
+        .addScaledVector(fwdG, -0.1 - 0.06 * f)
+        .normalize();
       aimRotation(rest[3 + f], UP, _fd, ref, _q);
       this.setModel(w.fingers[f][0], _q, weight);
-      this.local[w.fingers[f][1]].slerp(_qIdentity, weight);
-      this.fk(w.fingers[f][1]);
+      // Outer segment: folded back along the flank, tips toward the tail; the wingtip finger
+      // rides highest, the inner ones fan a little lower. Membrane side faces outward.
+      _fd.copy(fwdG)
+        .multiplyScalar(-0.92)
+        .addScaledVector(up, 0.3 - 0.13 * f)
+        .addScaledVector(LEFT, (0.07 - 0.02 * f) * sx)
+        .normalize();
+      aimRotation(rest[3 + f], UP, _fd, _refN.copy(LEFT).multiplyScalar(sx), _q);
+      this.setModel(w.fingers[f][1], _q, weight);
     }
     // Claws point forward along the ground.
     _fd.copy(fwdG).addScaledVector(up, -0.25).addScaledVector(LEFT, 0.2 * sx).normalize();
@@ -639,37 +937,41 @@ export class WyvernAnimator {
 
   // --- Legs --------------------------------------------------------------------------------------
 
-  /** Blend a leg bone direction (pelvis space, left; mirrored by sx) from four poses. */
-  private legDir(
-    out: Vector3,
-    tuckAmt: number,
-    reach: number,
-    push: number,
-    sx: number,
-    tx: number, ty: number, tz: number,
-    dx: number, dy: number, dz: number,
-    rx: number, ry: number, rz: number,
-    px: number, py: number, pz: number,
-  ): Vector3 {
+  /**
+   * Blend a leg bone direction (pelvis space, left; mirrored) from the four poses in LEG_POSES
+   * (row 0 thigh, 1 shin, 2 meta), with this frame's weights in `legW`.
+   */
+  private legDir(out: Vector3, row: number): Vector3 {
+    const P = LEG_POSES;
+    const g = this.legW;
+    const tuckAmt = g[0];
     const dangle = 1 - tuckAmt;
-    out.set(tx * tuckAmt + dx * dangle, ty * tuckAmt + dy * dangle, tz * tuckAmt + dz * dangle);
-    out.lerp(_lv.set(rx, ry, rz), reach);
-    out.lerp(_lv.set(px, py, pz), push);
-    out.x *= sx;
+    const o = row * 12;
+    // The dangling pose swings with the body (legSwing) and droops when tired.
+    const dy = P[o + 4] - (row === 0 ? 0.05 * g[4] : 0);
+    const dz = P[o + 5] - g[5] * (row === 2 ? 0.5 : 1);
+    out.set(P[o] * tuckAmt + P[o + 3] * dangle, P[o + 1] * tuckAmt + dy * dangle, P[o + 2] * tuckAmt + dz * dangle);
+    out.lerp(_lv.set(P[o + 6], P[o + 7], P[o + 8]), g[1]);
+    out.lerp(_lv.set(P[o + 9], P[o + 10], P[o + 11]), g[2]);
+    out.x *= g[3];
     return out.normalize();
   }
 
   private applyLegFK(side: number, tuckAmt: number, reach: number, push: number, fatigue: number): void {
     const l = this.rig.idx.legs[side];
-    const sx = SIDE_SIGN[side];
     const rest = this.legRestDir[side];
     const pq = this.modelQ[this.parent[l.thigh]];
+    const g = this.legW;
+    g[0] = tuckAmt;
+    g[1] = reach;
+    g[2] = push;
+    g[3] = SIDE_SIGN[side];
+    g[4] = fatigue;
     // Dangling legs swing back and forth with the body's fore-aft acceleration.
-    const sw = this.legSwing.value * (1 - tuckAmt);
-    //                                       tucked              dangling                          reaching           pushing off
-    const thigh = this.legDir(_v, tuckAmt, reach, push, sx, 0.06, -0.5, -0.86, 0.1, -0.86 - 0.05 * fatigue, 0.48 - sw, 0.14, -0.62, 0.78, 0.05, -0.92, -0.38);
-    const shin = this.legDir(_v2, tuckAmt, reach, push, sx, 0.0, 0.25, -0.97, 0.02, -0.82, -0.56 - sw, 0.03, -0.97, 0.24, 0.0, -0.94, -0.33);
-    const meta = this.legDir(_v3, tuckAmt, reach, push, sx, 0.0, -0.18, -0.98, 0.0, -0.9, 0.22 - sw * 0.5, 0.0, -0.94, 0.32, 0.0, -0.8, -0.6);
+    g[5] = this.legSwing.value * (1 - tuckAmt);
+    const thigh = this.legDir(_v, 0);
+    const shin = this.legDir(_v2, 1);
+    const meta = this.legDir(_v3, 2);
     thigh.applyQuaternion(pq);
     shin.applyQuaternion(pq);
     meta.applyQuaternion(pq);
@@ -685,7 +987,7 @@ export class WyvernAnimator {
     this.setEuler(l.toes, curl, 0, 0);
   }
 
-  private applyLegIK(side: number, weight: number, sh: number): void {
+  private applyLegIK(side: number, weight: number): void {
     const rig = this.rig;
     const l = rig.idx.legs[side];
     const G = rig.props.leg;
@@ -714,7 +1016,6 @@ export class WyvernAnimator {
     _fd.copy(fwdG).addScaledVector(up, -0.9 * foot.airborne).normalize();
     aimRotation(FWD, UP, _fd, up, _q);
     this.setModel(l.toes, _q, weight);
-    void sh;
   }
 
   // --- Tail --------------------------------------------------------------------------------------
@@ -732,6 +1033,9 @@ export class WyvernAnimator {
     gaitPhase: number,
     accel: Vector3,
     teleport: boolean,
+    stretch: number,
+    lookYaw: number,
+    lookPitch: number,
   ): void {
     const rig = this.rig;
     const T = rig.idx.tail;
@@ -745,19 +1049,25 @@ export class WyvernAnimator {
     this.toWorld(_v.copy(this.offset[T[0]]).applyQuaternion(this.modelQ[pelvis]).add(this.modelP[pelvis]), this.tailBase);
     const baseDir = _v2.copy(this.tailRestDir[0]).applyQuaternion(pelvisWorldQ);
     const bodyUp = _v3.copy(UP).applyQuaternion(this.qW);
+    this.rootOffW.copy(this.rootOffset).applyQuaternion(this.qW);
 
     // Target curve per segment (radians): pitch (+ raises) and yaw (+ swings to the body's left).
     const t = this.time;
-    const steer = clamp(om.y * (airborne ? -0.05 : -0.03), -0.06, 0.06);
+    // Counter-steer: in a turn the tail swings out to the outside, a counterweight to the turn.
+    const steer = clamp(om.y * (airborne ? -0.07 : -0.045), -0.08, 0.08);
     for (let i = 0; i < n; i++) {
       let p = lerp(TAIL_FLIGHT[i], TAIL_GROUND[i], groundW);
       p = lerp(p, TAIL_FLARE[i], flare * (1 - groundW));
-      p *= 1 - tuck * 0.7;
-      this.tailPitch[i] = p * DEG + (idle ? 0.02 * Math.sin(t * 0.9 - i * 0.4) : 0);
-      const sway = (idle ? 0.045 : 0.015) * Math.sin(t * (idle ? 0.75 : 1.4) - i * 0.45) + (moving ? 0.05 * Math.sin(gaitPhase * Math.PI * 2 - i * 0.5) : 0);
-      // Counter-steer: in a turn the tail swings to the outside; a stall makes it lash.
+      p *= (1 - tuck * 0.7) * (1 - 0.75 * stretch);
+      // On the ground the tail balances the head and neck: it lifts as the head goes down and
+      // swings the other way when the head turns; the stretch holds it straight out.
+      const counterPitch = -lookPitch * 0.014 * groundW + stretch * 0.03 * (1 - i / n);
+      this.tailPitch[i] = p * DEG + (idle ? 0.02 * Math.sin(t * 0.9 - i * 0.4) : 0) + counterPitch;
+      const sway = (idle ? 0.045 : 0.015) * Math.sin(t * (idle ? 0.75 : 1.4) - i * 0.45) + (moving ? 0.05 * Math.sin(gaitPhase * TAU - i * 0.5) : 0);
+      // A stall makes it lash.
       const lash = buffet * 0.09 * Math.sin(this.stallT * 5 - i * 0.6);
-      this.tailYaw[i] = sway + steer + lash;
+      const counterYaw = -lookYaw * 0.03 * groundW * (1 - 0.5 * stretch);
+      this.tailYaw[i] = sway * (1 - 0.6 * stretch) + steer + lash + counterYaw;
     }
     const tp = this.tailPitch;
     const ty = this.tailYaw;
@@ -766,28 +1076,39 @@ export class WyvernAnimator {
       X[0].copy(this.tailBase);
       const d = _v4.copy(baseDir);
       for (let i = 0; i < n; i++) {
-        this.bendDir(d, bodyUp, tp[i], ty[i]);
+        this.bendDir(d, bodyUp, i);
         X[i + 1].copy(X[i]).addScaledVector(d, this.tailLen[i]);
       }
       for (let i = 0; i <= n; i++) Xp[i].copy(X[i]);
       this.tailBasePrev.copy(this.tailBase);
+      this.rootOffWPrev.copy(this.rootOffW);
       this.tailInit = true;
     } else {
-      // Carry the chain with the body's translation; rotations and accelerations make it lag.
-      const shift = _v4.subVectors(this.tailBase, this.tailBasePrev);
+      // Carry the chain with the body's travel, but not with the visual heave and landing dip:
+      // the chain has to follow those through its springs, so each wingbeat and touchdown sends
+      // a wave down the tail. Rotations and accelerations make it lag too.
+      const sx = this.tailBase.x - this.tailBasePrev.x - (this.rootOffW.x - this.rootOffWPrev.x) * 0.85;
+      const sy = this.tailBase.y - this.tailBasePrev.y - (this.rootOffW.y - this.rootOffWPrev.y) * 0.85;
+      const sz = this.tailBase.z - this.tailBasePrev.z - (this.rootOffW.z - this.rootOffWPrev.z) * 0.85;
       for (let i = 0; i <= n; i++) {
-        X[i].add(shift);
-        Xp[i].add(shift);
+        X[i].x += sx;
+        X[i].y += sy;
+        X[i].z += sz;
+        Xp[i].x += sx;
+        Xp[i].y += sy;
+        Xp[i].z += sz;
       }
       this.tailBasePrev.copy(this.tailBase);
+      this.rootOffWPrev.copy(this.rootOffW);
       const steps = Math.max(1, Math.min(10, Math.ceil(dt * 120)));
       const h = dt / steps;
       const grav = (airborne ? 1.2 : 6) * h * h;
       const inertia = 0.35 * h * h;
       const groundY = this.groundRef;
       const vel = pose.velocity;
-      const speed = vel.length();
+      const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
       const stream = airborne ? smoothstep(4, 20, speed) * 0.04 : 0;
+      const baseR = rig.props.shape.tailBaseRadius;
       for (let s = 0; s < steps; s++) {
         X[0].copy(this.tailBase);
         for (let i = 1; i <= n; i++) {
@@ -804,22 +1125,34 @@ export class WyvernAnimator {
         const d = _v4.copy(baseDir);
         for (let i = 1; i <= n; i++) {
           if (i > 1) d.subVectors(X[i - 1], X[i - 2]).normalize();
-          this.bendDir(d, bodyUp, tp[i - 1], ty[i - 1]);
+          this.bendDir(d, bodyUp, i - 1);
           const kStiff = lerp(0.42, 0.16, (i - 1) / (n - 1));
-          const gx = X[i - 1].x + d.x * this.tailLen[i - 1];
-          const gy = X[i - 1].y + d.y * this.tailLen[i - 1];
-          const gz = X[i - 1].z + d.z * this.tailLen[i - 1];
-          X[i].x += (gx - X[i].x) * kStiff;
-          X[i].y += (gy - X[i].y) * kStiff;
-          X[i].z += (gz - X[i].z) * kStiff;
-          if (stream > 0 && speed > 1) X[i].addScaledVector(vel, (-stream * this.tailLen[i - 1]) / speed);
+          const len = this.tailLen[i - 1];
+          const xi = X[i];
+          const xa = X[i - 1];
+          xi.x += (xa.x + d.x * len - xi.x) * kStiff;
+          xi.y += (xa.y + d.y * len - xi.y) * kStiff;
+          xi.z += (xa.z + d.z * len - xi.z) * kStiff;
+          if (stream > 0 && speed > 1) {
+            const k = (-stream * len) / speed;
+            xi.x += vel.x * k;
+            xi.y += vel.y * k;
+            xi.z += vel.z * k;
+          }
           // Keep the segment length.
-          _v5.subVectors(X[i], X[i - 1]);
-          const len = _v5.length();
-          if (len > 1e-6) X[i].copy(X[i - 1]).addScaledVector(_v5, this.tailLen[i - 1] / len);
+          const ex = xi.x - xa.x;
+          const ey = xi.y - xa.y;
+          const ez = xi.z - xa.z;
+          const el = Math.sqrt(ex * ex + ey * ey + ez * ez);
+          if (el > 1e-6) {
+            const f = len / el;
+            xi.x = xa.x + ex * f;
+            xi.y = xa.y + ey * f;
+            xi.z = xa.z + ez * f;
+          }
           // Stay above the ground.
-          const minY = groundY + 0.05 + 0.4 * rig.props.shape.tailBaseRadius * (1 - (i - 1) / n);
-          if (!airborne && X[i].y < minY) X[i].y = minY;
+          const minY = groundY + 0.05 + 0.4 * baseR * (1 - (i - 1) / n);
+          if (!airborne && xi.y < minY) xi.y = minY;
         }
       }
     }
@@ -835,16 +1168,62 @@ export class WyvernAnimator {
     }
   }
 
-  /** Bend a direction by pitch (raise) and yaw (to the body's left) relative to itself. */
-  private bendDir(d: Vector3, up: Vector3, pitch: number, yaw: number): void {
-    // Pitch axis = d × up (points to the left of a backward-pointing tail).
-    _axis.crossVectors(d, up);
-    if (_axis.lengthSq() < 1e-8) _axis.set(1, 0, 0);
-    _axis.normalize();
-    rotateAbout(d, _axis, pitch);
-    _axis2.copy(up).addScaledVector(d, -up.dot(d)).normalize();
-    rotateAbout(d, _axis2, -yaw);
-    d.normalize();
+  /**
+   * Bend a direction by tail segment i's target pitch (raise) and yaw (to the body's left)
+   * relative to itself. Takes the index, not the angles: numbers passed into a call the JIT
+   * doesn't inline get boxed, and this runs ~30 times a frame.
+   */
+  private bendDir(d: Vector3, up: Vector3, i: number): void {
+    const pitch = this.tailPitch[i];
+    const yaw = this.tailYaw[i];
+    // Scalar Rodrigues rotations (no temporaries).
+    let dx = d.x;
+    let dy = d.y;
+    let dz = d.z;
+    const ux = up.x;
+    const uy = up.y;
+    const uz = up.z;
+    // Pitch about a = normalize(d × up) (points to the left of a backward-pointing tail).
+    let ax = dy * uz - dz * uy;
+    let ay = dz * ux - dx * uz;
+    let az = dx * uy - dy * ux;
+    let l = ax * ax + ay * ay + az * az;
+    if (l < 1e-8) {
+      ax = 1;
+      ay = 0;
+      az = 0;
+    } else {
+      l = Math.sqrt(l);
+      ax /= l;
+      ay /= l;
+      az /= l;
+    }
+    let c = Math.cos(pitch);
+    let s = Math.sin(pitch);
+    let k = (ax * dx + ay * dy + az * dz) * (1 - c);
+    let rx = dx * c + (ay * dz - az * dy) * s + ax * k;
+    let ry = dy * c + (az * dx - ax * dz) * s + ay * k;
+    let rz = dz * c + (ax * dy - ay * dx) * s + az * k;
+    dx = rx;
+    dy = ry;
+    dz = rz;
+    // Yaw about b = up made perpendicular to d.
+    const ud = ux * dx + uy * dy + uz * dz;
+    let bx = ux - dx * ud;
+    let by = uy - dy * ud;
+    let bz = uz - dz * ud;
+    l = Math.sqrt(bx * bx + by * by + bz * bz) || 1;
+    bx /= l;
+    by /= l;
+    bz /= l;
+    c = Math.cos(-yaw);
+    s = Math.sin(-yaw);
+    k = (bx * dx + by * dy + bz * dz) * (1 - c);
+    rx = dx * c + (by * dz - bz * dy) * s + bx * k;
+    ry = dy * c + (bz * dx - bx * dz) * s + by * k;
+    rz = dz * c + (bx * dy - by * dx) * s + bz * k;
+    l = Math.sqrt(rx * rx + ry * ry + rz * rz) || 1;
+    d.set(rx / l, ry / l, rz / l);
   }
 }
 
@@ -858,5 +1237,3 @@ const _axis = new Vector3();
 const _axis2 = new Vector3();
 const _qIdentity = new Quaternion();
 const _lv = new Vector3();
-void stroke;
-void FOOT_COUNT;

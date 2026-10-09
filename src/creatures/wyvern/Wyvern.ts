@@ -19,7 +19,7 @@ import {
   createWyvernUniforms,
   type WyvernUniforms,
 } from './materials';
-import { WyvernAnimator } from './animator';
+import { STAND_ROOT_PITCH, WyvernAnimator } from './animator';
 
 export interface WyvernOptions {
   /** Render as a translucent race ghost. */
@@ -29,6 +29,7 @@ export interface WyvernOptions {
 }
 
 const _m = new Matrix4();
+const X_AXIS = new Vector3(1, 0, 0);
 
 export class Wyvern implements WyvernRenderable {
   readonly group = new Group();
@@ -56,6 +57,7 @@ export class Wyvern implements WyvernRenderable {
     this.materials = this.ghost
       ? [createGhostMaterial(this.uniforms, false), createGhostMaterial(this.uniforms, true)]
       : [createBodyMaterial(this.uniforms), createMembraneMaterial(this.uniforms)];
+    if (this.ghost) this.uniforms.uContour.value = 0;
     this.rebuild();
   }
 
@@ -97,6 +99,18 @@ export class Wyvern implements WyvernRenderable {
 
   getHead(out: Vector3): Vector3 {
     return out.copy(this.mouthOffset).applyMatrix4(this.bones[this.rig.idx.head].matrixWorld);
+  }
+
+  /**
+   * The saddle origin (the seat, where the rider's hips rest — the same point as `saddle`) in the
+   * wyvern's body frame (+Z forward, +Y up, origin at WyvernPose.position) while it stands at
+   * rest. The player state uses it to line mount and dismount up with the seat exactly. Changes
+   * with the breed and the saddle cosmetic (read it again after setLook).
+   */
+  seatOffset(out: Vector3): Vector3 {
+    // The seat rides the spine bone; standing at rest the trunk's only rotation is the root's
+    // pitch about the body origin.
+    return out.copy(this.info.saddle.seat).applyAxisAngle(X_AXIS, STAND_ROOT_PITCH);
   }
 
   dispose(): void {
@@ -161,13 +175,14 @@ export class Wyvern implements WyvernRenderable {
     this.mesh = mesh;
     this.group.add(mesh);
 
-    // Saddle anchor rides on the chest bone, like the saddle geometry.
-    const chest = bones[rig.idx.chest];
-    chest.add(this.saddle);
-    this.saddle.position.copy(this.info.saddle.seat).sub(rig.bones[rig.idx.chest].pos);
+    // Saddle anchor rides on the spine bone (over the ribcage), like the saddle's hardware.
+    const spine = bones[rig.idx.spine];
+    spine.add(this.saddle);
+    this.saddle.position.copy(this.info.saddle.seat).sub(rig.bones[rig.idx.spine].pos);
     this.saddle.quaternion.identity();
     this.saddle.userData.halfWidth = this.info.saddle.halfWidth;
     this.saddle.userData.gripOffset = this.info.saddle.grip.clone();
+    this.saddle.userData.flank = { ...this.info.saddle.flank };
 
     // Wingtip: end of the distal wingtip finger, in that bone's space. Mouth: in head space.
     const fb = rig.idx.wings[0].fingers[0][1];

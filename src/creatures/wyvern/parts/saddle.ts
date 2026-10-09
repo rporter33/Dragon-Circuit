@@ -1,12 +1,16 @@
 // Saddles: rider (leather + blanket + girths + stirrups), racing (a low shell with neck
 // handles), nomad (bedroll, saddlebags and a lantern) and royal (a carved howdah under a little
-// canopy). All are skinned rigidly to the chest bone, which also carries the saddle anchor, so the
-// rider and the seat move as one.
+// canopy). They sit behind the shoulder girdle, over the ribcage near the center of mass (see
+// SEAT_Z in rig.ts). What lies on the body (blankets, seat shells, girths, buckles) is skinned
+// like the body under it, so it hugs the back as the spine twists; the rigid hardware (pommel,
+// stirrups, posts, handles, bags) rides the spine bone, which also carries the saddle anchor, so
+// the rider and the seat move as one.
 
 import { Vector3 } from 'three';
 import { clamp, smoothstep } from '../../../core/math';
 import { GeoBuilder, MREGION, REGION, Skin, ellipsoid } from '../builder';
 import type { RigDef } from '../rig';
+import { bodyChain } from './body';
 import { leaf, spike, strip } from './shape';
 
 export interface SaddleInfo {
@@ -16,6 +20,19 @@ export interface SaddleInfo {
   halfWidth: number;
   /** Where the hands hold, in saddle space (+Z forward, +Y up). */
   grip: Vector3;
+  /**
+   * The barrel under the seat, in saddle space: a superellipse cross-section centred `cy` below
+   * the seat (negative), half-width `rx` and upper half-height `ry` (blanket included), exponent
+   * `sq`. The rider wraps its lower legs around it (knees in at the saddle, shins down the ribs).
+   */
+  flank: SaddleFlank;
+}
+
+export interface SaddleFlank {
+  cy: number;
+  rx: number;
+  ry: number;
+  sq: number;
 }
 
 interface ShellOpts {
@@ -28,7 +45,8 @@ interface ShellOpts {
   top: (u: number, v: number) => number;
   bottom: number;
   region: (u: number, v: number, rim: boolean) => number;
-  skin: Skin;
+  /** Skin at an arc length along the body (body-hugging parts follow the body's own weights). */
+  skin: (s: number) => Skin;
 }
 
 /** A shell lying on the body surface between two arc lengths and girth angles, with a rim. */
@@ -44,14 +62,15 @@ function shell(b: GeoBuilder, rig: RigDef, o: ShellOpts): void {
     const s = o.s0 + (o.s1 - o.s0) * u;
     const rt: number[] = [];
     const rb: number[] = [];
+    const sk = o.skin(s);
     for (let j = 0; j <= o.nt; j++) {
       const v = j / o.nt;
       const th = o.th0 + (o.th1 - o.th0) * v;
       plan.surface(s, th, p, n);
       const rim = i === 0 || j === 0 || i === o.ns || j === o.nt;
       const base = p.clone();
-      rt.push(b.vertex(p.copy(base).addScaledVector(n, o.top(u, v)), o.skin, { region: o.region(u, v, rim) }, u, v));
-      rb.push(b.vertex(p.copy(base).addScaledVector(n, o.bottom), o.skin, { region: o.region(u, v, true) }, u, v));
+      rt.push(b.vertex(p.copy(base).addScaledVector(n, o.top(u, v)), sk, { region: o.region(u, v, rim) }, u, v));
+      rb.push(b.vertex(p.copy(base).addScaledVector(n, o.bottom), sk, { region: o.region(u, v, true) }, u, v));
     }
     top.push(rt);
     bot.push(rb);
@@ -76,8 +95,8 @@ function shell(b: GeoBuilder, rig: RigDef, o: ShellOpts): void {
   b.end();
 }
 
-/** A strap ring around the body at arc length s. */
-function girth(b: GeoBuilder, rig: RigDef, s: number, width: number, skin: Skin, thMax = Math.PI): void {
+/** A strap ring around the body at arc length s (skinned like the body there). */
+function girth(b: GeoBuilder, rig: RigDef, s: number, width: number, hug: (s: number) => Skin, thMax = Math.PI): void {
   const plan = rig.plan;
   const p = new Vector3();
   const n = new Vector3();
@@ -86,6 +105,7 @@ function girth(b: GeoBuilder, rig: RigDef, s: number, width: number, skin: Skin,
   b.begin(0);
   for (const ds of [-width / 2, width / 2]) {
     const row: number[] = [];
+    const skin = hug(s + ds);
     for (let k = 0; k <= N; k++) {
       const th = -thMax + (2 * thMax * k) / N;
       plan.surface(s + ds, th, p, n);
@@ -98,7 +118,8 @@ function girth(b: GeoBuilder, rig: RigDef, s: number, width: number, skin: Skin,
 }
 
 /** A small rectangular buckle or plate standing on the surface. */
-function buckle(b: GeoBuilder, rig: RigDef, s: number, th: number, size: number, skin: Skin): void {
+function buckle(b: GeoBuilder, rig: RigDef, s: number, th: number, size: number, hug: (s: number) => Skin): void {
+  const skin = hug(s);
   const p = new Vector3();
   const n = new Vector3();
   rig.plan.surface(s, th, p, n);
@@ -147,17 +168,24 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
   const S = rig.props.shape;
   const sc = plan.sAtZ(rig.seat.z);
   const st = plan.station(sc);
-  const skin = Skin.of(rig.idx.chest);
+  // Rigid hardware rides the spine bone (like the anchor); body-hugging parts take the body's skin.
+  const skin = Skin.of(rig.idx.spine);
+  const chain = bodyChain(rig);
+  const hug = (s: number) => chain.skin(s);
   const topY = st.center.y + st.upper;
   const scale = clamp(S.torsoHalfWidth / 0.8, 0.75, 1.25);
   const m = (x: number) => x * scale;
-  // Half-width where the thighs grip: ~0.3 m below the top of the back.
+  // Half-width where the thighs grip the saddle: ~0.3 m below the top of the back, capped at
+  // 0.45-0.5 m so a rider on a broad back still sits a horse-like straddle (knees in at the
+  // saddle) rather than doing the splits; below the knee the shins follow the barrel (`flank`).
   const depth = 0.3;
   const c = clamp(1 - depth / st.upper, -1, 1);
   const sn = Math.sqrt(1 - Math.pow(Math.abs(c), st.squareness));
-  const halfWidth = Math.pow(sn, 2 / st.squareness) * st.halfWidth;
+  const bodyHalfWidth = Math.pow(sn, 2 / st.squareness) * st.halfWidth;
+  const halfWidth = Math.min(bodyHalfWidth, 0.45 + 0.05 * clamp((S.torsoHalfWidth - 0.5) / 0.5, 0, 1));
   const seat = new Vector3(0, topY + 0.12, rig.seat.z);
-  const grip = new Vector3(0, 0.3, 0.42);
+  // Hands on the pommel: up and forward of the hips, so the arms reach naturally.
+  const grip = new Vector3(0, 0.36, 0.5);
   const p = new Vector3();
   const n = new Vector3();
 
@@ -172,7 +200,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       top: (u, v) => lift + cantle * smoothstep(0.62, 1, u) * (1 - Math.abs(v - 0.5)) + pommel * smoothstep(0.3, 0, u) * (1 - 1.6 * Math.abs(v - 0.5)) - 0.02 * Math.sin(Math.PI * u),
       bottom: 0.0,
       region: () => REGION.leather,
-      skin,
+      skin: hug,
     });
   const blanket = (len: number, wide: number, trim: number) =>
     shell(b, rig, {
@@ -185,7 +213,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       top: (u, v) => 0.045 + 0.01 * Math.sin(Math.PI * u) * Math.sin(Math.PI * v),
       bottom: -0.02,
       region: (u, v, rim) => (rim || u < 0.06 || u > 0.94 || v < 0.05 || v > 0.95 ? trim : REGION.cloth),
-      skin,
+      skin: hug,
     });
 
   switch (id) {
@@ -203,9 +231,9 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         top: (u) => 0.062 + 0.1 * smoothstep(0.62, 1, u) * 0.92,
         bottom: 0.03,
         region: () => REGION.cloth,
-        skin,
+        skin: hug,
       });
-      girth(b, rig, sc - m(0.55), 0.09, skin);
+      girth(b, rig, sc - m(0.55), 0.09, hug);
       for (const sx of [1, -1]) {
         const base = new Vector3(0.17 * sx * scale, 0, rig.seat.z + m(0.62));
         const s = plan.sAtZ(base.z);
@@ -240,7 +268,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         top: (u, v) => 0.14 + 0.05 * (1 - Math.sin(Math.PI * v)) + 0.04 * smoothstep(0.85, 1, u),
         bottom: 0.03,
         region: (u, v, rim) => (rim ? REGION.metal : REGION.wood),
-        skin,
+        skin: hug,
       });
       // Cushion.
       shell(b, rig, {
@@ -253,7 +281,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         top: (u, v) => 0.2 + 0.04 * Math.sin(Math.PI * u) * Math.sin(Math.PI * v),
         bottom: 0.12,
         region: () => REGION.cloth,
-        skin,
+        skin: hug,
       });
       // Backrest.
       const backS = sc + m(0.52);
@@ -328,10 +356,10 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
         strip(b, pts, side, [0.03, 0.05, 0.07], () => skin, (_i, t) => ({ region: MREGION.canopy, belly: 0.5, dorsal: 1, flutter: t }), 1);
       }
       b.end();
-      girth(b, rig, sc - m(0.75), 0.12, skin);
-      girth(b, rig, sc + m(0.85), 0.12, skin);
+      girth(b, rig, sc - m(0.75), 0.12, hug);
+      girth(b, rig, sc + m(0.85), 0.12, hug);
       seat.y = topY + 0.24;
-      grip.set(0, 0.32, 0.4);
+      grip.set(0, 0.38, 0.47);
       break;
     }
     case 'nomad':
@@ -346,11 +374,11 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       spike(b, [pBase.clone(), pBase.clone().add(new Vector3(0, 0.12, 0.03)), pBase.clone().add(new Vector3(0, 0.2, 0.06))], 0.05, skin, { region: REGION.leather }, 6, new Vector3(0, 0, 1), 1, 0.4);
       ellipsoid(b, pBase.clone().add(new Vector3(0, 0.21, 0.06)), new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1), [0.055, 0.035, 0.055], () => skin, () => ({ region: REGION.metal }), 4, 8);
       b.end();
-      girth(b, rig, sc - m(0.62), 0.11, skin);
-      girth(b, rig, sc + m(0.7), 0.11, skin);
+      girth(b, rig, sc - m(0.62), 0.11, hug);
+      girth(b, rig, sc + m(0.7), 0.11, hug);
       for (const sx of [1, -1]) {
-        buckle(b, rig, sc - m(0.62), 1.15 * sx, 0.06, skin);
-        buckle(b, rig, sc + m(0.7), 1.15 * sx, 0.06, skin);
+        buckle(b, rig, sc - m(0.62), 1.15 * sx, 0.06, hug);
+        buckle(b, rig, sc + m(0.7), 1.15 * sx, 0.06, hug);
         plan.surface(sc + m(0.05), 0.78 * sx, p, n);
         stirrup(b, p.clone().addScaledVector(n, 0.05), 0.7, sx, skin);
       }
@@ -400,7 +428,7 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
             0.4,
           );
           b.end();
-          buckle(b, rig, sc + m(0.62), 1.32 * sx, 0.05, skin);
+          buckle(b, rig, sc + m(0.62), 1.32 * sx, 0.05, hug);
           if (sx > 0) {
             // A lantern hanging off the left bag.
             const hook = bag.clone().addScaledVector(n, 0.2).addScaledVector(u, -0.3);
@@ -416,5 +444,6 @@ export function buildSaddle(b: GeoBuilder, rig: RigDef, id: string): SaddleInfo 
       break;
     }
   }
-  return { seat, halfWidth, grip };
+  const flank: SaddleFlank = { cy: st.center.y - seat.y, rx: st.halfWidth + 0.04, ry: st.upper + 0.04, sq: st.squareness };
+  return { seat, halfWidth, grip, flank };
 }
