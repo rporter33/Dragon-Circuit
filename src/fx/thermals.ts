@@ -372,6 +372,11 @@ export class ThermalMotes {
    * @param presence  0..1 target for how strongly thermals show (1 in flight; dimmer on foot,
    *                  in the title and the stable). Eased, so mode changes never pop.
    */
+  /** Step the clock back by `by` seconds (see Fx: done while the screen is faded out). */
+  wrapTime(by: number): void {
+    this.uNow.value -= by;
+  }
+
   update(dt: number, cam: { x: number; y: number; z: number }, maxDistance: number, presence = 1): void {
     this.uNow.value += dt;
     this.uPresence.value = damp(this.uPresence.value, presence, 1.5, dt);

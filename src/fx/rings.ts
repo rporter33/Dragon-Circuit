@@ -126,6 +126,15 @@ export class ShockRings {
     this.mat.uniforms.uNow.value = this.now;
   }
 
+  /** Step the clock back by `by` seconds; birth times move with it (see Fx). */
+  wrapTime(by: number): void {
+    this.now -= by;
+    this.mat.uniforms.uNow.value = this.now;
+    const P = this.aParams.array as Float32Array;
+    for (let i = 0; i * 4 < P.length; i++) P[i * 4] -= by;
+    this.aParams.needsUpdate = true;
+  }
+
   dispose(): void {
     this.mesh.removeFromParent();
     this.mesh.geometry.dispose();

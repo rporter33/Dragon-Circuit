@@ -122,6 +122,11 @@ class Ribbon {
     this.mesh.geometry.setDrawRange(0, 0);
   }
 
+  /** Shift every sample's birth time (the clock wrapped, see WingTrails.wrapTime). */
+  shiftBirth(by: number): void {
+    for (let i = 0; i < this.n; i++) this.birth[i] -= by;
+  }
+
   /**
    * Move the head to `tip`; commit it as a new sample once it is `spacing` from the previous
    * one. `intensity` is stored per sample, so the trail keeps its history as you slow down.
@@ -242,6 +247,14 @@ export class WingTrails {
   reset(): void {
     this.left.reset();
     this.right.reset();
+  }
+
+  /** Step the clock back by `by` seconds; samples keep their age (see Fx). */
+  wrapTime(by: number): void {
+    this.now -= by;
+    this.mat.uniforms.uNow.value = this.now;
+    this.left.shiftBirth(by);
+    this.right.shiftBirth(by);
   }
 
   update(dt: number, tipL: Vector3, tipR: Vector3, intensity: number): void {
