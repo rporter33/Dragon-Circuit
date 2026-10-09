@@ -6,6 +6,18 @@
 // is carried with it), and every joint is held inside a cone (deviation from the curve, and an
 // absolute bend from its parent), so the tip never kinks, J-hooks or whips.
 //
+// Heavy, not whippy: a joint moved by its constraint carries the segment hanging from it along
+// (the segment keeps its direction and takes the move as momentum) instead of leaving its far end
+// behind, which levered every joint's swing into its child doubled; and each joint damps its
+// segment's motion relative to its parent's (the joint's own damping), which takes the energy out
+// of the chain's bending without slowing its swing as a whole. Without these the chain was a whip
+// with a 13-15 Hz bending mode some 500 times as large at the tip as at the root.
+//
+// Frame-rate independent: the chain steps at a fixed 120 Hz from an accumulator, each step's
+// inputs (the base, its direction, the curve, the airflow) interpolated to that step's own time
+// between last frame's and this frame's, and it is drawn between its last two steps at the frame's
+// time (a constant one-step lag). 60, 144 or 165 Hz, steady or jittery, all show the same motion.
+//
 // Methods take no number arguments (see frame.ts); bendDir and clampBend take the segment index.
 
 import { Quaternion, Vector3 } from 'three';
@@ -42,6 +54,16 @@ const STEER_MAX = 0.12;
 const WAVE_DEG = 2.4;
 const WAVE_LAG = 0.45;
 
+/** The chain's fixed step (s; the physics rate), and the most steps one frame takes (0.1 s, the animator's dt cap). */
+const SIM_RATE = 120;
+const H = 1 / SIM_RATE;
+const MAX_STEPS = 12;
+/** Per step: how much of a point's velocity it keeps, along the chain in the air and toward the tip (or all along it on the ground). */
+const DAMP_AIR = 0.94;
+const DAMP_TIP = 0.9;
+/** Per step: how much of a joint's velocity relative to its parent's it loses (the joint's damping). */
+const JOINT_DAMP = 0.5;
+
 // Scratch (module-level: the animator never re-enters).
 const _q = new Quaternion();
 const _q2 = new Quaternion();
@@ -52,6 +74,11 @@ const _v4 = new Vector3();
 const _v5 = new Vector3();
 const _ref = new Vector3();
 const _refN = new Vector3();
+const _anchor = new Vector3();
+const _dirS = new Vector3();
+const _upS = new Vector3();
+const _velS = new Vector3();
+const _accS = new Vector3();
 
 export class TailLayer {
   private readonly a: WyvernAnimator;
@@ -61,13 +88,33 @@ export class TailLayer {
   private readonly tailXp: Vector3[] = [];
   private readonly tailLen: number[] = [];
   private readonly tailRestDir: Vector3[] = [];
+  /** The chain as drawn: between its last two steps, at the frame's time. */
+  private readonly tailR: Vector3[] = [];
   private readonly tailBase = new Vector3();
-  private readonly tailBasePrev = new Vector3();
-  /** The part of the visual root offset NOT carried with the chain (world), now and last frame. */
+  /** The part of the visual root offset NOT carried with the chain (world). */
   private readonly waveW = new Vector3();
-  private readonly waveWPrev = new Vector3();
+  /** This frame's target curve (rad per joint), and the one a step being taken is pulled toward. */
   private readonly tailPitch: Float32Array;
   private readonly tailYaw: Float32Array;
+  private readonly stepPitch: Float32Array;
+  private readonly stepYaw: Float32Array;
+  /**
+   * Last frame's inputs, each step's interpolated between them and this frame's: the tail base,
+   * the point the chain is carried with (and where it was carried to last), the base direction,
+   * the body's up, the curve, the airflow, the body's acceleration and the stream's strength.
+   */
+  private readonly basePrev = new Vector3();
+  private readonly anchorPrev = new Vector3();
+  private readonly anchorChain = new Vector3();
+  private readonly dirPrev = new Vector3();
+  private readonly upPrev = new Vector3();
+  private readonly pitchPrev: Float32Array;
+  private readonly yawPrev: Float32Array;
+  private readonly velPrev = new Vector3();
+  private readonly accelPrev = new Vector3();
+  private streamPrev = 0;
+  /** Time (s) not yet stepped: the chain's last step lies this far behind the frame. */
+  private acc = 0;
   /** Per joint: how far it may stray from its curve (pitch, yaw; rad), stiffness and damping. */
   private readonly devPitch: Float32Array;
   private readonly devYaw: Float32Array;
@@ -82,8 +129,6 @@ export class TailLayer {
   private wasIdle = false;
   private rng = 777;
   private tailInit = false;
-  /** The last sub-step's length (s), for the time-corrected verlet. */
-  private hPrev = 1 / 120;
   /** How much steeper than TAIL_REST this tail droops at rest (see REST_REACH). */
   private readonly restDroop: number;
 
@@ -101,9 +146,14 @@ export class TailLayer {
     this.devPitch = new Float32Array(n);
     this.devYaw = new Float32Array(n);
     this.stiff = new Float32Array(n);
+    this.stepPitch = new Float32Array(n);
+    this.stepYaw = new Float32Array(n);
+    this.pitchPrev = new Float32Array(n);
+    this.yawPrev = new Float32Array(n);
     for (let i = 0; i <= n; i++) {
       this.tailX.push(new Vector3());
       this.tailXp.push(new Vector3());
+      this.tailR.push(new Vector3());
     }
     // Heavier tails stray less from their curve and are stiffer toward the tip.
     const cone = 1 - 0.35 * heft;
@@ -201,81 +251,156 @@ export class TailLayer {
       this.tailYaw[i] = sway * (1 - 0.6 * stretch) + steer + lash + counterYaw + this.restSide * TAIL_REST_S[i] * DEG * restW;
     }
 
+    const vel = pose.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+    // It streams out in the airflow, but not while it is held down as an air brake.
+    const stream = airborne ? smoothstep(4, 20, speed) * 0.04 * (1 - 0.8 * Math.max(flareW, hover)) : 0;
+    const anchor = _anchor.copy(this.tailBase).sub(this.waveW);
+    const R = this.tailR;
+
     if (f.teleport || !this.tailInit) {
+      this.stepPitch.set(this.tailPitch);
+      this.stepYaw.set(this.tailYaw);
       X[0].copy(this.tailBase);
       const d = _v4.copy(baseDir);
       for (let i = 0; i < n; i++) {
         this.bendDir(d, bodyUp, i);
         X[i + 1].copy(X[i]).addScaledVector(d, this.tailLen[i]);
       }
-      for (let i = 0; i <= n; i++) Xp[i].copy(X[i]);
-      this.tailBasePrev.copy(this.tailBase);
-      this.waveWPrev.copy(this.waveW);
-      this.tailInit = true;
-    } else {
-      // Carry the chain with the body (see above). Rotations and accelerations make it lag.
-      const sx = this.tailBase.x - this.tailBasePrev.x - (this.waveW.x - this.waveWPrev.x);
-      const sy = this.tailBase.y - this.tailBasePrev.y - (this.waveW.y - this.waveWPrev.y);
-      const sz = this.tailBase.z - this.tailBasePrev.z - (this.waveW.z - this.waveWPrev.z);
       for (let i = 0; i <= n; i++) {
-        X[i].x += sx;
-        X[i].y += sy;
-        X[i].z += sz;
-        Xp[i].x += sx;
-        Xp[i].y += sy;
-        Xp[i].z += sz;
+        Xp[i].copy(X[i]);
+        R[i].copy(X[i]);
       }
-      this.tailBasePrev.copy(this.tailBase);
-      this.waveWPrev.copy(this.waveW);
-      // Sub-steps of at most 1/120 s; none at all for a frame that takes no time (a render-only
-      // frame), which would otherwise replay the last step's velocity and kick the chain.
-      const steps = dt > 1e-6 ? Math.min(10, Math.ceil(dt * 120)) : 0;
-      const h = steps > 0 ? dt / steps : 0;
-      // Time-corrected verlet: the carried velocity is rescaled when the step length changes, and
-      // the damping (per 1/120 s) follows the step length too.
-      const hRatio = steps > 0 ? clamp(h / this.hPrev, 0, 2) : 0;
-      if (steps > 0) this.hPrev = h;
-      const dampGround = Math.pow(0.9, h * 120);
-      const dampAir = Math.pow(0.94, h * 120);
-      const grav = (airborne ? 1.2 : 6) * h * h;
-      const inertia = 0.35 * h * h;
+      this.acc = 0;
+      this.anchorChain.copy(anchor);
+      this.tailInit = true;
+    } else if (dt > 0) {
+      // Fixed steps from the accumulator (none on a frame shorter than what is left of one; none
+      // at all on a render-only frame, dt 0, which changes nothing).
+      const acc0 = this.acc;
+      let acc = acc0 + dt;
+      const steps = Math.min(MAX_STEPS, Math.floor(acc * SIM_RATE + 1e-6));
+      acc -= steps * H;
+      this.acc = acc < 0 ? 0 : acc > H ? H : acc;
+      const grav = (airborne ? 1.2 : 6) * H * H;
+      const inertia = 0.35 * H * H;
       const groundY = a.groundRef;
-      const vel = pose.velocity;
-      const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-      // It streams out in the airflow, but not while it is held down as an air brake.
-      const stream = airborne ? smoothstep(4, 20, speed) * 0.04 * (1 - 0.8 * Math.max(flareW, hover)) : 0;
       const baseR = rig.props.shape.tailBaseRadius;
       for (let s = 0; s < steps; s++) {
-        X[0].copy(this.tailBase);
+        // This step's time, as a fraction of the way from last frame to this one: its inputs.
+        // (Scalar math throughout: a double passed into a call the JIT doesn't inline is boxed.)
+        let u = ((s + 1) * H - acc0) / dt;
+        if (u > 1) u = 1;
+        else if (u < 0) u = 0;
+        const v = 1 - u;
+        // Carried with the body (see above) to this step's time. Rotations and accelerations
+        // make it lag.
+        const ap = this.anchorPrev;
+        const ac = this.anchorChain;
+        const cx = ap.x * v + anchor.x * u;
+        const cy = ap.y * v + anchor.y * u;
+        const cz = ap.z * v + anchor.z * u;
+        const sx = cx - ac.x;
+        const sy = cy - ac.y;
+        const sz = cz - ac.z;
+        ac.x = cx;
+        ac.y = cy;
+        ac.z = cz;
+        for (let i = 0; i <= n; i++) {
+          X[i].x += sx;
+          X[i].y += sy;
+          X[i].z += sz;
+          Xp[i].x += sx;
+          Xp[i].y += sy;
+          Xp[i].z += sz;
+        }
+        Xp[0].copy(X[0]);
+        const bp = this.basePrev;
+        const tb = this.tailBase;
+        X[0].x = bp.x * v + tb.x * u;
+        X[0].y = bp.y * v + tb.y * u;
+        X[0].z = bp.z * v + tb.z * u;
+        const dp = this.dirPrev;
+        const dirS = _dirS;
+        dirS.x = dp.x * v + baseDir.x * u;
+        dirS.y = dp.y * v + baseDir.y * u;
+        dirS.z = dp.z * v + baseDir.z * u;
+        dirS.normalize();
+        const up = this.upPrev;
+        const upS = _upS;
+        upS.x = up.x * v + bodyUp.x * u;
+        upS.y = up.y * v + bodyUp.y * u;
+        upS.z = up.z * v + bodyUp.z * u;
+        upS.normalize();
+        const vp = this.velPrev;
+        const velS = _velS;
+        velS.x = vp.x * v + vel.x * u;
+        velS.y = vp.y * v + vel.y * u;
+        velS.z = vp.z * v + vel.z * u;
+        const cp = this.accelPrev;
+        const accS = _accS;
+        accS.x = cp.x * v + accel.x * u;
+        accS.y = cp.y * v + accel.y * u;
+        accS.z = cp.z * v + accel.z * u;
+        const streamS = this.streamPrev * v + stream * u;
+        const speedS = velS.length();
+        for (let i = 0; i < n; i++) {
+          this.stepPitch[i] = this.pitchPrev[i] * v + this.tailPitch[i] * u;
+          this.stepYaw[i] = this.yawPrev[i] * v + this.tailYaw[i] * u;
+        }
+        // Verlet, heavily damped (on the ground all along it, in the air toward the tip), and
+        // each joint's velocity pulled toward its parent's (the joint's damping).
+        let pvx = 0;
+        let pvy = 0;
+        let pvz = 0;
         for (let i = 1; i <= n; i++) {
           const x = X[i];
           const px = Xp[i];
-          // Heavily damped: on the ground all along it, in the air toward the tip.
-          const damping = (!airborne || i > n - 3 ? dampGround : dampAir) * (s === 0 ? hRatio : 1);
-          const vx = (x.x - px.x) * damping;
-          const vy = (x.y - px.y) * damping;
-          const vz = (x.z - px.z) * damping;
+          const damping = !airborne || i > n - 3 ? DAMP_TIP : DAMP_AIR;
+          let vx = (x.x - px.x) * damping;
+          let vy = (x.y - px.y) * damping;
+          let vz = (x.z - px.z) * damping;
+          if (i > 1) {
+            vx += (pvx - vx) * JOINT_DAMP;
+            vy += (pvy - vy) * JOINT_DAMP;
+            vz += (pvz - vz) * JOINT_DAMP;
+          }
+          pvx = vx;
+          pvy = vy;
+          pvz = vz;
           px.copy(x);
-          x.x += vx - accel.x * inertia;
-          x.y += vy - grav - accel.y * inertia;
-          x.z += vz - accel.z * inertia;
+          x.x += vx - accS.x * inertia;
+          x.y += vy - grav - accS.y * inertia;
+          x.z += vz - accS.z * inertia;
         }
-        const d = _v4.copy(baseDir);
+        // Constraints, root to tip. (mx, my, mz): how far the joint before moved in this pass; the
+        // segment hanging from it is carried along before its own constraint.
+        const d = _v4;
+        let mx = 0;
+        let my = 0;
+        let mz = 0;
         for (let i = 1; i <= n; i++) {
-          if (i > 1) d.subVectors(X[i - 1], X[i - 2]).normalize();
-          this.bendDir(d, bodyUp, i - 1);
-          const kStiff = this.stiff[i - 1];
-          const len = this.tailLen[i - 1];
           const xi = X[i];
           const xa = X[i - 1];
+          const bx = xi.x;
+          const by = xi.y;
+          const bz = xi.z;
+          xi.x += mx;
+          xi.y += my;
+          xi.z += mz;
+          if (i > 1) d.subVectors(xa, X[i - 2]).normalize();
+          else d.copy(dirS);
+          this.bendDir(d, upS, i - 1);
+          const kStiff = this.stiff[i - 1];
+          const len = this.tailLen[i - 1];
           xi.x += (xa.x + d.x * len - xi.x) * kStiff;
           xi.y += (xa.y + d.y * len - xi.y) * kStiff;
           xi.z += (xa.z + d.z * len - xi.z) * kStiff;
-          if (stream > 0 && speed > 1) {
-            const k = (-stream * len) / speed;
-            xi.x += vel.x * k;
-            xi.y += vel.y * k;
-            xi.z += vel.z * k;
+          if (streamS > 0 && speedS > 1) {
+            const k = (-streamS * len) / speedS;
+            xi.x += velS.x * k;
+            xi.y += velS.y * k;
+            xi.z += velS.z * k;
           }
           // Keep the segment length...
           const ex = xi.x - xa.x;
@@ -289,7 +414,7 @@ export class TailLayer {
             xi.z = xa.z + ez * fl;
           }
           // ...and the joint inside its cone (d is this joint's target direction).
-          this.clampBend(i, d, bodyUp);
+          this.clampBend(i, d, upS);
           // Stay above the ground: swing the segment up about its joint (its length kept).
           if (!airborne) {
             const minY = groundY + 0.05 + 0.4 * baseR * (1 - (i - 1) / n);
@@ -309,9 +434,30 @@ export class TailLayer {
               if (i > 1) this.clampToParent(i);
             }
           }
+          mx = xi.x - bx;
+          my = xi.y - by;
+          mz = xi.z - bz;
         }
       }
+      // Drawn between the last two steps at the frame's time: a constant one-step lag, so the
+      // motion is as smooth on a frame that took no step as on one that took two.
+      const r = this.acc * SIM_RATE;
+      const q = 1 - r;
+      for (let i = 0; i <= n; i++) {
+        R[i].x = Xp[i].x * q + X[i].x * r;
+        R[i].y = Xp[i].y * q + X[i].y * r;
+        R[i].z = Xp[i].z * q + X[i].z * r;
+      }
     }
+    this.basePrev.copy(this.tailBase);
+    this.anchorPrev.copy(anchor);
+    this.dirPrev.copy(baseDir);
+    this.upPrev.copy(bodyUp);
+    this.pitchPrev.set(this.tailPitch);
+    this.yawPrev.set(this.tailYaw);
+    this.velPrev.copy(vel);
+    this.accelPrev.copy(accel);
+    this.streamPrev = stream;
 
     // Bones follow the chain: aim each segment at the next point, rolling gently with the bank
     // (a scalar Rodrigues turn of the parent's up about the segment, inline: no doubles through
@@ -320,7 +466,7 @@ export class TailLayer {
     const rc = Math.cos(roll);
     const rs = Math.sin(roll);
     for (let i = 0; i < n; i++) {
-      const dirM = a.toModel(X[i + 1], _v4).sub(a.toModel(X[i], _v5));
+      const dirM = a.toModel(R[i + 1], _v4).sub(a.toModel(R[i], _v5));
       const parentQ = a.modelQ[a.parent[T[i]]];
       _ref.copy(UP).applyQuaternion(parentQ);
       if (roll !== 0) {
@@ -435,13 +581,13 @@ export class TailLayer {
   }
 
   /**
-   * Bend a direction by tail segment i's target pitch (raise) and yaw (to the body's left)
-   * relative to itself. Takes the index, not the angles: numbers passed into a call the JIT
-   * doesn't inline get boxed, and this runs ~30 times a frame.
+   * Bend a direction by tail segment i's target pitch (raise) and yaw (to the body's left) at the
+   * step being taken (stepPitch, stepYaw), relative to itself. Takes the index, not the angles:
+   * numbers passed into a call the JIT doesn't inline get boxed, and this runs ~30 times a frame.
    */
   private bendDir(d: Vector3, up: Vector3, i: number): void {
-    const pitch = this.tailPitch[i];
-    const yaw = this.tailYaw[i];
+    const pitch = this.stepPitch[i];
+    const yaw = this.stepYaw[i];
     // Scalar Rodrigues rotations (no temporaries).
     let dx = d.x;
     let dy = d.y;
