@@ -19,7 +19,7 @@
 import { Vector3 } from 'three';
 import { DEG, TAU, clamp, clamp01, smoothstep } from '../../../core/math';
 import { BREEDS } from '../../../flight/breeds';
-import { deriveFlight } from '../../../flight/FlightModel';
+import { FLIGHT_TUNING, deriveFlight } from '../../../flight/FlightModel';
 import { SIDE_SIGN } from '../rig';
 import { Bouncy, Spring, noise1 } from '../ik';
 import {
@@ -105,6 +105,15 @@ const HAND_CH = W.handEl;
 const RUDDER = 0.12;
 const RUDDER_OMEGA = 12;
 const RUDDER_ZETA = 0.45;
+/**
+ * A ghost's rudder is read from its yaw acceleration (controls). The flight model's rudder changes
+ * the yaw rate by at most authorityMax × the breed's yawAuthority per second, so a change faster
+ * than BUMP_ACCEL × the breed's cannot be the stick (a knock off a wall, a jump between a
+ * recording's samples, a kinematic test rig) and reads as no rudder, as does the settling of the
+ * animator's smoothed rate after it (0.1 s): for BUMP_HOLD s after the last such change.
+ */
+const BUMP_ACCEL = 2 * FLIGHT_TUNING.authorityMax;
+const BUMP_HOLD = 0.4;
 
 export class FlightLayer {
   private readonly a: WyvernAnimator;
@@ -153,6 +162,8 @@ export class FlightLayer {
    */
   private ctlRoll = 0;
   private ctlYaw = 0;
+  /** Seconds since a ghost's yaw rate last changed faster than its rudder could (BUMP_ACCEL). */
+  private bumpT = 99;
   private readonly rollSlow = new Spring(ROLL_OMEGA);
   /** The previous frame's smoothed body rates (for a ghost's angular acceleration). */
   private readonly prevOm = new Vector3();
@@ -220,8 +231,11 @@ export class FlightLayer {
       // Body frame: +z rolls right, +y yaws left.
       const az = f.teleport ? 0 : (om.z - this.prevOm.z) / dt;
       const ay = f.teleport ? 0 : (om.y - this.prevOm.y) / dt;
+      // A yaw rate changing faster than the rudder could change it is not the rudder (BUMP_ACCEL).
+      if (Math.abs(ay) > BUMP_ACCEL * this.yawAuthority) this.bumpT = 0;
+      else this.bumpT += dt;
       this.ctlRoll = clamp((om.z + 0.25 * az) / this.maxRollRate, -1, 1);
-      this.ctlYaw = clamp(-ay / this.yawAuthority, -1, 1);
+      this.ctlYaw = this.bumpT < BUMP_HOLD ? 0 : clamp(-ay / this.yawAuthority, -1, 1);
     }
     this.prevOm.copy(om);
     const air = f.airW;
