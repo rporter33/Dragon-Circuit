@@ -25,7 +25,7 @@ import type { WyvernAnimator } from '../animator';
 import { FWD, UP, bump, type AnimFrame } from './frame';
 
 /** Neck postures (degrees per bone, + pitches down). Base → top. */
-const NECK_GROUND = [-7, -5, -1, 2, 5, 8];
+const NECK_GROUND = [-14, -9, -2, 6, 12, 14];
 const NECK_FLIGHT = [4, 3.5, 3, 3, 2.5, 2];
 const NECK_TUCK = [5, 5, 4, 4, 3, 2];
 const NECK_FLARE = [-5, -4, -3, -1, 1, 3];
