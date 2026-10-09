@@ -11,17 +11,20 @@
 // Rested), and an empty meter still gives weak beats.
 //
 //              cruise  stall  best glide  tucked dive  roll rate  roll in/out  climb    stamina  beat     down
-//   harrier    24 m/s  14.5   8.9 : 1     89 m/s       1.76 r/s   0.34/0.19 s  5.0 m/s  13.5 s   1.45 Hz  0.57
-//   skimmer    22      13.3   7.8         82           2.53       0.33/0.17    5.5      10       2.1      0.54
-//   galewing   22      13.3   12.3        83           1.01       0.62/0.31    3.4      16.5     0.95     0.60
+//   harrier    24 m/s  14.5   8.9 : 1     89 m/s       1.76 r/s   0.34/0.19 s  5.0 m/s  13.5 s   1.15 Hz  0.57
+//   skimmer    22      13.3   7.8         82           2.53       0.33/0.17    5.5      10       1.6      0.54
+//   galewing   22      13.3   12.3        83           1.01       0.62/0.31    3.4      16.5     0.75     0.60
 //   ironback   27      16.4   8.3         98           1.16       0.48/0.28    3.3      12       1.0      0.62
 //
-// `down` is the share of each beat spent on the power stroke (big flyers drive down for longer
-// than they recover). The flight model advances the beat at flapRate, so thrust per SECOND is
-// the peak × down/2 whatever the rate. flapThrust/flapLift are the stroke's peak, set so the
-// cycle mean matches an even (down 0.5) stroke of the earlier tuning (peak × 1/(2·down)); the
-// table above held within ±1 % through the change. Big breeds beat slowly, and each downstroke
-// is a bigger surge.
+// Wingbeats are size-true (FANIM-04: Pennycuick's scaling for each breed's mass, span and area
+// gives 0.6–0.9 Hz; the skimmer stays the quick-winged breed). `down` is the share of each beat
+// spent on the power stroke (big flyers drive down for longer than they recover). The flight
+// model advances the beat at flapRate, so thrust per SECOND is the peak × down/2 whatever the
+// rate: a slower beat is a longer, bigger surge for the same work. flapThrust/flapLift are the
+// stroke's peak, set so the cycle mean matches an even (down 0.5) stroke of the earlier tuning
+// (peak × 1/(2·down)); the table above held within ±1.5 % through the retime. Each downstroke
+// adds about thrust × down/2 ÷ rate per kg: galewing 5.4, harrier 4.8, ironback 4.1, skimmer
+// 4.0 m/s before drag.
 //
 // The 0..1 display ratings below are read off that table: speed (dive + top flapping speed),
 // agility (roll rate), glide (best glide ratio), power (sustained climb), stamina (seconds).
@@ -53,7 +56,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     inducedK: inducedK(13, 38),
     flapThrust: 12540,
     flapLift: 5700,
-    flapRate: 1.45,
+    flapRate: 1.15,
     downFrac: 0.57,
     staminaSeconds: 13.5,
     staminaRegen: 0.12,
@@ -81,7 +84,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     inducedK: inducedK(11.2, 30),
     flapThrust: 11110,
     flapLift: 4440,
-    flapRate: 2.1,
+    flapRate: 1.6,
     downFrac: 0.54,
     staminaSeconds: 10,
     staminaRegen: 0.16,
@@ -109,7 +112,7 @@ export const BREEDS: Record<BreedId, BreedStats> = {
     inducedK: inducedK(17.5, 46, 0.85),
     flapThrust: 8580,
     flapLift: 5830,
-    flapRate: 0.95,
+    flapRate: 0.75,
     downFrac: 0.6,
     staminaSeconds: 16.5,
     staminaRegen: 0.1,
