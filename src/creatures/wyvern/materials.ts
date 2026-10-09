@@ -58,6 +58,11 @@ export interface WyvernUniforms {
    * eye from its front corner (separate from the outer lids, `uBlink`).
    */
   uNictitate: IUniform<number>;
+  /**
+   * 0..1 the lower lid rising (reptiles close the eye mostly from below; D5 shades it, the life
+   * layer drives it). 0 until then.
+   */
+  uBlinkLower: IUniform<number>;
   /** Membrane flutter amplitude (m) and speed (rad/s), from airspeed. */
   uFlutter: IUniform<number>;
   uFlutterRate: IUniform<number>;
@@ -79,6 +84,19 @@ export interface WyvernUniforms {
   uContour: IUniform<number>;
 }
 
+/**
+ * A number uniform with its own hidden class: plain `{ value }` literals share one shape with the
+ * colour and vector uniforms, so a number stored in them is boxed on the heap every frame.
+ */
+class ScalarUniform implements IUniform<number> {
+  // Initialized with a non-integer so the field holds an unboxed double from the start.
+  value = 0.5;
+  constructor(v: number) {
+    this.value = v;
+  }
+}
+const num = (v: number): IUniform<number> => new ScalarUniform(v);
+
 export function createWyvernUniforms(): WyvernUniforms {
   return {
     uPrimary: { value: new Color() },
@@ -89,19 +107,20 @@ export function createWyvernUniforms(): WyvernUniforms {
     uSaddle: { value: new Color() },
     uCloth: { value: new Color() },
     uHorn: { value: new Color() },
-    uPattern: { value: 0 },
+    uPattern: num(0),
     uEyeCenter: { value: new Vector3() },
     uEyeAxis: { value: new Vector3(1, 0, 0) },
-    uEyeRadius: { value: 0.1 },
-    uBlink: { value: 0 },
-    uNictitate: { value: 0 },
-    uFlutter: { value: 0 },
-    uFlutterRate: { value: 20 },
-    uRipple: { value: 0 },
-    uBodyScale: { value: 1 },
+    uEyeRadius: num(0.1),
+    uBlink: num(0),
+    uNictitate: num(0),
+    uBlinkLower: num(0),
+    uFlutter: num(0),
+    uFlutterRate: num(20),
+    uRipple: num(0),
+    uBodyScale: num(1),
     uWingLoad: { value: new Vector2() },
-    uFold: { value: 0 },
-    uContour: { value: 1 },
+    uFold: num(0),
+    uContour: num(1),
   };
 }
 
@@ -634,8 +653,16 @@ function creatureLight(frag: string): string {
   return frag.replace(PAINTERLY_RIM_GLSL, CREATURE_LIGHT_BLOCK);
 }
 
+/**
+ * Material options: `detail` 2 (close: full shading) … 0 (far: the cheapest pattern path), set
+ * per LOD and quality. Accepted but not used yet (the LOD and shading work fills it in).
+ */
+export interface WyvernMaterialOptions {
+  detail?: 0 | 1 | 2;
+}
+
 /** Opaque toon body with region colors and patterns. */
-export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
+export function createBodyMaterial(u: WyvernUniforms, _opts: WyvernMaterialOptions = {}): MeshToonMaterial {
   const m = new MeshToonMaterial({ side: FrontSide });
   applyPainterly(m, {
     rim: 1.1,
@@ -676,7 +703,7 @@ export function createBodyMaterial(u: WyvernUniforms): MeshToonMaterial {
 }
 
 /** Double-sided membrane with the backlit glow. */
-export function createMembraneMaterial(u: WyvernUniforms): MeshToonMaterial {
+export function createMembraneMaterial(u: WyvernUniforms, _opts: WyvernMaterialOptions = {}): MeshToonMaterial {
   const m = new MeshToonMaterial({ side: DoubleSide, shadowSide: DoubleSide });
   applyPainterly(m, {
     rim: 0.6,
