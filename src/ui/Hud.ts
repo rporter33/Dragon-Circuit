@@ -21,7 +21,7 @@ import { CARDINALS, headingFromYaw, headingOf, layoutLabels, relativeBearing, ri
 import { LiveClass, LiveStyle, LiveText, div, fromHtml, h } from './dom';
 import { formatDistance, kmh } from './format';
 import { ICONS, RULE } from './icons';
-import { BannerQueue, NoticeQueue, type Notice, type NoticeSpec } from './notices';
+import { BannerQueue, NoticeQueue, isRestedToast, type Notice, type NoticeSpec } from './notices';
 
 const DEG = Math.PI / 180;
 /** Half the angle the compass ribbon shows, each side of center. */
@@ -415,6 +415,7 @@ export class Hud {
     // Generic notices from any system. Typed events below own pickups, unlocks and discoveries;
     // when an emitter also sends a plain toast for them, the queue merges it away (same text).
     ev.on('toast', (e: GameEvents['toast']) => {
+      if (isRestedToast(e.text)) return;
       const icon = e.icon ?? 'info';
       this.notices.push({ key: `toast:${e.text}`, aliases: [e.text], text: e.text, sub: e.sub ?? '', icon, always: icon === 'info', priority: icon === 'info' ? 2 : 1 });
     });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BANNER_FADE, BANNER_LIFE, BannerQueue, NoticeQueue } from './notices';
+import { BANNER_FADE, BANNER_LIFE, BannerQueue, NoticeQueue, isRestedToast } from './notices';
 
 describe('NoticeQueue', () => {
   it('merges the plain toast an emitter also sends into the typed notice (one notice per pickup)', () => {
@@ -106,5 +106,14 @@ describe('BannerQueue', () => {
     b.push({ key: 'roost', kicker: 'K', name: 'Roost' });
     b.reset();
     expect(b.push({ key: 'roost', kicker: 'K', name: 'Roost' })).toBe(true);
+  });
+});
+
+describe('Rested announcements', () => {
+  it('recognises the plain toast for the Rested bonus (the HUD shows it beside the emblem instead)', () => {
+    expect(isRestedToast('Sun-warmed — your wyvern spreads its wings to the sun')).toBe(true);
+    expect(isRestedToast('Rested — your wyvern shakes out its wings')).toBe(true);
+    expect(isRestedToast('Relic found: Ember Scale')).toBe(false);
+    expect(isRestedToast('Restart the race')).toBe(false);
   });
 });

@@ -62,6 +62,15 @@ const DEFAULT_LIFE = 4.2;
 /** While others wait, a visible notice gives way after this long. */
 const YIELD_AFTER = 2.6;
 
+/**
+ * A plain toast announcing the Rested bonus ("Sun-warmed — …", "Rested — …"). The HUD names the
+ * bonus beside the stamina emblem it belongs to (a caption, and the first-time tip), so a corner
+ * toast for the same moment would say it twice.
+ */
+export function isRestedToast(text: string): boolean {
+  return /^(sun-warmed|rested)\b/i.test(text.trim());
+}
+
 export function noticeTag(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
 }
