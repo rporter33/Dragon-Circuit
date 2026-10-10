@@ -9,6 +9,7 @@
 
 import { Vector3 } from 'three';
 import type { BoxCollider, Collider, ContactInfo, CylinderCollider, SphereCollider, SurfaceKind } from '../core/types';
+import { convexDistance } from './convexDistance';
 
 /**
  * Grid cell size (m). Most shapes are a few meters across, so a cell holds only the handful of
@@ -313,6 +314,13 @@ function insideTopFace(c: Collider, x: number, z: number): boolean {
     // Local axes: +x' = (cos, 0, -sin), +z' = (sin, 0, cos) (yaw turns +Z toward +X).
     const lx = dx * cs - dz * sn;
     const lz = dx * sn + dz * cs;
+    if (c.convex) {
+      const planes = c.convex.planes;
+      for (let i = 0; i < planes.length; i += 4) {
+        if (planes[i] * lx + planes[i + 1] * c.hy + planes[i + 2] * lz + planes[i + 3] > 1e-6) return false;
+      }
+      return true;
+    }
     const radius = Math.min(c.roundXZ ?? 0, c.hx, c.hz);
     if (radius > 0) {
       const qx = Math.max(Math.abs(lx) - (c.hx - radius), 0);
@@ -388,6 +396,11 @@ function boxDistance(c: BoxCollider, p: Vector3, n: Vector3 | null): number {
   const dz = p.z - c.z;
   const lx = dx * cs - dz * sn;
   const lz = dx * sn + dz * cs;
+  if (c.convex) {
+    const distance = convexDistance(c.convex, lx, dy, lz, n);
+    if (n) { const nx = n.x, nz = n.z; n.x = nx * cs + nz * sn; n.z = -nx * sn + nz * cs; }
+    return distance;
+  }
   const radius = Math.min(c.roundXZ ?? 0, c.hx, c.hz);
   if (radius > 0) {
     // Rounded rectangle extruded vertically: the renderer uses this same outer footprint.

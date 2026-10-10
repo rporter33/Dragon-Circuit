@@ -90,7 +90,7 @@ describe('Windhaven stationary blockout', () => {
     expect(buildWindhaven().getObjectByName('ornament-window')).toBeUndefined();
   });
 
-  it('provides four distinct reserved hitch mounts outside the landing route', () => {
+  it('provides four reserved hitches within the open terrace, beside the central landing route', () => {
     const view = buildWindhaven(), parts = windhavenPlan();
     expect(WINDHAVEN_HITCHES).toHaveLength(4);
     expect(new Set(WINDHAVEN_HITCHES.map(h => h.id)).size).toBe(4);
@@ -98,8 +98,9 @@ describe('Windhaven stationary blockout', () => {
       const socket = view.getObjectByName(`hitch-socket-${hitch.id}`)!;
       expect(socket.userData).toMatchObject({ capacity: 1, reserved: true, gameplayImplemented: false });
       expect(parts.some(p => p.id === `hitch-${hitch.id}`)).toBe(true);
-      expect(Math.abs(socket.position.x)).toBeGreaterThan(13);
-      expect(socket.position.z).toBeGreaterThan(-10);
+      expect(Math.abs(socket.position.x)).toBeCloseTo(12.33);
+      expect(socket.position.z).toBeLessThan(-10);
+      expect(socket.position.z).toBeGreaterThan(-34);
     }
   });
 

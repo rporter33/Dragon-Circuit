@@ -6,7 +6,7 @@ Windhaven is a traveling home that carries the player between levels/regions, wi
 
 As of October 10, 2026, development is on `feat/windhaven`, based on GitHub `main` commit `844e5c25860aab4c596116df4ffb19fa4e98fd1e` (shrine tutorial, rider motion, flight braking and title music). Windhaven was applied as `9b9964c0f85bac9dc781e8ac2ce20a9b1830640c`; its code was carried across unchanged. The package version is still 0.1.0, so use the Git commit to distinguish builds.
 
-The separate recovery index is `C:\Users\Robert\Projects\Windhaven-Backups\README.md`. The latest snapshot is `2026-10-10-art-pass-2`; `2026-10-10-art-pass-1`, `2026-10-10-latest-main` and the original `2026-10-10-before-update` remain available. Each has source, captures and a Git recovery bundle. The original is also retained locally at `windhaven/checkpoint-2026-10-10`, commit `974bb32e7e11a0bfd58d9210429c057dfa4da164`. Restore into a new directory; do not overwrite another checkout's work.
+The separate recovery index is `C:\Users\Robert\Projects\Windhaven-Backups\README.md`. The latest snapshot is `2026-10-10-art-pass-3`; both earlier art passes, `2026-10-10-latest-main` and the original `2026-10-10-before-update` remain available. Each has source, captures and a Git recovery bundle. The original is also retained locally at `windhaven/checkpoint-2026-10-10`, commit `974bb32e7e11a0bfd58d9210429c057dfa4da164`. Restore into a new directory; do not overwrite another checkout's work.
 
 The earlier combined blockout passed 957 unit tests across 93 files, the production build, 15/15 production smoke checks, and both deterministic and live-keyboard Windhaven browser checks across all four breeds, including reload/recovery. Its logs and captures are preserved in the earlier snapshot. Art-pass results appear below. Physical controller and embedded-browser checks remain separate.
 
@@ -14,7 +14,7 @@ The earlier combined blockout passed 957 unit tests across 93 files, the product
 
 Run `npm run windhaven` from the repository. It serves only on `127.0.0.1:5174`, opens `http://127.0.0.1:5174/?view=windhaven`, and refuses to silently change ports. Keep that terminal running while testing; closing the server makes the browser show a connection error. If port 5174 is already serving this project, use the existing preview. This scene is selected explicitly; it does not add the ship to ordinary play.
 
-Use **Overview**, **Top**, **Side**, **Cabin**, **Windows** and **Hitches** to inspect the art. These views freeze player movement while wind and sail cloth remain live. **Clear wind** and **Breezy wind** select existing world weather presets (4 and 9.5 m/s prevailing wind, plus gusts). **Walk deck** resets the rider and wyvern onto the aft terrace and resumes play, including from the pause menu. **Ride / take off** seats the rider facing the open stern. WASD moves, F mounts or dismounts, Space jumps on foot or launches when mounted, and Esc pauses both gameplay and cloth. Drag the view to look around. The breed selector previews all four existing breeds without changing the saved breed choice.
+Use **Overview**, **Top**, **Side**, **Cabin**, **Windows**, **Hitches** and **Hull** to inspect the art. These views freeze player movement while wind and sail cloth remain live. **Clear wind** and **Breezy wind** select existing world weather presets (4 and 9.5 m/s prevailing wind, plus gusts). **Walk deck** resets the rider and wyvern onto the aft terrace and resumes play, including from the pause menu. **Ride / take off** seats the rider facing the open stern. WASD moves, F mounts or dismounts, Space jumps on foot or launches when mounted, and Esc pauses both gameplay and cloth. Drag the view to look around. The breed selector previews all four existing breeds without changing the saved breed choice.
 
 The review uses the normal game session and save infrastructure; other ordinary progression/settings behavior still applies. It is not a separate save slot.
 
@@ -24,7 +24,7 @@ The deck remains 72 metres long with a 28-metre-wide working area. The owner app
 
 | Area | Current arrangement |
 | --- | --- |
-| Aft landing terrace | 28 by 26 metres, with open stern and side approaches. No overhead sails or furnishing across the landing route. |
+| Aft landing terrace | 28 by 26 metres, with open stern and side approaches. Four low hitch mounts occupy its outer side margins; the central landing route stays open. |
 | Central dragon shelter | 14 by 16 metres, open aft, with a roof underside 9.6 metres above the deck. Side paths let the rider pass a resting dragon. |
 | Workshops | Two 5 by 10 metre reserved areas forward and outboard of the shelter, with placeholder benches and storage. |
 | Living cabin | An 8 by 10 metre room forward of the shelter; an aft doorway and outside paths keep access straightforward. |
@@ -36,7 +36,7 @@ The working furnishing proposal is movable benches, storage and decorations insi
 
 `src/world/airship/windhavenPlan.ts` supplies the same solid geometry to rendering and terrain collision for the hull, deck, rails, roof, cabin, masts and furniture. An optional horizontal corner radius supports rounded footprints in both top-support and signed-distance queries; ordinary box behavior remains unchanged. `roundedPrism.ts` tessellates that footprint for rendering. `Windhaven.ts` builds the procedural view using the existing painterly material. `src/debug/showcases/windhaven.ts` adds the review scene through the existing lazy showcase loader. No flight physics or shared player behavior was changed.
 
-The four main sails, four lower steering sails and travel pennon now use the existing Verlet cloth solver, driven by the same world wind field as the dragon. Pinned spar attachments, stretch/bend constraints, damping and bounded travel preserve the silhouette. Linen seams, blue hems and the spiral move with the cloth through procedural UV textures. They are presentation physics: no propulsion, player cloth collision or cloth self-collision is implemented. Shelter and cabin covers remain fixed architectural surfaces. The underbody still uses fine overlapping solid strakes; a fully sculpted production hull remains future work. Cabin windows are real glassless openings with decorative frames. Four rounded timber/bronze hitch mounts expose named attachment sockets, each reserving capacity for one future dragon/player; no tether, occupancy or multiplayer system is implied.
+The four main sails, four lower steering sails and travel pennon use the existing Verlet cloth solver, driven by the same world wind field as the dragon. Pinned spar attachments, stretch/bend constraints, damping and bounded travel preserve the silhouette. Linen seams, blue hems and the spiral move with the cloth through procedural UV textures. They are presentation physics: no propulsion, player cloth collision or cloth self-collision is implemented. Shelter and cabin covers remain fixed architectural surfaces. The underbody is now a continuous smoothly shaded convex shell; its rendered triangle surface is also the collision solid. Cabin windows are real glassless openings with decorative frames. Four rounded timber/bronze hitch mounts expose named attachment sockets on the open terrace, each reserving capacity for one future dragon/player; no tether, occupancy or multiplayer system is implied.
 
 The shelter has no stable service interaction yet. The ship cannot move, steer, become the home/respawn anchor, or retain furniture changes. The Codex research airship remains unchanged; its story relationship to Windhaven is unresolved.
 
@@ -97,6 +97,31 @@ Final capture geometry: 26 meshes, 2,374 instanced box solids plus merged rounde
 | Animation / camera | **Partial**: measured live cloth with fixed anchors and pause check, plus the same sampled walking/mount/launch/bank/tuck/flare/dismount views. Shelter underside still enters the upper launch frame and the review panel occludes some left-side scenery. Exhaustive wing clearance, cloth self/contact collision, physical controllers and sustained dives remain unverified. |
 
 Verification: the full suite passed 965 tests across 94 files before the final bow-overlap adjustment. Final focused geometry/cloth/collision/player checks passed 40/40, and the final production build passed. Browser results are recorded in the pass-2 handoff and saved test logs. One intermediate build caught a test-only BufferAttribute typing error; it was corrected before the final passing build.
+
+## Art pass 3 — continuous hull and terrace hitches
+
+Starting point: `92d66901f16cd32830d5ea9a736543b8ad640abb` on `feat/windhaven`. The owner requested a smoother hull closer to the supplied concept, unchanged ship scale/deck space, and hitches closer to the open deck with some obstruction acceptable.
+
+`windhavenHull.ts` replaces 1,728 stacked hull boxes with one closed curved shell. Smooth shared vertex normals remove the strip seams. A procedural material provides longitudinal plank lines, pale timber, a continuous blue band, restrained bronze borders and a darker swept keel. The hull stays inside the 72 by 28 m plan envelope and almost the same underside depth (7.18 m); every deck part, its collision shape and the workshop/cabin/shelter footprint are unchanged from pass 2. The broad stern remains necessary to preserve the approved terrace; this is closer to the concept's curved underbody, not a literal reconstruction of its narrow hull.
+
+The same closed triangle surface drives exact convex collision. Optional convex data on bounded box colliders supplies supporting planes for interior distances/top support and closest-triangle distances outside, including corners. Debug wireframes display the actual solid. Existing ordinary boxes and rounded boxes retain their prior behavior. No flight/player changes, new dependencies or renderer changes.
+
+Hitch post centres moved from x = +/-13.35 m, z = -4/10 m to x = +/-11.9 m, z = -29/-13 m. The four mounts now stand 2.1 m inboard of the terrace edges, beside the aft and forward ends of the open deck. Their one-metre bases occupy deck space deliberately. Socket IDs/capacity remain unchanged; socket centres follow the posts at x = +/-12.33 m. The central approach and z = -23 m side-landing corridor remain clear in the existing tests. Arbitrary approaches and simultaneous use by four dragons are not certified.
+
+`scripts/windhaven-art.mjs` saves 16 high-quality views in `shots/windhaven-art-3/`, including the new **Hull** camera and relocated **Hitches** view, plus the prior gameplay and wind checks. Geometry: 26 meshes, 646 instanced box solids plus merged rounded solids and the hull shell, 82,950 triangles before shadows (previous pass: 97,920). This count reduction is not a hardware frame-rate claim.
+
+| Guide category | Source, implementation and pass-3 observation |
+| --- | --- |
+| Costume / silhouette | **Partial**. Supplied Windhaven concept; master v2 sections 01–03. `windhavenHull.ts`; `hull.png`, `side.png` and `on-foot.png`: smooth swept underbody with retained wide terrace. Narrow reference stern/raised prow are not copied into the approved usable deck. Costume unchanged. |
+| Palette / materials | **Verified in sampled daylight views**. Master section 05; `hullTexture()` / `Windhaven.ts`; `hull.png`, `hitches.png`: cream, sky blue, timber and restrained bronze. Final material wear/other lighting conditions unverified. |
+| Armor / detail | Armor **not applicable**, unchanged. Ship detail **partial**: longitudinal seams and painted bands replace box joints; `hull.png`. Furnishings remain simple. |
+| Lance / banner | **Not applicable** to this pass, unchanged. Existing pennon/cloth motion checks retained. |
+| Bracer / tether / harness | **Partial** future ship provision only. Pack introduction and owner's hitch request; `windhavenPlan.ts` / `Windhaven.ts`; `hitches.png` shows relocated mounts. No tether/occupancy/harness gameplay. |
+| Architecture | **Partial**. Master sections 02/07 and supplied hull concept; `windhavenHull.ts`; hull surface improved while cabin and deck remain unchanged. Final production fittings/interior pending. |
+| Dragons | **Not applicable** to art changes. Existing creature art and four-breed gameplay regression retained. |
+| Animation / camera | **Partial**. Master sections 04/08; 16 captures include normal walking, mounted, launch, short bank/tuck/flare and dismount inputs. Hull underside ray/contact tests added. Previous shelter-overhead and review-panel occlusion remain; exhaustive wing/hitch interaction, full dives and controller/GPU hardware remain unverified. |
+
+Validation and recovery details are recorded in the pass-3 handoff and separate snapshot. The work remains a stationary art study; travel, crafting, stable services and functional hitching remain future milestones.
 
 ## Next development steps
 

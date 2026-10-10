@@ -1,6 +1,7 @@
 // Stationary art study. Ship-local +Z points toward the bow; deck top is y=0.
 // Every solid box is shared by the renderer and terrain queries. Cloth is visual-only.
 import type { BoxCollider } from '../../core/types';
+import { windhavenHull } from './windhavenHull';
 
 export type Finish = 'deck' | 'cream' | 'blue' | 'bronze' | 'timber';
 export interface ShipPart {
@@ -18,8 +19,8 @@ export interface DeckZone {
 }
 export const WINDHAVEN_ORIGIN = { x: 400, y: 650, z: 0 };
 /** Reserved attachment sockets only: occupancy, ropes and multiplayer are future systems. */
-export const WINDHAVEN_HITCHES = [-1, 1].flatMap(side => [-4, 10].map((z, i) => ({
-  id: `${side < 0 ? 'starboard' : 'port'}-${i + 1}`, x: side * 13.35, y: 1.35, z, side, capacity: 1,
+export const WINDHAVEN_HITCHES = [-1, 1].flatMap(side => [-29, -13].map((z, i) => ({
+  id: `${side < 0 ? 'starboard' : 'port'}-${i + 1}`, x: side * 11.9, y: 1.35, z, side, capacity: 1,
 })));
 export const CABIN_WALLS = [
   { id: 'front', x: 0, z: 26, yaw: 0, length: 8, windows: [-2.5, 0, 2.5], width: 1.45 },
@@ -68,20 +69,7 @@ export function windhavenPlan(): ShipPart[] {
       }
     }
   }
-  // Fine overlapping strakes make the rounded underbody from the SAME boxes used by
-  // collision. No smooth decorative hull hides a differently shaped collision proxy.
-  for (let z = -35.75; z < 36; z += 0.5) {
-    const beam = 2 * windhavenDeckHalfWidth(z);
-    const fullness = Math.pow(Math.max(0, Math.sin((z + 36) / 72 * Math.PI)), 0.65);
-    const depth = 1.2 + 5.2 * fullness;
-    for (let row = 0; row < 12; row++) {
-      const t = row / 12;
-      const width = beam * 0.99 * Math.sqrt(1 - Math.pow(t, 1.4));
-      const height = depth / 12;
-      add(`strake-${z}-${row}`, row === 1 || row === 2 ? 'blue' : row === 11 ? 'timber' : 'cream',
-        0, -0.8 - (row + 0.5) * height, z, width, height, 0.5);
-    }
-  }
+  // The continuous shell is supplied separately by windhavenHull, shared with collision.
   // Shelter faces aft: no gate, threshold or centre post across the dragon route.
   for (const x of [-7.3, 7.3]) {
     for (const z of [-9.5, 5.5]) add(`shelter-post-${x}-${z}`, 'bronze', x, 4.8, z, 0.4, 9.6, 0.4, 0, 0.19);
@@ -129,5 +117,6 @@ export function windhavenPlan(): ShipPart[] {
 }
 
 export function windhavenColliders(parts = windhavenPlan(), origin = WINDHAVEN_ORIGIN): BoxCollider[] {
-  return parts.map(({ box }) => ({ ...box, x: box.x + origin.x, y: box.y + origin.y, z: box.z + origin.z }));
+  return [...parts.map(({ box }) => box), windhavenHull().collider]
+    .map(box => ({ ...box, x: box.x + origin.x, y: box.y + origin.y, z: box.z + origin.z }));
 }

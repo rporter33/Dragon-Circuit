@@ -36,7 +36,8 @@ const windhaven: Showcase = {
       side: [[88, 13, 0], [0, 5, 0]],
       cabin: [[16, 9, 11], [0, 3, 21]],
       windows: [[9, 2.4, 21.4], [0, 2.4, 21.4]],
-      hitches: [[23, 5, -8], [13.35, 1, 3]],
+      hitches: [[25, 7, -38], [10, 1, -21]],
+      hull: [[48, -7, 48], [0, -3, 4]],
     } as const;
     const camera = (name: string) => {
       const pose = cameras[name as keyof typeof cameras];
@@ -73,6 +74,7 @@ const windhaven: Showcase = {
     button('Cabin', () => camera('cabin'));
     button('Windows', () => camera('windows'));
     button('Hitches', () => camera('hitches'));
+    button('Hull', () => camera('hull'));
     button('Clear wind', () => { game.debug.weather = 'clear'; game.weather.set('clear', true); });
     button('Breezy wind', () => { game.debug.weather = 'breezy'; game.weather.set('breezy', true); });
     const play = (mode: 'landed' | 'onFoot') => {

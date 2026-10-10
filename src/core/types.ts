@@ -256,6 +256,10 @@ export interface BoxCollider extends ColliderTraits {
   yaw: number;
   /** Optional horizontal corner radius; flat top/bottom and unchanged outer extents. */
   roundXZ?: number;
+  /** Optional closed convex solid inside these bounds, in box-local coordinates.
+   * Outward-wound xyz triangle soup; normalized plane coefficients nx,ny,nz,d per face.
+   * Ground support is only provided where its flat top reaches +hy. */
+  convex?: { triangles: Float32Array; planes: Float64Array };
 }
 
 /** Anything solid the analytic terrain doesn't describe. Indexed by world/colliders.ts. */

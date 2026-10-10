@@ -7,6 +7,7 @@ import { toonMaterial } from '../../render/painterly';
 import { CABIN_WALLS, WINDHAVEN_HITCHES, WINDHAVEN_ORIGIN, WINDOW_SHOULDER, WINDOW_SILL, windhavenPlan, type Finish, type ShipPart } from './windhavenPlan';
 import { roundedPrism } from './roundedPrism';
 import { SailCloth } from './SailCloth';
+import { hullTexture, windhavenHull } from './windhavenHull';
 
 // Master v2 palette. Timber and aged bronze support the pale cloth.
 const COLORS = {
@@ -52,10 +53,14 @@ export function buildWindhaven(parts: readonly ShipPart[] = windhavenPlan()): Wi
   const group = new WindhavenView();
   group.name = 'Windhaven';
   group.position.set(WINDHAVEN_ORIGIN.x, WINDHAVEN_ORIGIN.y, WINDHAVEN_ORIGIN.z);
+  const hull = new Mesh(windhavenHull().geometry.clone(), toonMaterial({ color: '#ffffff', map: hullTexture(), rim: 0.28 }));
+  hull.name = 'hull-shell';
+  hull.castShadow = hull.receiveShadow = true;
+  group.add(hull);
   const cube = new BoxGeometry(1, 1, 1);
   const matrix = new Matrix4(), rotation = new Quaternion(), up = new Vector3(0, 1, 0);
   const position = new Vector3(), scale = new Vector3();
-  // Shallow overlapping hull strakes cost five structural draw calls.
+  // Structural fittings are batched by material; the hull is one continuous surface.
   for (const finish of ['deck', 'cream', 'blue', 'bronze', 'timber'] as Finish[]) {
     const rounded = parts.filter(p => p.finish === finish && p.box.roundXZ);
     if (rounded.length) {
@@ -191,7 +196,7 @@ export function buildWindhaven(parts: readonly ShipPart[] = windhavenPlan()): Wi
   for (const hitch of WINDHAVEN_HITCHES) {
     const anchor = new Group();
     anchor.name = `hitch-socket-${hitch.id}`;
-    anchor.position.set(hitch.side * 13.78, hitch.y, hitch.z);
+    anchor.position.set(hitch.x + hitch.side * 0.43, hitch.y, hitch.z);
     anchor.userData = { capacity: 1, reserved: true, gameplayImplemented: false };
     group.add(anchor);
     add('bronze', new TorusGeometry(0.38, 0.08, 8, 24).rotateY(Math.PI / 2).translate(anchor.position.x, anchor.position.y, anchor.position.z));

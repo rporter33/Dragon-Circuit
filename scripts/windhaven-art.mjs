@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { chromium } from 'playwright';
 
 const origin = process.argv[2] ?? 'http://127.0.0.1:5174';
-const output = 'shots/windhaven-art-2';
+const output = 'shots/windhaven-art-3';
 fs.mkdirSync(output, { recursive: true });
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
@@ -50,7 +50,7 @@ try {
   await shot('dismount');
   await page.getByRole('button', { name: 'Cabin', exact: true }).click();
   await shot('cabin');
-  for (const name of ['Windows', 'Hitches']) {
+  for (const name of ['Windows', 'Hitches', 'Hull']) {
     await page.getByRole('button', { name, exact: true }).click();
     await shot(name.toLowerCase());
   }
