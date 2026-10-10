@@ -2,6 +2,14 @@
 
 Windhaven is a proposed flying home for a rider and one wyvern, with sheltered crafting and storage space. The current milestone is a stationary, walkable blockout in a dedicated review scene. Its dimensions, appearance and layout remain provisional.
 
+## Version and saved copies
+
+As of October 10, 2026, development is on `feat/windhaven`, based on GitHub `main` commit `844e5c25860aab4c596116df4ffb19fa4e98fd1e` (shrine tutorial, rider motion, flight braking and title music). Windhaven was applied as `9b9964c0f85bac9dc781e8ac2ce20a9b1830640c`; its code was carried across unchanged. The package version is still 0.1.0, so use the Git commit to distinguish builds.
+
+The separate recovery index is `C:\Users\Robert\Projects\Windhaven-Backups\README.md`. It links the original `2026-10-10-before-update` snapshot and the updated `2026-10-10-latest-main` snapshot, each with source, captures and a Git recovery bundle. The original is also retained locally at `windhaven/checkpoint-2026-10-10`, commit `974bb32e7e11a0bfd58d9210429c057dfa4da164`. Restore into a new directory; do not overwrite another checkout's work.
+
+The combined version passed 957 unit tests across 93 files, the production build, 15/15 production smoke checks, and both deterministic and live-keyboard Windhaven browser checks across all four breeds, including reload/recovery. Browser logs and five review captures are included in the updated snapshot. Physical controller and embedded-browser checks remain separate.
+
 ## Open the review
 
 Run `npm run windhaven` from the repository. It serves only on `127.0.0.1:5174`, opens `http://127.0.0.1:5174/?view=windhaven`, and refuses to silently change ports. Keep that terminal running while testing; closing the server makes the browser show a connection error. If port 5174 is already serving this project, use the existing preview. This scene is selected explicitly; it does not add the ship to ordinary play.
