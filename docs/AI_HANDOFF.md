@@ -182,3 +182,15 @@ Owner could not spot the encounter and reported foliage obstruction and bumpy is
 - Owner explicitly approved the configured Robert Porter author, combined commit message, fast-forward update of origin/main, and resulting Pages deployment after reviewing the combined build and verification above.
 - Release scope is the complete reviewed working tree: first-site/tutorial and early-island improvements, rider/saddle and landing fixes, bounded roll braking, capture tooling/documentation, and looping title music. Later M1 work and other feature branches remain excluded.
 - Next authorized action: commit on dev/codex-wsl, rebuild with the commit stamp, push the reviewed commit to origin/main without force, and verify the resulting deployment. Record actual release SHA/workflow results in the delivery response; this entry is approval evidence, not a claim deployment has succeeded.
+
+## Windhaven update onto current GitHub main (2026-10-10)
+
+- The owner requested checking GitHub, moving Windhaven onto the latest game version, preserving all work, and saving a separate easily referenced copy. This authorizes the local Windhaven branch/checkpoint work; it does not authorize publication or a main-branch update.
+- Current worktree: `C:\Users\Robert\Projects\Driftwing-Codex`; active development branch: `feat/windhaven`.
+- GitHub default branch verified directly as `main`, at `844e5c25860aab4c596116df4ffb19fa4e98fd1e` (shrine tutorial, rider motion, flight braking and title music). No remote tags were advertised. Package version remains 0.1.0; the Git commit identifies the game baseline.
+- Original blockout preserved in local branch `windhaven/checkpoint-2026-10-10`, commit `974bb32e7e11a0bfd58d9210429c057dfa4da164`. Its parent is `1d718e9`.
+- External backup: `C:\Users\Robert\Projects\Windhaven-Backups\2026-10-10-before-update`. Includes 360 SHA256-verified working-source files, screenshots, the supplied concept reference, a source ZIP, tracked diff and a verified complete-history Git bundle.
+- Windhaven source applied onto the latest main. The only application conflict was this handoff: upstream history is retained in full and this separate entry records Windhaven. Claude's worktree and local main remain unchanged.
+- Windhaven scope: stationary walkable blockout, solid geometry shared with collision, provisional dragon shelter/crafting/cabin spaces, four-breed review controls and deterministic/live browser tests. No moving ship, steering, crafting, stable service or cloth collision is implemented. See [WINDHAVEN.md](WINDHAVEN.md).
+- Prior-baseline results: 901 unit tests including 23 Windhaven tests, production build, 15/15 production smoke checks and both Windhaven browser paths passed. These are historical results, not validation of this updated baseline; fresh results will be recorded after testing.
+- Next authorized action: complete compatibility verification, record new results and save the updated branch in a separate recovery bundle. No push, deployment or merge into main requested.
