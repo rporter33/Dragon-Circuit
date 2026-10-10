@@ -307,7 +307,11 @@ export interface SaveData {
    * ui/tutor.ts). tutorialDone turns true once every first-flight tip is in here.
    */
   tips?: string[];
-  /** Research journal: recorded entry ids and points per branch (absent in older saves). */
+  /** Introductory shrine guidance; reading completion remains authoritative in research. */
+  firstLeadGuide?: 'active' | 'skipped';
+  /** M1 survey/observation ids and derived point cache (absent in older saves).
+   * Existing finds remain in collected/discovered; loading recomputes points.
+   */
   research?: { entries: string[]; points: Record<ResearchBranch, number> };
   /** The guided opening with Quintus: finished or skipped (absent = not yet). */
   prologueDone?: boolean;
@@ -414,6 +418,8 @@ export interface GameActions {
 
 /** Read-only view of the game the UI renders from each frame. */
 export interface GameView {
+  /** Actual playable shrine anchor, shared with interaction and geometry. */
+  tutorialShrine?: { x: number; y: number; z: number };
   screen: GameScreen;
   player: PlayerSystem;
   races: RaceSystem;

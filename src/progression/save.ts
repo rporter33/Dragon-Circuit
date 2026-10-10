@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS } from '../game/settings';
 import { BREEDS } from '../flight/breeds';
 import { isCollectibleId } from './relics';
 import { cosmeticKey, medalAtLeast, medalTally, recordedUnlocked } from './unlocks';
+import { researchState } from '../research/state';
 
 export const SAVE_KEY = 'driftwing.save.v1';
 /** Where pre-release builds kept their (unversioned) save. Migrated once, then removed. */
@@ -35,6 +36,7 @@ export function defaultSave(): SaveData {
     discovered: [],
     playTime: 0,
     tutorialDone: false,
+    research: researchState(undefined, { collected: [], discovered: [] }),
   };
 }
 
@@ -211,17 +213,22 @@ function sanitizeUnlocked(v: unknown): string[] {
 
 function sanitize(raw: Raw): SaveData {
   const playTime = typeof raw.playTime === 'number' && Number.isFinite(raw.playTime) && raw.playTime > 0 ? raw.playTime : 0;
+  const collected = strings(raw.collected, isCollectibleId);
+  const discovered = strings(raw.discovered);
   return {
     version: 1,
     wyvern: sanitizeWyvern(raw.wyvern),
     rider: sanitizeRider(raw.rider),
     unlocked: sanitizeUnlocked(raw.unlocked),
-    collected: strings(raw.collected, isCollectibleId),
+    collected,
     races: sanitizeRaces(raw.races),
     settings: sanitizeSettings(raw.settings),
-    discovered: strings(raw.discovered),
+    discovered,
+    research: researchState(raw.research, { collected, discovered }),
     playTime,
     tutorialDone: raw.tutorialDone === true,
+    ...(Array.isArray(raw.tips) ? { tips: [...new Set(raw.tips.filter((id): id is string => typeof id === 'string' && ['walk', 'takeoff', 'flap', 'pitch', 'flare', 'tired', 'rested', 'thermal', 'race'].includes(id)))] } : {}),
+    ...(raw.firstLeadGuide === 'active' || raw.firstLeadGuide === 'skipped' ? { firstLeadGuide: raw.firstLeadGuide } : {}),
   };
 }
 

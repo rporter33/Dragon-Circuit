@@ -6,7 +6,10 @@ import { allClothSpecs } from './accessories';
 import { Rider } from './Rider';
 import { mulberry32 } from '../../core/rng';
 import type { MeshToonMaterial } from 'three';
-import { BONE_NAMES } from './rig';
+import { B, BONE_NAMES } from './rig';
+import { buildBody, makeBodyCtx } from './body';
+import { SkinBuilder } from './meshKit';
+import { outfitStyle } from './outfits';
 
 function finite(arr: ArrayLike<number>): boolean {
   for (let i = 0; i < arr.length; i++) if (!Number.isFinite(arr[i])) return false;
@@ -52,6 +55,53 @@ describe('rider model', () => {
       expect(pos.count).toBeGreaterThan(2000);
       expect(pos.count).toBeLessThan(40000);
       g.dispose();
+    }
+  });
+
+  it('distributes hip bending continuously along the upper leg for every outfit and build', () => {
+    for (const build of ['slight', 'medium', 'broad'] as const) {
+      for (const outfit of cosmeticsFor('riderOutfit')) {
+        const m = buildRiderModel({ ...DEFAULT_RIDER, build, outfit: outfit.id });
+        // Inspect the actual body loft with each outfit's dimensions; straps and garment
+        // overlays have intentional seams and separate skin fields.
+        const builder = new SkinBuilder();
+        const ctx = makeBodyCtx(builder, m.ctx.d, m.ctx.look, m.palette);
+        const style = outfitStyle(ctx.look, ctx.pal, ctx.d);
+        buildBody(ctx, { ...style, extras: () => {} });
+        const geometry = builder.build();
+        const p = geometry.getAttribute('position');
+        const weights = geometry.getAttribute('skinWeight');
+        const indices = geometry.getAttribute('skinIndex');
+        const index = geometry.index!;
+        for (const thigh of [B.thighL, B.thighR]) {
+          const hipWeight = (i: number): number | null => {
+            let hip = 0, leg = 0;
+            for (let k = 0; k < 4; k++) {
+              const w = weights.getComponent(i, k), b = indices.getComponent(i, k);
+              if (w > 0 && b !== B.hips && b !== thigh) return null;
+              if (b === B.hips) hip += w;
+              if (b === thigh) leg += w;
+            }
+            return leg > 0 ? hip : null;
+          };
+          let blendedEdges = 0;
+          for (let t = 0; t < index.count; t += 3) {
+            for (let e = 0; e < 3; e++) {
+              const a = index.getX(t + e), b = index.getX(t + (e + 1) % 3);
+              const wa = hipWeight(a), wb = hipWeight(b);
+              if (wa === null || wb === null || wa === wb) continue;
+              const dy = Math.abs(p.getY(a) - p.getY(b));
+              if (dy < 1e-6) continue;
+              blendedEdges++;
+              // A 45% pelvis contribution must spread over the hip, rather than drop at one ring.
+              expect(Math.abs(wa - wb) / dy, `${build}/${outfit.id}`).toBeLessThan(11 / m.ctx.d.h);
+            }
+          }
+          expect(blendedEdges).toBeGreaterThan(0);
+        }
+        geometry.dispose();
+        m.geometry.dispose();
+      }
     }
   });
 

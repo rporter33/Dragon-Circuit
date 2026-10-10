@@ -1,3 +1,4 @@
+import { guidingToShrine } from './firstLeadGuide';
 // The in-flight HUD: deliberately sparse. A stamina arc around the wing emblem (only while it
 // is being spent or refilling, or while the wyvern is Rested), airspeed and altitude, a compass
 // ribbon with the race waypoint and nearby landmarks, the one context prompt, corner notices, a
@@ -179,6 +180,7 @@ export class Hud {
   private markers: Marker[] = [];
   private allMarkers: Marker[] = [];
   private home: Marker;
+  private shrineMarker: Marker;
   private waypoint: Marker;
   private waypointOn: LiveClass;
   private startGate: Marker;
@@ -275,6 +277,7 @@ export class Hud {
     }
     const roost = LAYOUT.landmarks.find((l) => l.id === 'roost');
     this.home = mk('roost', roost?.position[0] ?? 0, roost?.position[2] ?? 0, roost?.name ?? 'The Roost', ICONS.home, 'is-home');
+    this.shrineMarker = mk('first-wind', 0, 0, 'First Wind shrine', ICONS.landmark, 'is-shrine');
     this.waypoint = mk('waypoint', 0, 0, '', ICONS.waypoint, 'is-waypoint');
     this.waypointOn = new LiveClass(this.waypoint.el, 'dw-hidden');
     // Outside a race the waypoint is just the nearest start gate: a quieter ring marker.
@@ -693,6 +696,14 @@ export class Hud {
       m.x = wp.x;
       m.z = wp.z;
       this.placeMarker(m, p, heading, halfW, racing, racing ? 9 : 4);
+    }
+    const shrine = view.tutorialShrine;
+    this.shrineMarker.wants = false;
+    this.shrineMarker.shown.set(true);
+    if (!racing && shrine && guidingToShrine(view.save.data)) {
+      this.shrineMarker.x = shrine.x;
+      this.shrineMarker.z = shrine.z;
+      this.placeMarker(this.shrineMarker, p, heading, halfW, true, 8);
     }
     this.layoutCompassLabels(racing);
   }

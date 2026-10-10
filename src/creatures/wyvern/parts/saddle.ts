@@ -74,7 +74,8 @@ export const TACK = {
    * The seated foot (E's target): the shin from the knee (direction, unnormalised: out, down, back),
    * the iron's tread from the ankle (the foot pitched toes-down), and its clearance of the hide (m).
    */
-  stirrup: { shin: [0.12, -0.1, -0.38] as const, tread: [0.01, -0.07, -0.06] as const, treadClear: 0.07 },
+  // The ball of a forward-facing boot is ahead of the ankle (+Z), even when toes-down.
+  stirrup: { shin: [0.12, -0.1, -0.38] as const, tread: [0.01, -0.07, 0.06] as const, treadClear: 0.07 },
 };
 
 export interface SaddleInfo {
@@ -514,6 +515,8 @@ function solveStraddle(rig: RigDef, hide: Hide): StraddleFit {
   const topY = hide.point(sc, 0, new Vector3()).y;
   const sk = plan.sAtZ(rig.seat.z + dz);
   const p = new Vector3();
+  // Clearance sampling must never overwrite the point being tested along the shin.
+  const shinSample = new Vector3();
   const hp = { s: 0, th: 0 };
   /**
    * Distance from a point to the blanketed hide, in the section that holds the point (the body's
@@ -553,7 +556,7 @@ function solveStraddle(rig: RigDef, hide: Hide): StraddleFit {
     ankle.copy(knee).addScaledVector(dir, D.shin);
     tread.copy(ankle).add(_q.set(D2.tread[0], D2.tread[1], D2.tread[2]));
     let d = clearOf(tread) - D2.treadClear;
-    for (let t = 0.35; t <= 1.001; t += 0.13) d = Math.min(d, clearOf(p.copy(knee).addScaledVector(dir, t * D.shin)) - (D.legR * 0.8 + 0.01));
+    for (let t = 0.35; t <= 1.001; t += 0.13) d = Math.min(d, clearOf(shinSample.copy(knee).addScaledVector(dir, t * D.shin)) - (D.legR * 0.8 + 0.01));
     return d;
   };
   let o0 = 0;

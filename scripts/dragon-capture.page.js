@@ -13,6 +13,16 @@
   const C = window.__cap;
   const g = window.__dw.game;
   const R = g.renderer;
+  // Capture-only contact evidence: labels and requested velocities do not prove a landing.
+  const contacts = [];
+  g.events.on('touchdown', (e) => contacts.push({ t: C.t, impact: e.impact, position: e.position.toArray(), surface: e.surface }));
+  C.resetMotion = () => { contacts.length = 0; };
+  C.motion = () => ({ screen: g.screen, frozen: g.debug.freeze, mode: g.player.mode, airborne: g.player.wyvernPose.airborne,
+    position: g.player.position.toArray(), velocity: g.player.flight.velocity.toArray(),
+    contacts: contacts.slice(), animationSink: g.wyvern.animator.frame.sink,
+    animationImpact: g.wyvern.animator.frame.landImpact, settle: g.wyvern.animator.frame.dipV,
+    stats: g.wyvern.stats, penetration: window.__dw.wyvernPenetration() });
+
   const LUMA = [0.2126, 0.7152, 0.0722];
 
   // --- The render hook: lets a capture re-aim the camera after every rig has run -------------
@@ -293,6 +303,7 @@
   /** World position of a named target on the player's wyvern: 'eye', a bone name, or 'body'. */
   C.targetPoint = (name, out = _v()) => {
     const W = g.wyvern;
+    if (name === 'rider') return g.rider.group.getObjectByName('spine').getWorldPosition(out);
     if (!name || name === 'body') return out.copy(g.player.wyvernPose.position);
     if (name === 'eye' || name === 'eyeR') {
       const rig = W.rigDef;

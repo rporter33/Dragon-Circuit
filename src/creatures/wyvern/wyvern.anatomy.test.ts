@@ -962,6 +962,13 @@ describe('the tack (A12, Q16)', { timeout: 240000 }, () => {
           expect((st.x - seat.x) * sx, `${breed} ${saddle} ${name}`).toBeGreaterThan(TACK.straddle.kneeX);
           expect(seat.y - st.y, `${breed} ${saddle} ${name}`).toBeGreaterThan(0.5);
           expect(seat.y - st.y, `${breed} ${saddle} ${name}`).toBeLessThan(TACK.straddle.thigh + TACK.straddle.shin + 0.25);
+          // The fitted shin runs mainly back along the barrel, not sideways. Reconstruct its
+          // bind-space direction independently from the tread hold and the design knee. This
+          // catches clearance sampling that aliases its query and drives fitting fully outward.
+          const hold = tack.holds[name]!.pos;
+          const dx = Math.abs(hold.x) - TACK.stirrup.tread[0] - TACK.straddle.kneeX;
+          const dz = hold.z - TACK.stirrup.tread[2] - (w.rigDef.seat.z + TACK.straddle.kneeFwd);
+          expect(dx, `${breed} ${saddle} ${name} outward shin`).toBeLessThan(-dz);
         }
         // The holds move with the body.
         const before = w.socket('grab', new Vector3())!;

@@ -43,10 +43,10 @@ const BASE: FieldStyle = {
 export function fieldStyle(def: IslandDef): FieldStyle {
   switch (def.kind) {
     case 'roost':
-      return { ...BASE, base: '#3b6a2c', tip: '#a8cd5e', height: 0.46, flowers: ['#dcd6c6', '#ffd447', '#c79bff', '#f08aa9'], flowerDensity: 0.05 };
+      return { ...BASE, base: '#3b6a2c', tip: '#a8cd5e', height: 0.3, flowers: ['#dcd6c6', '#ffd447', '#c79bff', '#f08aa9'], flowerDensity: 0.05 };
     case 'meadow':
       return def.landmark === 'gullrest'
-        ? { ...BASE, base: '#41702e', tip: '#b6d769', height: 0.62, density: 7, flowers: ['#dcd6c6', '#ffd447', '#f08aa9', '#8db6ff', '#ff9a4d'], flowerDensity: 0.14, flowerGlow: 0.2 }
+        ? { ...BASE, base: '#41702e', tip: '#b6d769', height: 0.32, density: 4.5, flowers: ['#dcd6c6', '#ffd447', '#f08aa9', '#8db6ff', '#ff9a4d'], flowerDensity: 0.14, flowerGlow: 0.2 }
         : { ...BASE, base: '#3f6e2d', tip: '#addb62', height: 0.55, flowers: ['#dcd6c6', '#ffd447', '#f08aa9', '#8db6ff', '#ff9a4d'], flowerDensity: 0.1 };
     case 'forest':
       return { ...BASE, base: '#2c5530', tip: '#7aaa4d', tipDry: '#a8b45e', height: 0.42, density: 4.5, flowers: ['#dcd6c6', '#b9d7ff', '#e9c7ff'], flowerDensity: 0.035, flowerGlow: 0.35 };
@@ -55,7 +55,7 @@ export function fieldStyle(def: IslandDef): FieldStyle {
     case 'plateau':
       return {
         // Moor grass: straw and tawny tips over umber roots, matching the moorland turf.
-        ...BASE, base: '#5a5840', tip: '#c0ab78', tipDry: '#cdb092', height: 0.5, density: 9, heather: 0.36, heatherBase: '#5f5446',
+        ...BASE, base: '#5a5840', tip: '#c0ab78', tipDry: '#cdb092', height: def.landmark === 'highmoor' ? 0.32 : 0.5, density: def.landmark === 'highmoor' ? 6 : 9, heather: 0.36, heatherBase: '#5f5446',
         heatherTip: '#8e5d86', heatherTipPale: '#c08db0', flowers: ['#f2e9d8', '#ffd76a'], flowerDensity: 0.025,
       };
     case 'ruin':

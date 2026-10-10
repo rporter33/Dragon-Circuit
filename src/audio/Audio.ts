@@ -19,6 +19,8 @@ import { clamp01, damp, smoothstep } from '../core/math';
 import { AudioEngine } from './engine';
 import { AmbienceLayer, StallLayer, WindLayer } from './layers';
 import { MusicPlayer } from './music';
+import { TitleMusic } from './titleMusic';
+import titleMusicUrl from './assets/driftwing-intro.mp3?url';
 import {
   ambienceMix,
   emptyAmbienceMix,
@@ -51,6 +53,8 @@ export class AudioSystem implements AudioSystemApi {
   private stall: StallLayer | null = null;
   private ambience: AmbienceLayer | null = null;
   private music: MusicPlayer | null = null;
+  private titleMusic: TitleMusic | null = null;
+  private inTitle = false;
   private settings: () => Settings;
   private deps: AudioDeps;
 
@@ -134,6 +138,13 @@ export class AudioSystem implements AudioSystemApi {
     this.stall = new StallLayer(e, t);
     this.ambience = new AmbienceLayer(e, t);
     this.music = new MusicPlayer(e);
+    const ctx = this.ctx;
+    this.titleMusic = new TitleMusic(ctx, e.music.dry, async () => {
+      const response = await fetch(titleMusicUrl);
+      if (!response.ok) throw new Error('Title music unavailable');
+      return ctx.decodeAudioData(await response.arrayBuffer());
+    });
+    this.titleMusic.setActive(this.inTitle);
     void this.ctx.resume().then(() => this.releaseGestures(), () => {});
     if (this.ctx.state === 'running') this.releaseGestures();
   }
@@ -200,7 +211,14 @@ export class AudioSystem implements AudioSystemApi {
     // Races raise the percussion quickly; it settles back slowly after the finish.
     const rate = this.intensityTarget > this.intensity ? 1.2 : 0.35;
     this.intensity = damp(this.intensity, this.intensityTarget, rate, step);
-    this.music?.update(sky.timeOfDay, this.intensity);
+    if (!this.inTitle) this.music?.update(sky.timeOfDay, this.intensity);
+  }
+
+  /** Keep title music through menu sheets/stable, stopping on entry into gameplay. */
+  setScreen(screen: string): void {
+    if (screen === 'title') this.inTitle = true;
+    else if (screen === 'play') this.inTitle = false;
+    this.titleMusic?.setActive(this.inTitle);
   }
 
   applySettings(s: Settings): void {

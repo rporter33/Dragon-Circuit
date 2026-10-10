@@ -123,6 +123,8 @@ function synth(p: WyvernPose, name: string, t: number, breed: BreedId, at: Vecto
   const B = BREEDS[breed];
   const sh = B.standHeight;
   const flight = FLIGHT.has(name);
+  // Synthetic poses have no gameplay contact event; use the animator's legacy fallback.
+  p.touchdown = undefined;
   p.airborne = flight;
   p.angularVelocity.set(0, 0, 0);
   p.flare = 0;

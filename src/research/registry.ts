@@ -7,6 +7,7 @@
 // Positions live with the module that builds the thing; this file holds identity and lore.
 
 import type { ResearchBranch } from '../core/types';
+import { FIRST_LEAD_TRANSLATION } from './firstLeadText';
 
 export interface SpeciesDef {
   id: string;
@@ -112,7 +113,7 @@ export const VENTARI_SITES: readonly VentariSiteDef[] = [
     kind: 'shrine',
     landmark: 'gullrest',
     notes: 'Two columns, an altar stone, and a bronze wind-vane fallen in the grass. Small, but the stones are cut as finely as anything at the Observatory.',
-    inscription: '"Here the first rider stepped from the cliff, and the wind remembered how to carry."',
+    inscription: FIRST_LEAD_TRANSLATION,
     points: 5,
   },
   {

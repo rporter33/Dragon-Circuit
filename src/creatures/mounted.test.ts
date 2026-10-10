@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { Vector3, type Bone } from 'three';
-import type { BreedId, RiderPose, WyvernPose } from '../core/types';
+import type { BreedId, RiderLook, RiderPose, WyvernPose } from '../core/types';
 import { BREEDS, BREED_ORDER } from '../flight/breeds';
 import { DEFAULT_RIDER, DEFAULT_WYVERN } from '../cosmetics/catalog';
 import { createRiderPose, createWyvernPose } from '../player/poses';
@@ -93,9 +93,9 @@ function wingVertices(w: Wyvern): number[] {
 }
 
 /** Smallest gap (m) between the wings and the rider's limb capsules over the run. */
-function wingClearance(breed: BreedId, saddle: string, kind: Flight, crouch = 0): number {
+function wingClearance(breed: BreedId, saddle: string, kind: Flight, crouch = 0, build: RiderLook['build'] = 'medium'): number {
   const w = new Wyvern({ ...DEFAULT_WYVERN, breed, saddle });
-  const r = new Rider(DEFAULT_RIDER, { saddle: w.saddle });
+  const r = new Rider({ ...DEFAULT_RIDER, build }, { saddle: w.saddle, socket: (name, out) => w.socket(name, out) });
   const wp = wyvernPose(kind, breed);
   const rp: RiderPose = createRiderPose();
   rp.mounted = true;
@@ -154,7 +154,7 @@ describe('the rider on the wyvern', { timeout: 120000 }, () => {
   it('wraps the legs around the barrel: knees in at the saddle, shins down the ribs, never inside the body', () => {
     for (const breed of BREED_ORDER) {
       const w = new Wyvern({ ...DEFAULT_WYVERN, breed });
-      const r = new Rider(DEFAULT_RIDER, { saddle: w.saddle });
+      const r = new Rider(DEFAULT_RIDER, { saddle: w.saddle, socket: (name, out) => w.socket(name, out) });
       const wp = wyvernPose('stand', breed);
       const rp = createRiderPose();
       rp.mounted = true;
@@ -185,10 +185,12 @@ describe('the rider on the wyvern', { timeout: 120000 }, () => {
 
   for (const breed of BREED_ORDER) {
     it(`never sweeps a wing through the rider (${breed}: glide, full wingbeat, bank, flare, dive, standing)`, () => {
-      for (const saddle of ['rider', 'racing', 'royal']) {
-        for (const kind of ['stand', 'glide', 'flap', 'bank', 'flare', 'tuck'] as Flight[]) {
-          const gap = wingClearance(breed, saddle, kind, kind === 'tuck' ? 1 : 0);
-          expect(gap, `${breed} ${saddle} ${kind}`).toBeGreaterThan(0.02);
+      for (const saddle of ['rider', 'racing', 'royal', 'nomad']) {
+        for (const build of ['slight', 'medium', 'broad'] as const) {
+          for (const kind of ['stand', 'glide', 'flap', 'bank', 'flare', 'tuck'] as Flight[]) {
+            const gap = wingClearance(breed, saddle, kind, kind === 'tuck' ? 1 : 0, build);
+            expect(gap, `${breed} ${saddle} ${build} ${kind}`).toBeGreaterThan(0.02);
+          }
         }
       }
     });

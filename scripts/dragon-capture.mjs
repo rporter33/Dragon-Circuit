@@ -36,6 +36,7 @@
 //               aim: { target: eye|<bone>|body, az, el, dist (m or "=expr of t") , fov? } —
 //                      re-aim the camera after the rigs ran (eye macros, dollies)
 //               spans: true — on-screen wingspan and rider height in pixels
+//               telemetry: true — actual player state, contact events, animation impact and geometry counts
 //               stance: true (strips) — per-foot stance/swing markers and a footfall diagram
 //               metrics: ["tail","stroke"] (strips) — tail bend per joint, wingtip elevation,
 //                      separation and fore-aft per frame, summarised; measure/m-motion-metrics.json
@@ -243,7 +244,7 @@ process.on('SIGINT', () => process.exit(130));
 // --- Browser --------------------------------------------------------------------------------
 
 const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium',
+  executablePath: process.env.CHROMIUM_PATH || (fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined),
   headless: !flag('headful'),
   args: flag('gpu')
     ? ['--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--use-angle=default', '--enable-features=Vulkan']
@@ -409,6 +410,7 @@ function matteText(m) {
 
 async function frameExtras(page, it, res, key) {
   const ex = {};
+  if (it.telemetry) ex.motion = await page.evaluate(() => window.__cap.motion());
   if (it.matte) ex.matte = await page.evaluate(() => window.__cap.matte());
   if (it.spans) ex.spans = await page.evaluate(() => window.__cap.spans());
   if (it.stance) ex.feet = await page.evaluate(() => window.__cap.feet());
@@ -476,6 +478,7 @@ async function runItem(page, it) {
     window.__cap.resetAim();
   });
   if (it.stage !== undefined) await page.evaluate((q) => window.__wyvernShowcase(q), mergeStage(it.stage));
+  await page.evaluate(() => window.__cap.resetMotion());
   for (const st of it.steps ?? []) await runStep(page, st);
   if (it.aim) await page.evaluate((o) => window.__cap.aim(o), it.aim);
   const settle = await num(page, it.settle, it.kind === 'sequence' || it.kind === 'measure' || it.kind === 'gpu' ? 0 : D.settle);
@@ -553,7 +556,7 @@ async function runItem(page, it) {
       res.files.push({ file: rel(out), desc: `${it.desc} — ${consecutive ? 'frame-to-frame difference (shimmer, crawl, pops)' : 'difference from frame 0'}, amplified (measure/${it.id}.diff.json)` });
     }
     res.frames = frames.map((f) => ({ file: rel(f.file), label: f.label }));
-    if (it.metrics || it.stance || it.matte || it.spans) res.frameData = frames.map((f, i) => ({ t: times[i], ...f.ex }));
+    if (it.telemetry || it.metrics || it.stance || it.matte || it.spans) res.frameData = frames.map((f, i) => ({ t: times[i], ...f.ex }));
     if (it.metrics) {
       res.metrics = summariseMetrics(frames, times);
       res.motion = frames.map((f, i) => ({ t: +times[i].toFixed(3), ...f.ex.metrics }));
@@ -601,7 +604,7 @@ async function runItem(page, it) {
     const sheet = path.join(dir, `${it.id}.sheet.png`);
     pyJobs.push({ type: 'sheet', out: sheet, frames: cells.map((f) => [f.file, f.label, null]), cols: it.cols ?? (cells.length > 4 ? (cells.length > 6 ? 4 : 3) : 2), title: it.id, desc: it.desc ?? '' });
     res.files.push({ file: rel(sheet), desc: `${it.desc} — ${cells.length} variants side by side` });
-    res.frames = cells.map((f) => ({ file: rel(f.file), label: f.label }));
+    res.frames = cells.map((f) => ({ file: rel(f.file), label: f.label, extras: f.ex }));
     if (it.cellStats) pyJobs.push({ type: 'cellstats', cells: cells.map((f) => [f.file, f.label]), out: path.join(outDir, 'measure', `${it.id}.cells.json`) });
   } else if (it.kind === 'sequence') {
     // Steps run in order; any step with a shot captures after it.
@@ -1206,7 +1209,16 @@ for job in json.load(sys.stdin)['jobs']:
 function flushPython() {
   if (!pyJobs.length) return;
   const r = spawnSync('python3', ['-c', PY], { input: JSON.stringify({ jobs: pyJobs }), encoding: 'utf8', maxBuffer: 1 << 26 });
-  if (r.status !== 0) console.error(r.stderr);
+  if (r.status !== 0) {
+    console.error('Composite generation unavailable; individual frames and telemetry remain available.\n' + r.stderr);
+    for (const result of Object.values(results)) {
+      const missing = result.files.filter((f) => pyJobs.some((job) => rel(job.out) === f.file));
+      if (missing.length) {
+        result.unavailable = missing.map((f) => f.file);
+        result.files = result.files.filter((f) => !missing.includes(f));
+      }
+    }
+  }
   pyJobs.length = 0;
 }
 
@@ -1224,6 +1236,8 @@ function writeIndex() {
     if (sec.note) lines.push(sec.note, '');
     for (const it of secItems) {
       const r = results[it.id];
+      if (r.unavailable?.length) lines.push(`- Composite unavailable: ${r.unavailable.join(', ')}. See individual frames below.`);
+      if (r.frames?.length) for (const f of r.frames) lines.push(`- [${path.posix.basename(f.file)}](${f.file}) — ${f.label}`);
       if (r.failed) lines.push(`- **${it.id} failed**: ${r.failed}`);
       for (const f of r.files) lines.push(`- [\`${f.file}\`](${f.file}) — ${f.desc}`);
       if (r.frames?.length) lines.push(`  - ${r.kind === 'grid' ? 'cells' : 'frames'}: \`${path.posix.dirname(r.frames[0].file)}/\` (${r.frames.map((f) => path.posix.basename(f.file, '.png') + ' ' + f.label.replace(/^\d+\s+/, '')).join('; ')})`);

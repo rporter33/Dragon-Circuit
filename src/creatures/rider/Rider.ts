@@ -31,6 +31,8 @@ export interface RiderOptions {
    * state flips to mounted. Optional: the last saddle passed to update() is remembered anyway.
    */
   saddle?: Object3D;
+  /** Existing wyvern tack sockets, in world space. Missing holds retain the flank-fit pose. */
+  socket?: (name: 'stirrupL' | 'stirrupR', out: Vector3) => Vector3 | null;
   /** Event bus for touchdown jolts. */
   events?: EventBus<GameEvents>;
   /** Graphics quality: cloth detail and shadows (see also setQuality). */
@@ -106,6 +108,9 @@ export class Rider implements RiderRenderable {
   private haveSaddlePos = false;
   private jolt = 0;
   private readonly ctx: AnimContext;
+  private readonly stirrupPoints = [new Vector3(), new Vector3()] as const;
+  private readonly stirrups: [Vector3 | null, Vector3 | null] = [null, null];
+  private readonly anchorInverse = new Matrix4();
   private readonly unsub: (() => void)[] = [];
   private lod: ClothLod = { detail: 1, shadows: true };
 
@@ -336,6 +341,14 @@ export class Rider implements RiderRenderable {
     ctx.anchor = this.group.matrixWorld;
     ctx.snapped = snapped;
     ctx.ridePitch = this.ridePitch;
+    // Wyvern has already updated this frame. Resolve its current tack, including look rebuilds,
+    // into the current rider anchor rather than storing a stale saddle-relative offset.
+    this.anchorInverse.copy(ctx.anchor).invert();
+    for (let i = 0; i < 2; i++) {
+      const hold = sad ? this.opts.socket?.(i === 0 ? 'stirrupL' : 'stirrupR', this.stirrupPoints[i]) : null;
+      this.stirrups[i] = hold ? this.stirrupPoints[i].copy(hold).applyMatrix4(this.anchorInverse) : null;
+    }
+    ctx.stirrups = this.stirrups;
     this.animator.update(dt, pose, ctx);
 
     // --- Cloth ---

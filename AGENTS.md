@@ -43,9 +43,13 @@ These include:
 - Flying multiplayer home ship.
 - Multiple companion dragons and hitching.
 - Aether gates and beacon exploration.
-- Banner lance, moving-object grappling and aerial sport.
+- Banner lance and moving-object grappling.
 - Creature befriending and card encounters.
 - Selective environmental destruction and ground marks.
+
+Co-operative and competitive aerial ball sport is a committed long-term direction; implementation requires separate approval and must not delay M1.
+
+In-world inscriptions use provisional Ancient Greek in procedural epigraphic capitals, without accents or breathings. English translations appear on reading. Keep language data replaceable and save IDs stable. No decipherment mechanic is authorized for M1.
 
 Some concepts may already overlap with existing implementations.
 Always reconcile the backlog with current source before proposing changes.

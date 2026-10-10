@@ -191,7 +191,9 @@ export const FLIGHT_TUNING = {
    * start one. A heavy wyvern still takes its time to roll in, but settles where it was put
    * instead of wallowing on past the bank it was given.
    */
-  rollBrake: 2.6,
+  rollBrake: 2.9,
+  /** Tracking gain while arresting a roll; separate from the acceleration authority above. */
+  rollBrakeGainMax: 1.8,
   /**
    * Gusts across the span: the vertical air at each wingtip (sampled `gustSpan` × half-span out)
    * is compared, and the difference rolls the wyvern (rad/s² per m/s of difference per m/s of
@@ -1118,7 +1120,7 @@ export class FlightModel {
     const dz = target.z - w.z;
     const braking = w.z * dz < 0 && Math.abs(w.z) > 0.02 ? T.rollBrake : 1;
     const rollLim = b.rollAuthority * rollAuth * braking;
-    w.z += clamp(dz * gain * Math.min(braking, 1.6), -rollLim, rollLim) * dt;
+    w.z += clamp(dz * gain * Math.min(braking, T.rollBrakeGainMax), -rollLim, rollLim) * dt;
 
     // Stall: the nose drops (gravity, not muscle, so no authority limit), a wing lets go, and
     // the airframe buffets. All deterministic.

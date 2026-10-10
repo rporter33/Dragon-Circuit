@@ -486,6 +486,32 @@ describe('flaps and stamina', () => {
 });
 
 describe('handling', () => {
+  it.each([
+    ['harrier', 7.1],
+    ['skimmer', 9.62],
+    ['galewing', 6.46],
+    ['ironback', 6.97],
+  ] as const)('%s arrests a short cruise roll without losing breed weight', (id, maxOvershoot) => {
+    const m = launch(BREEDS[id], new FlightModel(BREEDS[id]).derived.vCruise);
+    const input = neutralInput();
+    const air = stillAir();
+    // A direct stick pulse: 0.2 s neutral, 0.6 s full roll, then release. Measure before
+    // delayed auto-level can hide overshoot. Bounds require at least 8% less drift than
+    // the measured pre-change cruise baseline, while the existing ranking test keeps weight.
+    for (let i = 0; i < 24; i++) m.step(SIM_DT, input, air);
+    input.roll = 1;
+    for (let i = 0; i < 72; i++) m.step(SIM_DT, input, air);
+    const released = bankAngle(m);
+    input.roll = 0;
+    let peak = released;
+    for (let i = 0; i < 72; i++) {
+      m.step(SIM_DT, input, air);
+      peak = Math.max(peak, bankAngle(m));
+    }
+    expect((peak - released) / DEG).toBeLessThan(maxOvershoot);
+    expect(Math.abs(m.state.angularVelocity.z) / DEG).toBeLessThan(5);
+  });
+
   it('rolls skimmer > harrier > ironback > galewing, heavy breeds slower to roll in and out', () => {
     const r = Object.fromEntries(BREED_ORDER.map((id) => [id, measureRoll(BREEDS[id])]));
     expect(r.skimmer.peakRate).toBeGreaterThan(r.harrier.peakRate);

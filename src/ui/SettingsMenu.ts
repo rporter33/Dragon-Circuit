@@ -152,11 +152,12 @@ export class SettingsMenu extends Panel {
             el,
             activate: () => {
               const save = this.ctx.view.save;
-              if (!save.data.tutorialDone && !(save.data.tips?.length ?? 0)) {
+              if (!save.data.tutorialDone && !(save.data.tips?.length ?? 0) && !save.data.firstLeadGuide) {
                 this.ctx.sound('locked');
                 return;
               }
               this.ctx.sound('select');
+              delete save.data.firstLeadGuide;
               save.data.tips = [];
               save.data.tutorialDone = false;
               save.save();

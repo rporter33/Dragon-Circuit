@@ -321,6 +321,12 @@ export type WyvernCueKind = 'greet' | 'display' | 'present';
  * not; standing, it sits `BreedStats.standHeight` above the ground.
  */
 export interface WyvernPose {
+  /**
+   * Gameplay-owned contact evidence for presentation. id increases on each touchdown;
+   * reset increases on teleport/breed reset, even for moves under 40 m. Reused in place.
+   * Absent for legacy ghosts/synthetic poses, which estimate impact from rendered velocity.
+   */
+  touchdown?: { id: number; reset: number; impact: number };
   position: Vector3;
   orientation: Quaternion;
   velocity: Vector3;

@@ -26,7 +26,7 @@ interface Want {
 }
 
 const WANTS: Want[] = [
-  { id: 'gullrest-shrine', landmark: 'gullrest', radius: 7, band: [0.3, 0.75], prefer: 1 },
+  { id: 'gullrest-shrine', landmark: 'gullrest', radius: 14, band: [0.5, 0.58], prefer: 1 },
   { id: 'gale-temple', landmark: 'highmoor', radius: 13, band: [0, 0.6], prefer: 2 },
   { id: 'reach-aqueduct', landmark: 'archway', radius: 9, band: [0.15, 0.7], prefer: 0 },
   { id: 'rootfall-colossus', landmark: 'rootfall', radius: 11, band: [0.2, 0.7], prefer: 0 },
@@ -73,8 +73,8 @@ function findSite(shape: IslandShape, exclusions: ExclusionSet, w: Want, toRoost
 
 function anchor(id: string, shape: IslandShape, x: number, y: number, z: number, yaw: number, radius: number): VentariSiteAnchor {
   // The inscription faces the approach from the Roost side, just inside the footprint.
-  const ix = x + Math.sin(yaw) * Math.max(1, radius - INSCRIPTION_INSET);
-  const iz = z + Math.cos(yaw) * Math.max(1, radius - INSCRIPTION_INSET);
+  const ix = x + Math.sin(yaw) * (id === 'gullrest-shrine' ? 4.5 : Math.max(1, radius - INSCRIPTION_INSET));
+  const iz = z + Math.cos(yaw) * (id === 'gullrest-shrine' ? 4.5 : Math.max(1, radius - INSCRIPTION_INSET));
   return { id, islandId: shape.def.id, x, y, z, yaw, radius, inscription: { x: ix, y: shape.topHeight(ix, iz), z: iz } };
 }
 
@@ -105,7 +105,8 @@ export function planVentariSites(terrain: Terrain, exclusions: ExclusionSet, rui
     const d = shape.def;
     const p = findSite(shape, exclusions, w, Math.atan2(roost.z - d.z, roost.x - d.x));
     if (!p) continue;
-    exclusions.circle(p.x, p.z, w.radius + 1);
+    // Keep the shrine's approach free of trees/props without changing terrain.
+    exclusions.circle(p.x, p.z, w.id === 'gullrest-shrine' ? 23 : w.radius + 1);
     out.push(anchor(w.id, shape, p.x, p.y, p.z, faceRoost(p.x, p.z), w.radius));
   }
   // Registry order, so consumers can rely on it.

@@ -1,3 +1,5 @@
+import { TutorialMap } from './TutorialMap';
+import { readyForShrine } from './firstLeadGuide';
 // The interface: title, HUD, menus and the Stable, as an HTML overlay over the canvas.
 //
 // Ui owns a stack of panels (title menu, pause, its sheets, dialogs, the Stable, results); the
@@ -30,6 +32,7 @@ import { SettingsMenu } from './SettingsMenu';
 import { Stable } from './Stable';
 import { Tips } from './Tips';
 import { Title } from './Title';
+import { FIRST_LEAD_TRANSLATION } from '../research/firstLeadText';
 
 export interface UiDeps {
   root: HTMLElement;
@@ -190,6 +193,7 @@ export class Ui implements UiSystem {
     const view = this.view!;
     const racing = view.races.activeId !== null && view.races.state !== 'idle' && view.races.state !== 'finished';
     const entries: PauseEntry[] = [{ label: 'Resume', run: () => this.actions.resume() }];
+    if (view.tutorialShrine) entries.push({ label: 'Tutorial map', run: () => this.showTutorialMap() });
     if (racing) {
       entries.push(
         {
@@ -260,6 +264,23 @@ export class Ui implements UiSystem {
       });
     }
     return entries;
+  }
+
+  private showTutorialMap(): void {
+    if (!this.view?.tutorialShrine) return;
+    this.actions.pause();
+    const choose = (value: 'active' | 'skipped') => {
+      this.view!.save.data.firstLeadGuide = value;
+      this.view!.save.save();
+      this.actions.resume();
+    };
+    this.push(new TutorialMap(this.ctx, () => choose('active'), () => choose('skipped'), () => this.actions.resume()));
+  }
+
+  showFirstLead(): void {
+    if (!this.view) return;
+    this.push(new Dialog(this.ctx, 'Shrine of the First Wind', FIRST_LEAD_TRANSLATION,
+      [{ label: 'Return to the Drift', primary: true, cancel: true, run: () => this.actions.resume() }]));
   }
 
   private leaveStable(): void {
@@ -405,6 +426,13 @@ export class Ui implements UiSystem {
     this.raceHud.update(dt, view, hudVisible);
     this.tips.update(dt, view, hudVisible);
     this.gaugeTip.set(this.tips.gaugeOn);
+    if (hudVisible && view.tutorialShrine && view.save.data.settings.showControlHints &&
+        view.races.state === 'idle' && readyForShrine(view.save.data)) {
+      // Remember the offer immediately so backing out does not reopen it every frame.
+      view.save.data.firstLeadGuide = 'active';
+      view.save.save();
+      this.showTutorialMap();
+    }
     if (this.hudNoteLeft > 0) this.hudNoteLeft -= dt;
     this.hudNote.classList.toggle('is-on', this.hudNoteLeft > 0 && this.screen === 'play');
 

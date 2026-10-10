@@ -110,6 +110,8 @@ export interface AnimContext {
   /** Saddle body half-width (m) and grip point (anchor space) when mounted. */
   halfWidth: number;
   grip: Vector3;
+  /** Tack tread centres in anchor space; null/missing keeps the original flank-fit fallback. */
+  stirrups?: readonly [Vector3 | null, Vector3 | null];
   /**
    * The barrel under the saddle (anchor space), when the mount describes it: the shins wrap
    * around it instead of sinking into a broad back. Null: only `halfWidth` is known.
@@ -223,6 +225,16 @@ export class RiderAnimator {
   setRig(rig: Rig): void {
     this.rig = rig;
     this.bones = rig.bones;
+    // A build change replaces the bind pose as well as the bones. Keep the existing smoothing
+    // and hand behavior, but solve feet with the new character's actual leg lengths and offsets.
+    const bp = rig.bindPos;
+    this.lens.thigh = bp[B.shinL].distanceTo(bp[B.thighL]);
+    this.lens.shin = bp[B.footL].distanceTo(bp[B.shinL]);
+    this.lens.ankleY = bp[B.footL].y;
+    this.lens.ballZ = bp[B.toeL].z - bp[B.footL].z;
+    this.lens.ballY = bp[B.toeL].y;
+    this.thighHip[0].copy(bp[B.thighL]).sub(bp[B.hips]);
+    this.thighHip[1].copy(bp[B.thighR]).sub(bp[B.hips]);
   }
 
   update(dt: number, pose: RiderPose, ctx: AnimContext): void {
@@ -548,7 +560,8 @@ export class RiderAnimator {
     const breath = Math.sin(time * 1.9);
     const ro = ctx.rideOffset;
 
-    L.hip.set(-lean * 0.04 + ro.x, 0.045 * crouch - 0.01 * brace + ro.y, -0.07 * crouch + 0.02 * brace + ro.z);
+    // Keep the seated pelvis just above the cushion; hands and boots retain their IK contacts.
+    L.hip.set(-lean * 0.04 + ro.x, 0.01 + 0.045 * crouch - 0.01 * brace + ro.y, -0.07 * crouch + 0.02 * brace + ro.z);
     L.hipRot.set(0.1 + 0.42 * crouch - 0.32 * brace + ctx.ridePitch * 0.5, 0, lean * 0.2);
     L.spine.set(0.05 + 0.36 * crouch - 0.14 * brace + ctx.ridePitch * 0.3, -lean * 0.05, lean * 0.14);
     L.chest.set(0.03 + 0.3 * crouch - 0.1 * brace + 0.01 * breath, -lean * 0.05, lean * 0.1);
@@ -639,6 +652,21 @@ export class RiderAnimator {
       L.knee[i].copy(knee).sub(_v.add(L.foot[i]).multiplyScalar(0.5)).normalize();
       _e.set(0.5 + 0.35 * crouch - 0.4 * brace, side * 0.12, side * -0.25, 'YXZ');
       L.footQ[i].setFromEuler(_e);
+      const tread = ctx.stirrups?.[i];
+      if (tread) {
+        // The hold supports the boot's sole under the ball, not the ankle bone. Keep a modest
+        // toes-down ankle attitude and bend forward over the supported tread. Lean/brace move
+        // the hips around this contact rather than swinging the boot away from its support.
+        L.footQ[i].setFromEuler(_e.set(0.28, side * 0.08, 0, 'YXZ'));
+        const ballZ = d.footLen * 0.32;
+        // buildFoot models its sole at bind-space y=0. The actual ankle bind height is not
+        // dims.ankleY. The tack hold is the rod centre; its 18 mm radius is defined by the
+        // stirrup brass() call in wyvern/parts/saddle.ts. Support the sole on its upper surface.
+        _v3.set(-side * 0.004 * ballZ / 0.2, -this.lens.ankleY, ballZ).applyQuaternion(L.footQ[i]);
+        L.foot[i].copy(tread).sub(_v3);
+        L.foot[i].y += 0.018;
+        L.knee[i].set(-side * 0.35, 0, 1).normalize();
+      }
       L.toe[i] = 0;
     }
 
@@ -700,8 +728,13 @@ export class RiderAnimator {
       solveTwoBone(root, target, pole, this.lens.thigh, this.lens.shin, _ik);
       _q.setFromRotationMatrix(bones[B.hips].matrixWorld);
       const q1 = boneBasis(_ik.dir1, _ik.hinge, _q2);
+      // The bind legs have small fore/aft joint offsets, while boneBasis aligns local -Y.
+      // For supported contacts, compensate that rest tilt so the solved ankle actually reaches
+      // the tread. Blend with mount posture; leave the original on-foot/fallback solve intact.
+      if (ctx.stirrups?.[i]) q1.multiply(_q4.setFromAxisAngle(X, Math.atan2(bones[sh].position.z, -bones[sh].position.y) * w));
       bones[th].quaternion.copy(_q).invert().multiply(q1);
       const q2 = boneBasis(_ik.dir2, _ik.hinge, _q3);
+      if (ctx.stirrups?.[i]) q2.multiply(_q4.setFromAxisAngle(X, Math.atan2(bones[ft].position.z, -bones[ft].position.y) * w));
       bones[sh].quaternion.copy(q1).invert().multiply(q2);
       // Foot orientation (anchor → world → local to the shin).
       _q.slerpQuaternions(F.footQ[i], M.footQ[i], w).premultiply(_anchorQ);

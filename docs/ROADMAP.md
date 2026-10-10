@@ -34,9 +34,14 @@ and research builds up the airship (below).
 standing stones) become part of one lost civilization with a fantastical Greco-Roman character:
 colonnaded temples on island crowns, broken aqueducts arching from island to island (and threading
 through races), amphitheatres carved into cliffs, wind-shrines with bronze vanes, colossal statues
-of riders and wyverns half-swallowed by trees, mosaics on terrace floors, inscriptions in a script
-the player slowly learns to read. Their placement tells a story: why the islands float, who
+of riders and wyverns half-swallowed by trees, mosaics on terrace floors, inscriptions in provisional Ancient Greek, carved in procedural epigraphic capitals,
+with English translations on reading; M1 has no decipherment mechanic. Their placement tells a story: why the islands float, who
 charted the winds, where the riders went.
+
+**M1 — The First Lead.** Connects the Shrine of the First Wind to Highmoor through visible
+features and written clues. The introductory tutorial may show the first shrine on a local map
+and compass until its inscription is read; subsequent exploration remains without quest markers. Its airship reward is a static stage-1
+construction state, unlocked by reading the first inscription and capped at stage 1.
 
 **Research points.** Discovering things is the progression that drives the airship:
 - *Catalogue* a creature or plant by getting close (or watching it for a moment) → a journal entry
@@ -95,7 +100,7 @@ under the saddle), is free for every breed.
 
 **Gates.**
 - the wyverns pass the fidelity bar (Q1–Q18) with no open majors;
-- the slice has shipped (until then the Craghorn waits on its own branch);
+- The First Lead and one meaningful ambient species have shipped (until then the Craghorn waits on its own branch);
 - the dragon expert has seen its steep stance with a rider, its walk and its tack.
 
 **Done when**
@@ -142,6 +147,9 @@ surveyed and wind charted makes the ship more capable and lets it reach farther.
 - *The Verdant Shelf* — huge overgrown islands, waterfalls the size of mountains, ancient ruins.
 
 ## Later
+
+- **Co-operative and competitive aerial ball sport** is committed long-term. Its architecture is
+  planned separately after M1 Gate D; networking and sport implementation are outside M1.
 
 - **AI rival riders** in races. The flight model is already independent of the player
   (`FlightModel` + the race autopilot that flies every course in the tests); rivals reuse it with

@@ -1,3 +1,4 @@
+import { guidingToShrine, shrineInstruction } from './firstLeadGuide';
 // The onboarding tips on screen (the logic is in tutor.ts). First-flight tips sit in a small
 // card on the left, out of the way of the wyvern, the prompt and the readouts; stamina tips appear
 // as a callout beside the stamina emblem they talk about. Glyphs follow the active device.
@@ -116,6 +117,21 @@ export class Tips {
       view.save.save();
     }
     this.render(f.enabled, view.sky.night > 0.5);
+    const target = view.tutorialShrine;
+    if (f.enabled && !racing && target && guidingToShrine(save) && !this.tutor.current) {
+      const distance = Math.hypot(p.riderPosition.x - target.x, p.riderPosition.z - target.z);
+      const words = shrineInstruction(p.mode, distance);
+      if (this.cardBody.dataset.guide !== words) {
+        this.cardKicker.textContent = 'FIRST DISCOVERY';
+        this.cardTitle.textContent = 'Shrine of the First Wind';
+        this.cardBody.replaceChildren(...bodyNodes(words));
+        this.cardBody.dataset.guide = words;
+        this.ctx.fillGlyphs(this.cardBody);
+      }
+      this.cardOn.set(true);
+      this.cardDone.set(false);
+      this.shownTip = null;
+    } else delete this.cardBody.dataset.guide;
   }
 
   private render(enabled: boolean, night: boolean): void {
