@@ -254,6 +254,8 @@ export interface BoxCollider extends ColliderTraits {
   hy: number;
   hz: number;
   yaw: number;
+  /** Optional horizontal corner radius; flat top/bottom and unchanged outer extents. */
+  roundXZ?: number;
 }
 
 /** Anything solid the analytic terrain doesn't describe. Indexed by world/colliders.ts. */

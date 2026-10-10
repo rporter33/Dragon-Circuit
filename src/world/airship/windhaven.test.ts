@@ -8,7 +8,8 @@ import { emptyFrame } from '../../input/Input';
 import { Player } from '../../player/Player';
 import { Terrain } from '../terrain';
 import { LAYOUT } from '../layout';
-import { WINDHAVEN_ORIGIN as O, windhavenColliders, windhavenPlan } from './windhavenPlan';
+import { CABIN_WALLS, WINDHAVEN_HITCHES, WINDHAVEN_ORIGIN as O, windhavenColliders, windhavenPlan } from './windhavenPlan';
+import { signedDistance } from '../colliders';
 import { buildWindhaven } from './Windhaven';
 
 function rig(breed: BreedId) {
@@ -35,6 +36,17 @@ describe('Windhaven stationary blockout', () => {
     const view = buildWindhaven(parts);
     const colliders = windhavenColliders(parts);
     parts.forEach((p, i) => {
+      if (p.box.roundXZ) {
+        const mesh = view.getObjectByName(`rounded-${p.finish}`) as Mesh;
+        const range = mesh.userData.partVertexRanges.find((r: { id: string }) => r.id === p.id);
+        const positions = mesh.geometry.getAttribute('position');
+        const point = new Vector3(), normal = new Vector3();
+        for (let j = range.start; j < range.start + range.count; j++) {
+          point.fromBufferAttribute(positions, j);
+          expect(Math.abs(signedDistance(p.box, point, normal))).toBeLessThan(0.012);
+        }
+        return;
+      }
       const mesh = view.getObjectByName(`structure-${p.finish}`) as InstancedMesh;
       expect(mesh).toBeDefined();
       const index = (mesh.userData.partIds as string[]).indexOf(p.id);
@@ -52,15 +64,43 @@ describe('Windhaven stationary blockout', () => {
   it('preserves the approved deck, shelter headroom and cabin doorway dimensions', () => {
     const parts = windhavenPlan();
     const deck = parts.filter(p => p.id.startsWith('deck-'));
-    expect(deck).toHaveLength(36);
-    deck.forEach(({ box: b }, i) => {
-      const z = -35 + i * 2;
-      expect(b).toEqual({ kind: 'box', x: 0, y: -0.4, z, hx: (z <= 15 ? 28 : Math.max(3, 28 - (z - 15) * 1.15)) / 2, hy: 0.4, hz: 1, yaw: 0, surface: 'wood' });
-    });
+    expect(Math.min(...deck.map(p => p.box.z - p.box.hz))).toBe(-36);
+    expect(Math.max(...deck.map(p => p.box.z + p.box.hz))).toBe(36);
+    expect(Math.max(...deck.map(p => p.box.hx))).toBe(14);
+    const { terrain } = rig('galewing');
+    for (const [x, z] of [[0, -34], [12, -12], [-12, -12], [6, 0], [11, 12], [3, 32]]) {
+      expect(terrain.groundAt(O.x + x, O.z + z, O.y + 0.1)?.y).toBeCloseTo(O.y);
+    }
     const roof = parts.find(p => p.id === 'shelter-roof')!.box;
     expect(roof.y - roof.hy).toBeCloseTo(9.6);
     const door = parts.filter(p => p.id.startsWith('cabin-door-'));
-    door.forEach(p => expect(Math.abs(p.box.x) - p.box.hx).toBeCloseTo(1.6));
+    expect(Math.min(...door.map(p => Math.abs(p.box.x) - p.box.hx))).toBeCloseTo(1.6);
+  });
+
+  it('leaves actual clear glassless openings through every cabin wall', () => {
+    const walls = windhavenPlan().filter(p => p.id.startsWith('cabin-') && p.id !== 'cabin-roof');
+    const normal = new Vector3();
+    for (const wall of CABIN_WALLS) for (const u of wall.windows) {
+      for (const depth of [-0.3, 0, 0.3]) {
+        const point = new Vector3(wall.x + Math.cos(wall.yaw) * (u + 0.25) + Math.sin(wall.yaw) * depth,
+          2.35, wall.z - Math.sin(wall.yaw) * (u + 0.25) + Math.cos(wall.yaw) * depth);
+        expect(Math.min(...walls.map(p => signedDistance(p.box, point, normal)))).toBeGreaterThan(0.2);
+      }
+    }
+    expect(buildWindhaven().getObjectByName('ornament-window')).toBeUndefined();
+  });
+
+  it('provides four distinct reserved hitch mounts outside the landing route', () => {
+    const view = buildWindhaven(), parts = windhavenPlan();
+    expect(WINDHAVEN_HITCHES).toHaveLength(4);
+    expect(new Set(WINDHAVEN_HITCHES.map(h => h.id)).size).toBe(4);
+    for (const hitch of WINDHAVEN_HITCHES) {
+      const socket = view.getObjectByName(`hitch-socket-${hitch.id}`)!;
+      expect(socket.userData).toMatchObject({ capacity: 1, reserved: true, gameplayImplemented: false });
+      expect(parts.some(p => p.id === `hitch-${hitch.id}`)).toBe(true);
+      expect(Math.abs(socket.position.x)).toBeGreaterThan(13);
+      expect(socket.position.z).toBeGreaterThan(-10);
+    }
   });
 
   it('keeps decorative sails and fittings clear of the landing envelope with bounded geometry', () => {
@@ -78,8 +118,8 @@ describe('Windhaven stationary blockout', () => {
         if (object.userData.visualOnly && Math.abs(x) < 10.25 && z < -11 && z > -34) expect(y).toBeLessThan(0.15);
       }
     });
-    expect(meshes).toBeLessThanOrEqual(14);
-    expect(triangles).toBeLessThan(80000);
+    expect(meshes).toBeLessThanOrEqual(28);
+    expect(triangles).toBeLessThan(100000);
   });
 
   it('has continuous landing ground and unobstructed airspace for the largest wingspan', () => {

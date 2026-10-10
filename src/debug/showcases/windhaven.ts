@@ -2,10 +2,12 @@ import { Vector3 } from 'three';
 import type { BreedId } from '../../core/types';
 import { BREEDS, BREED_ORDER } from '../../flight/breeds';
 import { BREED_DEFAULT_COLORS } from '../../cosmetics/catalog';
-import { buildWindhaven } from '../../world/airship/Windhaven';
+import { buildWindhaven, type WindhavenView } from '../../world/airship/Windhaven';
+import type { Game } from '../../game/Game';
 import { WINDHAVEN_ORIGIN as O, windhavenColliders, windhavenPlan } from '../../world/airship/windhavenPlan';
 import type { Showcase } from '../showcase';
 
+const ships = new WeakMap<Game, WindhavenView>();
 const windhaven: Showcase = {
   name: 'windhaven',
   description: 'Stationary Windhaven blockout: &shipcam=overview|top|side|play &breed=galewing',
@@ -13,7 +15,9 @@ const windhaven: Showcase = {
     const parts = windhavenPlan();
     const colliders = windhavenColliders(parts);
     game.world.terrain.colliders.addSource('windhaven', () => colliders);
-    game.scene.add(buildWindhaven(parts));
+    const ship = buildWindhaven(parts);
+    ships.set(game, ship);
+    game.scene.add(ship);
     game.debug.play = true;
     game.debug.tod ??= 0.42;
     game.debug.weather ??= 'clear';
@@ -31,6 +35,8 @@ const windhaven: Showcase = {
       top: [[0, 112, -0.1], [0, 0, 0]],
       side: [[88, 13, 0], [0, 5, 0]],
       cabin: [[16, 9, 11], [0, 3, 21]],
+      windows: [[9, 2.4, 21.4], [0, 2.4, 21.4]],
+      hitches: [[23, 5, -8], [13.35, 1, 3]],
     } as const;
     const camera = (name: string) => {
       const pose = cameras[name as keyof typeof cameras];
@@ -65,6 +71,10 @@ const windhaven: Showcase = {
     button('Top', () => camera('top'));
     button('Side', () => camera('side'));
     button('Cabin', () => camera('cabin'));
+    button('Windows', () => camera('windows'));
+    button('Hitches', () => camera('hitches'));
+    button('Clear wind', () => { game.debug.weather = 'clear'; game.weather.set('clear', true); });
+    button('Breezy wind', () => { game.debug.weather = 'breezy'; game.weather.set('breezy', true); });
     const play = (mode: 'landed' | 'onFoot') => {
       place(mode);
       camera('play');
@@ -85,13 +95,14 @@ const windhaven: Showcase = {
     select.onchange = () => { breed = select.value as BreedId; place(); select.blur(); };
     const help = document.createElement('p');
     help.style.margin = '8px 0 0';
-    help.textContent = 'Use normal keyboard or controller movement, mount and launch controls. Drag the view to look around. Walk deck returns you to the terrace.';
+    help.textContent = 'Sails respond to live world wind, including in inspection views. Four hitch mounts reserve future attachment points. Drag to look around; Walk deck returns you to the terrace.';
     panel.append(row, status, select, help);
     document.body.append(panel);
   },
-  update(game) {
+  update(game, dt) {
     // Keep review buttons reachable; the existing uncaptured drag camera still works.
     if (game.input.pointerLockWanted) game.input.setPointerLock(false);
+    ships.get(game)?.updateCloth(game.screen === 'pause' ? 0 : dt, (p, out) => game.weather.windAt(p, out));
   },
 };
 export default windhaven;

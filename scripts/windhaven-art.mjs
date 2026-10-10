@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { chromium } from 'playwright';
 
 const origin = process.argv[2] ?? 'http://127.0.0.1:5174';
-const output = 'shots/windhaven-art';
+const output = 'shots/windhaven-art-2';
 fs.mkdirSync(output, { recursive: true });
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
@@ -50,6 +50,35 @@ try {
   await shot('dismount');
   await page.getByRole('button', { name: 'Cabin', exact: true }).click();
   await shot('cabin');
+  for (const name of ['Windows', 'Hitches']) {
+    await page.getByRole('button', { name, exact: true }).click();
+    await shot(name.toLowerCase());
+  }
+  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await page.getByRole('button', { name: 'Breezy wind', exact: true }).click();
+  await advance(2);
+  await shot('wind-a');
+  const clothBefore = await page.evaluate(() => window.__dw.game.scene.getObjectByName('Windhaven').sails.map(s => Array.from(s.solver.pos)));
+  await advance(1);
+  await shot('wind-b');
+  const cloth = await page.evaluate(before => {
+    const ship = window.__dw.game.scene.getObjectByName('Windhaven');
+    return ship.sails.map((s, i) => {
+      let motion = 0, anchorError = 0;
+      s.solver.pos.forEach((v, j) => {
+        motion = Math.max(motion, Math.abs(v - before[i][j]));
+        if (s.pinned[Math.floor(j / 3)]) anchorError = Math.max(anchorError, Math.abs(v - s.rest[j]));
+      });
+      return { name: s.mesh.name, motion, anchorError };
+    });
+  }, clothBefore);
+  assert.equal(cloth.length, 9);
+  for (const sail of cloth) { assert.ok(sail.motion > 0.0001, `${sail.name} moves in world wind`); assert.equal(sail.anchorError, 0); }
+  await page.evaluate(() => window.__dw.game.pause());
+  const paused = await page.evaluate(() => window.__dw.game.scene.getObjectByName('Windhaven').sails.map(s => Array.from(s.solver.pos)));
+  await advance(1);
+  assert.deepEqual(await page.evaluate(() => window.__dw.game.scene.getObjectByName('Windhaven').sails.map(s => Array.from(s.solver.pos))), paused);
+  await page.evaluate(() => window.__dw.game.resume());
   const metrics = await page.evaluate(() => {
     const ship = window.__dw.game.scene.getObjectByName('Windhaven');
     let meshes = 0, triangles = 0, instances = 0;
@@ -62,6 +91,6 @@ try {
     return { meshes, triangles, instances, runtimeErrors: window.__dw.errors };
   });
   assert.deepEqual([...errors, ...metrics.runtimeErrors], []);
-  fs.writeFileSync(`${output}/metrics.json`, JSON.stringify({ quality: 'high', viewport: [1440, 900], browser: 'Chromium with SwiftShader; not physical GPU profiling', ...metrics }, null, 2));
+  fs.writeFileSync(`${output}/metrics.json`, JSON.stringify({ quality: 'high', viewport: [1440, 900], browser: 'Chromium with SwiftShader; not physical GPU profiling', cloth, pauseVerified: true, ...metrics }, null, 2));
   console.log(JSON.stringify(metrics));
 } finally { await browser.close(); }
