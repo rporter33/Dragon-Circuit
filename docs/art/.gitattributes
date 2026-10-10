@@ -1,0 +1,3 @@
+# Preserve the supplied pack exactly, including its original line endings.
+Driftwing_Codex_Handoff/** -text
+*.zip -text
