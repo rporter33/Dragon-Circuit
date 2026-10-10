@@ -103,3 +103,13 @@ git show origin/docs/windline-bracer-concept:docs/concepts/WINDLINE_BRACER_SWING
 The earlier supplied complete Air Nomad/Sky Lance reference pack remains authoritative for fine art decisions; if it is not actually present in Codex's filesystem/repo, request it rather than inventing its contents. The poster is optional supplementary visual evidence and must be labeled concept art, not approved game design.
 
 **Requested next action from Codex:** Phase 0 only: review feasibility, dependencies, controls, specific code entry points, physics risks and a gate-by-gate implementation proposal. Await explicit implementation authorization.
+
+## 10. GitHub visual references
+
+**Mechanics diagram (SVG; repo-native, scalable):** [Windline Bracer / Sky Lance mechanics](../../assets/concepts/windline_bracer_mechanics.svg). This is a new simplified technical schematic showing static anchor, harness load path, bracer, swing arc and release.
+
+**Original generated poster — compressed preview only:** [Navigator's Grapple concept poster preview](../../assets/concepts/navigators_grapple_poster_preview.webp). This is a **256 × 171 WebP preview**, not the full-resolution poster; small captions will not be readable. The original 1536 × 1024 PNG remains available as a conversation attachment from the owner. For full art critique, acquire/commit that original file explicitly. Codex should not claim the reduced thumbnail preserves the art's fine details.
+
+![Concept poster preview](../../assets/concepts/navigators_grapple_poster_preview.webp)
+
+![Mechanics diagram](../../assets/concepts/windline_bracer_mechanics.svg)
