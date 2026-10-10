@@ -405,7 +405,7 @@ export class GroundLayer {
    */
   touchdown(): void {
     const f = this.f;
-    this.dip.velocity -= clamp(f.sink, 1.5, 10) * (0.24 + 0.08 * f.heft) * (f.sh / 2.6);
+    this.dip.velocity -= clamp(f.sink, f.pose.touchdown ? 0 : 1.5, 10) * (0.24 + 0.08 * f.heft) * (f.sh / 2.6);
     this.gaitCtx.standHeight = f.sh;
     this.gait.plantAt(this.footWorld, this.gaitCtx);
   }

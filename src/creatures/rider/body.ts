@@ -434,10 +434,9 @@ function legSkin(d: RigDims, s: number, side: Side): SkinSpec {
   const sh = side > 0 ? B.shinL : B.shinR;
   const ft = side > 0 ? B.footL : B.footR;
   const k = d.thigh;
-  if (s < 0.05 && s > -1) {
-    // The top of the thigh blends into the pelvis so the hip crease stays soft.
-    if (s < -0.02) return sk2(B.hips, th, 0.55);
-  }
+  // Spread pelvis influence over the hip instead of dropping 45% at a single ring.
+  // Scale the field with the build, preserving the original upper attachment weight.
+  if (s < 0.05 * d.h) return sk2(B.hips, th, 0.55 + 0.45 * smooth(-0.02 * d.h, 0.05 * d.h, s));
   if (s < k - 0.05) return sk(th);
   if (s < k + 0.05) return sk2(th, sh, smooth(k - 0.05, k + 0.05, s));
   const L = d.thigh + d.shin;

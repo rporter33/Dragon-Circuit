@@ -33,12 +33,12 @@ export class AnimFrame {
   /** Breed constants: stand height (m) and heft (0 lightest … 1 heaviest). */
   sh = 0;
   heft = 0;
-  /** First frame, or a jump of more than 40 m: every spring and chain starts from rest. */
+  /** First frame, explicit reset, or a jump of more than 40 m: every spring and chain starts from rest. */
   teleport = false;
   airborne = false;
   /** This frame the wyvern came down out of the air. */
   touchdown = false;
-  /** Sink rate (m/s) the frame before a touchdown. */
+  /** Terrain-normal impact speed (m/s), or previous rendered sink for legacy poses. */
   sink = 0;
   /** Air ↔ ground blends (smoothed): body and wings, the legs (quicker). */
   airW = 1;

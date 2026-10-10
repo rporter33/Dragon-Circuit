@@ -17,6 +17,12 @@ import { GroundWalker, standingOrientation } from '../../player/ground';
 import { PLAYER_TUNING as P } from '../../player/tuning';
 import { gaitProfile } from '../../core/gait';
 import { DEG } from '../../core/math';
+import { Player } from '../../player/Player';
+import { emptyFrame } from '../../input/Input';
+import { EventBus } from '../../core/events';
+import { Terrain } from '../../world/terrain';
+import { LAYOUT } from '../../world/layout';
+import { DEFAULT_SETTINGS } from '../../game/settings';
 
 const _p = new Vector3();
 const _q = new Vector3();
@@ -1095,3 +1101,130 @@ function foldedStance(w: Wyvern) {
   }
   return { sides, maxHalfWidth, outboard };
 }
+
+
+describe('authoritative touchdown presentation', () => {
+  for (const breed of BREED_ORDER) {
+    it(`${breed}: uses contact impact once, including gentle contact and short teleports`, () => {
+      const w = new Wyvern(look(breed));
+      const pose = standing(breed);
+      pose.touchdown = { id: 0, reset: 0, impact: 0 };
+      pose.airborne = true;
+      pose.velocity.set(0, -20, 5); // Deliberately disagrees with terrain-normal impact.
+      w.update(1 / 60, pose);
+      pose.airborne = false;
+      pose.touchdown.id++;
+      pose.touchdown.impact = 0.2;
+      w.update(1 / 60, pose);
+      expect(w['animator'].frame.touchdown).toBe(true);
+      expect(w['animator'].frame.sink).toBe(0.2);
+      expect(w['animator'].frame.landImpact).toBeCloseTo(0.025);
+      for (const dt of [0, 1 / 144, 1 / 60, 1 / 30]) {
+        w.update(dt, pose);
+        expect(w['animator'].frame.touchdown).toBe(false);
+      }
+      pose.airborne = true;
+      w.update(1 / 60, pose);
+      pose.airborne = false;
+      pose.position.x += 1;
+      pose.touchdown.reset++;
+      w.update(0, pose);
+      expect(w['animator'].frame.teleport).toBe(true);
+      expect(w['animator'].frame.touchdown).toBe(false);
+      expect(w['animator'].frame.landT).toBeGreaterThan(90);
+      w.update(1 / 60, pose);
+      expect(w['animator'].frame.touchdown).toBe(false);
+      // A later hard contact still works after reset.
+      pose.airborne = true;
+      w.update(1 / 60, pose);
+      pose.airborne = false;
+      pose.touchdown.id++;
+      pose.touchdown.impact = 6;
+      w.update(1 / 60, pose);
+      expect(w['animator'].frame.sink).toBe(6);
+      expect(w['animator'].frame.landImpact).toBe(0.75);
+      w.dispose();
+    });
+  }
+});
+
+
+it('keeps authoritative landing response bounded across render rates and interrupted settling', () => {
+  for (const breed of BREED_ORDER) {
+    const settled: number[] = [];
+    for (const fps of [30, 60, 120, 144, -1]) {
+      const w = new Wyvern(look(breed));
+      const pose = standing(breed);
+      pose.touchdown = { id: 0, reset: 0, impact: 0 };
+      pose.airborne = true;
+      w.update(1 / 60, pose);
+      pose.airborne = false;
+      pose.touchdown.id = 1;
+      pose.touchdown.impact = 5;
+      let time = 0, impulses = 0, frame = 0;
+      while (time < 1 - 1e-8) {
+        const dt = Math.min(1 - time, fps > 0 ? 1 / fps : [1 / 30, 1 / 144, 1 / 60][frame++ % 3]);
+        w.update(dt, pose);
+        if (w['animator'].frame.touchdown) impulses++;
+        expect(w['animator'].frame.landImpact).toBe(5 / 8);
+        time += dt;
+      }
+      expect(impulses).toBe(1);
+      settled.push(w.saddle.getWorldPosition(new Vector3()).y);
+      // Taking off while settling cannot replay the previous contact.
+      pose.airborne = true;
+      pose.gait = 'takeoff';
+      w.update(0, pose);
+      w.update(1 / 60, pose);
+      expect(w['animator'].frame.touchdown).toBe(false);
+      expect(Number.isFinite(w['animator'].frame.dipV)).toBe(true);
+      w.dispose();
+    }
+    expect(Math.max(...settled) - Math.min(...settled), breed).toBeLessThan(0.05);
+  }
+});
+
+
+it('preserves fixed-step landing outcomes with interpolated presentation at every render rate', () => {
+  const terrain = new Terrain(LAYOUT);
+  for (const breed of BREED_ORDER) {
+    const finalStates: number[][] = [];
+    const saddleHeights: number[] = [];
+    for (const fps of [30, 60, 120, 144, -1]) {
+      const events = new EventBus<import('../../core/types').GameEvents>();
+      const player = new Player({ terrain, env: { terrain, windAt: (_p, out) => out.set(0, 0, 0) },
+        events, breed, settings: () => DEFAULT_SETTINGS });
+      const w = new Wyvern(look(breed), { terrain });
+      const ground = terrain.groundAt(0, -60, 1e6)!;
+      player.teleport(new Vector3(0, ground.y + BREEDS[breed].standHeight + 0.15, -60), 0, 'flying', 10);
+      player.flight.velocity.y = -0.4;
+      w.update(0, player.wyvernPose);
+      const input = emptyFrame();
+      input.flight.flare = 1;
+      let elapsed = 0, ticks = 0, frame = 0, impulses = 0, impact = -1;
+      events.on('touchdown', (event) => { impact = event.impact; });
+      while (elapsed < 2 - 1e-8) {
+        const dt = Math.min(2 - elapsed, fps > 0 ? 1 / fps : [1 / 30, 1 / 144, 1 / 60][frame++ % 3]);
+        elapsed += dt;
+        const targetTicks = Math.floor(elapsed * 120 + 1e-8);
+        while (ticks < targetTicks) {
+          player.fixedUpdate(1 / 120, input, 0);
+          ticks++;
+        }
+        player.update(dt, Math.max(0, elapsed * 120 - ticks));
+        w.update(dt, player.wyvernPose);
+        if (w['animator'].frame.touchdown) {
+          impulses++;
+          expect(w['animator'].frame.sink).toBe(impact);
+        }
+      }
+      expect(player.mode).toBe('landed');
+      expect(impulses).toBe(1);
+      finalStates.push([...player.flight.position.toArray(), ...player.flight.velocity.toArray()]);
+      saddleHeights.push(w.saddle.getWorldPosition(new Vector3()).y);
+      w.dispose();
+    }
+    for (const state of finalStates) expect(state).toEqual(finalStates[0]);
+    expect(Math.max(...saddleHeights) - Math.min(...saddleHeights), breed).toBeLessThan(0.05);
+  }
+});

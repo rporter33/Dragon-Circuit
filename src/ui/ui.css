@@ -3336,3 +3336,12 @@
   animation: none !important;
   opacity: 1;
 }
+
+/* Introductory local chart; all geometry is derived from the analytic island outlines. */
+.dw-guide-chart { display: block; width: 100%; max-height: 45vh; background: #1e3540; border-radius: 0.5em; }
+.dw-guide-chart polygon { fill: #697d64; stroke: #bdc3a0; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.dw-guide-chart text { fill: #fff2d4; paint-order: stroke; stroke: #1e3540; stroke-width: 3; stroke-linejoin: round; }
+.dw-guide-chart circle { fill: #e9d8af; }
+.dw-guide-chart .is-shrine { fill: #ffc96e; }
+.dw-guide-chart .is-player { fill: #a9e1ee; }
+.dw-mark.is-shrine, .dw-mark-label.is-shrine { color: #ffc96e; }

@@ -31,6 +31,10 @@ import type { GameActions, GameScreen, GameView, Interactable, RaceSystem } from
 import { guessQuality } from './settings';
 import { computePrompt } from '../player/prompts';
 import { Interactables } from './interactables';
+import { Research } from '../research/Research';
+import { airshipStage } from '../research/state';
+import { shrineInteraction } from '../research/firstLeadEncounter';
+import { FirstLead } from '../world/dressing/ventari/FirstLead';
 import { readDebugParams, type DebugParams } from '../debug/params';
 import { findShowcase, type Showcase } from '../debug/showcase';
 
@@ -58,6 +62,8 @@ export class Game implements GameActions {
   readonly collectibles: Collectibles;
   readonly fx: Fx;
   readonly audio: AudioSystem;
+  readonly research: Research;
+  readonly firstLead: FirstLead;
   readonly ui: Ui;
   readonly debug: DebugParams;
 
@@ -127,7 +133,10 @@ export class Game implements GameActions {
     this.cameraRig = new CameraRig(this.camera, this.world.terrain, () => this.settings, this.events);
     this.wyvern = new Wyvern(this.save.data.wyvern, { terrain: this.world.terrain });
     this.wyvern.setQuality(quality);
-    this.rider = new Rider(this.save.data.rider, { terrain: this.world.terrain, saddle: this.wyvern.saddle, events: this.events, quality });
+    this.rider = new Rider(this.save.data.rider, {
+      terrain: this.world.terrain, saddle: this.wyvern.saddle, events: this.events, quality,
+      socket: (name, out) => this.wyvern.socket(name, out),
+    });
     this.scene.add(this.wyvern.group, this.rider.group);
     this.races = new Races({
       scene: this.scene,
@@ -180,6 +189,20 @@ export class Game implements GameActions {
       renderer: this.renderer,
     };
 
+    this.research = new Research(this.save, this.events);
+    const shrine = this.dressing.ventariSites.find((s) => s.id === 'gullrest-shrine');
+    if (!shrine) throw new Error('First Lead shrine anchor missing');
+    this.view.tutorialShrine = shrine;
+    this.firstLead = new FirstLead(shrine, this.world.terrain);
+    this.firstLead.setStage(airshipStage(this.save.data.research));
+    this.scene.add(this.firstLead.group);
+    colliders.addSource('first-lead', () => this.firstLead.colliders);
+    this.syncColliders();
+    this.interactables.add(shrineInteraction(shrine, this.events, () => {
+      this.pause();
+      this.ui.showFirstLead();
+    }));
+    this.events.on('codexStage', () => this.firstLead.setStage(airshipStage(this.save.data.research)));
     this.placeAtSpawn();
     this.applyDebug();
     this.wireEvents();
@@ -375,6 +398,8 @@ export class Game implements GameActions {
     if (this.races.activeId) this.races.abort('quit');
     (this.races as RaceSystem).resetProgress?.();
     this.save.reset();
+    this.research.refresh();
+    this.firstLead.setStage(0);
     // Everything that follows the save re-reads it: the breed's physics, the models, collectibles
     // (they notice the new save), the HUD's discoveries and the tips.
     this.previewWyvernLook(this.save.data.wyvern);
@@ -386,6 +411,7 @@ export class Game implements GameActions {
   // --- Internals ------------------------------------------------------------------------------
 
   private setScreen(screen: GameScreen): void {
+    this.audio.setScreen(screen);
     this.screen = screen;
     this.adaptiveGrace = Math.max(this.adaptiveGrace, 1);
     this.ui.setScreen(screen);

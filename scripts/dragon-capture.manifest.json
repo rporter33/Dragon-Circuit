@@ -37,8 +37,8 @@
     "HDG": "(()=>{const w=__dw.game.player.wyvernPose;const f=w.position.clone().set(0,0,1).applyQuaternion(w.orientation);return 'hdg '+(Math.atan2(f.x,f.z)*57.2958).toFixed(0)+'° '+__cap.state()})()"
   },
   "vars": {
-    "breeds": [{"breed": "harrier", "span": 13}, {"breed": "skimmer", "span": 11.2}, {"breed": "galewing", "span": 17.5}, {"breed": "ironback", "span": 13.5}],
-    "pair": [{"breed": "harrier", "span": 13}, {"breed": "ironback", "span": 13.5}],
+    "breeds": [{"breed": "harrier", "span": 15.5}, {"breed": "skimmer", "span": 13}, {"breed": "galewing", "span": 20.5}, {"breed": "ironback", "span": 16}],
+    "pair": [{"breed": "harrier", "span": 15.5}, {"breed": "ironback", "span": 16}],
     "goldNoon": [{"name": "golden", "tod": 0.7}, {"name": "noon", "tod": 0.5}],
     "tods": [{"name": "dawn", "tod": 0.27}, {"name": "noon", "tod": 0.5}, {"name": "golden", "tod": 0.7}, {"name": "dusk", "tod": 0.76}, {"name": "night", "tod": 0.95}],
     "phases": [{"n": "000", "v": 0}, {"n": "025", "v": 0.25}, {"n": "050", "v": 0.5}, {"n": "075", "v": 0.75}],
@@ -257,6 +257,232 @@
         {"id": "a2-tack-up-{b.breed}", "each": {"b": "$pair"}, "stage": "breed={b.breed}&pose=flap&phase=0&cam=front&focus=chest&camDist={=b.span*0.6}", "desc": "{b.breed}: the top of the upstroke from the front: the humerus heads beside the withers, the yoke ahead of them"},
         {"id": "a2-tack-down-{b.breed}", "each": {"b": "$pair"}, "stage": "breed={b.breed}&pose=flap&phase=0.5&camAz=60&camEl=10&focus=chest&camDist={=b.span*0.6}", "desc": "{b.breed}: the bottom of the downstroke, front three-quarter: the yoke clear of the wing roots"}
       ]
+    },
+{
+  "id": "fidelity",
+  "title": "Gate A — anatomy and supported contact",
+  "dir": "fidelity",
+  "items": [
+    {
+      "id": "fidelity-roots-{b.breed}",
+      "each": {
+        "b": "$breeds"
+      },
+      "kind": "grid",
+      "size": "640x450",
+      "stage": "breed={b.breed}&rider=0&sky=native&tod=0.42&cam=three&camDist={=b.span*0.75}",
+      "settle": 1,
+      "cells": [
+        {
+          "label": "idle",
+          "stage": "pose=idle"
+        },
+        {
+          "label": "takeoff",
+          "stage": "pose=takeoff"
+        },
+        {
+          "label": "flap",
+          "stage": "pose=flap"
+        },
+        {
+          "label": "bankL",
+          "stage": "pose=bankL"
+        },
+        {
+          "label": "flare",
+          "stage": "pose=flare"
+        },
+        {
+          "label": "walk",
+          "stage": "pose=walk"
+        },
+        {
+          "label": "run",
+          "stage": "pose=run"
+        },
+        {
+          "label": "idle&kneel=1",
+          "stage": "pose=idle&kneel=1"
+        }
+      ],
+      "cols": 4,
+      "telemetry": true,
+      "desc": "Root volume/silhouette pose matrix (synthetic poses, not physical landings)"
+    },
+    {
+      "id": "fidelity-rider-{b.breed}-{build}-{v.name}",
+      "each": {
+        "b": "$breeds",
+        "build": [
+          "slight",
+          "medium",
+          "broad"
+        ],
+        "v": [
+          {
+            "name": "front",
+            "az": 0
+          },
+          {
+            "name": "side",
+            "az": 90
+          },
+          {
+            "name": "three",
+            "az": 45
+          }
+        ]
+      },
+      "size": "800x600",
+      "stage": "breed={b.breed}&pose=glide&cam=three&sky=native&tod=0.42",
+      "steps": [
+        {
+          "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'{build}'})"
+        }
+      ],
+      "aim": {
+        "target": "rider",
+        "az": "{v.az}",
+        "el": 12,
+        "dist": 3.7
+      },
+      "settle": 1,
+      "telemetry": true,
+      "desc": "Mounted hip and limb continuity; {b.breed}, {build}"
+    },
+    {
+      "id": "fidelity-land-gentle-{b.breed}",
+      "each": {
+        "b": "$breeds"
+      },
+      "kind": "strip",
+      "size": "640x450",
+      "stage": "breed={b.breed}&real=landing&cam=side&camDist={=b.span*0.85}&sky=native&tod=0.42",
+      "steps": [
+        {
+          "eval": "const g=window.__dw.game,p=g.player; g.save.data.firstLeadGuide='skipped';g.save.data.tutorialDone=true;g.resume();g.debug.freeze=false; const hit=g.world.terrain.groundAt(0,-60,1e6); p.teleport(p.position.clone().set(0,hit.y+p.breed.standHeight+0.15,-60),0,'flying',10); p.flight.velocity.y=-0.4;"
+        }
+      ],
+      "settle": 0,
+      "frames": 8,
+      "step": 0.45,
+      "input": {
+        "flight": {
+          "flare": 1
+        }
+      },
+      "label": "__cap.state()",
+      "telemetry": true,
+      "stance": true,
+      "cols": 4,
+      "desc": "Low-sink requested approach on clear Roost terrain; actual contact impact recorded"
+    },
+    {
+      "id": "fidelity-land-hard-{b.breed}",
+      "each": {
+        "b": "$breeds"
+      },
+      "kind": "strip",
+      "size": "640x450",
+      "stage": "breed={b.breed}&real=landing&cam=side&camDist={=b.span*0.85}&sky=native&tod=0.42",
+      "steps": [
+        {
+          "eval": "const g=window.__dw.game,p=g.player; g.save.data.firstLeadGuide='skipped';g.save.data.tutorialDone=true;g.resume();g.debug.freeze=false; const hit=g.world.terrain.groundAt(0,-60,1e6); p.teleport(p.position.clone().set(0,hit.y+p.breed.standHeight+0.15,-60),0,'flying',10); p.flight.velocity.y=-5;"
+        }
+      ],
+      "settle": 0,
+      "frames": 8,
+      "step": 0.45,
+      "input": {
+        "flight": {
+          "flare": 0
+        }
+      },
+      "label": "__cap.state()",
+      "telemetry": true,
+      "stance": true,
+      "cols": 4,
+      "desc": "Higher-sink requested approach on clear Roost terrain; actual contact impact recorded"
+    },
+    {
+      "id": "fidelity-cost",
+      "kind": "measure",
+      "measure": {
+        "iterations": 180,
+        "allocIterations": 120
+      },
+      "desc": "Existing inventory, CPU, construction and allocation tooling (software-renderer browser)"
+    },
+    {
+      "id": "fidelity-reference-wyvern-custom",
+      "boot": "stable",
+      "ui": "show",
+      "settle": 1,
+      "desc": "Reconstructed customization scene; not an exact video match"
+    },
+    {
+      "id": "fidelity-reference-rider-custom",
+      "boot": "stable",
+      "ui": "show",
+      "steps": [
+        {
+          "advance": 0.3
+        },
+        {
+          "eval": "window.__dw.game.ui.topPanel.selectTab(5)"
+        }
+      ],
+      "settle": 1,
+      "desc": "Reconstructed rider customization; tab selection must be checked visually"
+    },
+    {
+      "id": "fidelity-reference-discovery",
+      "boot": "flight",
+      "ui": "show",
+      "steps": [
+        {
+          "eval": "const g=window.__dw.game; g.save.data.tutorialDone=true; delete g.save.data.firstLeadGuide; g.resume();"
+        }
+      ],
+      "settle": 1,
+      "desc": "Current first-discovery prompt after completed controls; reconstructed scene"
+    },
+    {
+      "id": "fidelity-reference-low-speed",
+      "boot": "showcase",
+      "stage": "fresh=1&sky=native&tod=0.42&breed=harrier&real=landing&cam=top&camDist=20",
+      "steps": [
+        {
+          "eval": "window.__dw.game.resume(); window.__dw.game.debug.freeze=false;"
+        }
+      ],
+      "kind": "strip",
+      "frames": 8,
+      "step": 0.25,
+      "telemetry": true,
+      "settle": 0,
+      "label": "__cap.state()",
+      "desc": "Reconstructed low approach near Roost buildings; contact telemetry, not proof of video roof collision"
+    },
+    {
+      "id": "fidelity-reference-flight",
+      "boot": "flight",
+      "ui": "show",
+      "kind": "strip",
+      "frames": 6,
+      "step": 0.4,
+      "telemetry": true,
+      "settle": 0,
+      "label": "__cap.state()",
+      "desc": "Reconstructed real flight attachment and camera scene; clear weather rather than unverified video haze",
+      "steps": [
+        {
+          "eval": "window.__dw.game.save.data.firstLeadGuide='skipped';window.__dw.game.resume();"
+        }
+      ]
     }
+  ]
+}
   ]
 }

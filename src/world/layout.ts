@@ -159,13 +159,13 @@ function buildLayout(): WorldLayout {
   islands.push(
     island({
       id: id(), kind: 'roost', landmark: 'roost', name: 'Windward Roost',
-      x: 0, y: 240, z: 0, radius: 170, outline: 0.14, hills: 7, depth: 170, lip: 11,
-      flatCenter: 0.55, trees: 0.25, grass: 1, waterfalls: 1,
+      x: 0, y: 240, z: 0, radius: 170, outline: 0.14, hills: 3, depth: 170, lip: 11,
+      flatCenter: 0.55, trees: 0.18, grass: 1, waterfalls: 1,
     }),
     island({
       id: id(), kind: 'meadow', landmark: 'gullrest', name: "Gull's Rest",
-      x: 560, y: 330, z: 420, radius: 75, outline: 0.22, hills: 6, depth: 110, lip: 8,
-      flatCenter: 0.3, trees: 0.15, grass: 1,
+      x: 560, y: 330, z: 420, radius: 75, outline: 0.22, hills: 2, depth: 110, lip: 8,
+      flatCenter: 0.65, trees: 0.06, grass: 1,
     }),
     island({
       id: id(), kind: 'cascade', landmark: 'cascade', name: 'Cascade Isle',
@@ -184,8 +184,8 @@ function buildLayout(): WorldLayout {
     }),
     island({
       id: id(), kind: 'plateau', landmark: 'highmoor', name: 'Highmoor',
-      x: -450, y: 760, z: 420, radius: 185, outline: 0.24, hills: 26, depth: 230, lip: 14,
-      flatCenter: 0.05, trees: 0.08, grass: 1,
+      x: -450, y: 760, z: 420, radius: 185, outline: 0.24, hills: 8, depth: 230, lip: 14,
+      flatCenter: 0.5, trees: 0.05, grass: 1,
     }),
     island({
       id: id(), kind: 'grove', landmark: 'glowcap', name: 'Glowcap Grove',

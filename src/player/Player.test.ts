@@ -218,11 +218,19 @@ describe('takeoff and landing', () => {
     const td = r.log.find((e) => e.type === 'touchdown')!.payload as GameEvents['touchdown'];
     expect(td.impact).toBeLessThan(P.landSink);
     expect(td.surface).toBeDefined();
+    expect(r.player.wyvernPose.touchdown?.impact).toBe(td.impact);
+    expect(r.player.wyvernPose.touchdown?.id).toBe(1);
+    const reset = r.player.wyvernPose.touchdown!.reset;
+
     const gNow = groundAt(r.player.position.x, r.player.position.z);
     expect(r.player.position.y - gNow.y).toBeCloseTo(BREEDS.harrier.standHeight, 2);
     // Settles to a stop and stands.
     r.run(3);
     expect(r.player.wyvernPose.gait).toBe('idle');
+    r.player.teleport(r.player.position.clone().add(new Vector3(1, 0, 0)), 0, 'landed');
+    expect(r.player.wyvernPose.touchdown!.reset).toBe(reset + 1);
+    expect(r.player.wyvernPose.touchdown!.impact).toBe(0);
+
     expect(r.player.wyvernPose.airborne).toBe(false);
   });
 

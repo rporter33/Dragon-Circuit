@@ -43,8 +43,8 @@ export const TIPS: readonly TipDef[] = [
   { id: 'flap', title: 'Beat your wings', body: 'Hold {flap} to climb. Every wingbeat costs stamina — glide to win it back.', anchor: 'card', core: true, after: ['takeoff'], minTime: 4, maxTime: 12 },
   {
     id: 'pitch',
-    title: 'Climb and dive',
-    body: 'Pull up gently with {pitch} to climb; push down to dive for speed. If you stall, beat your wings and let the nose fall.',
+    title: 'Steer, climb and dive',
+    body: 'Bank left or right with {roll}. Pull up gently with {pitch} to climb; push down to dive for speed. If you stall, beat your wings and let the nose fall.',
     anchor: 'card',
     core: true,
     after: ['flap'],

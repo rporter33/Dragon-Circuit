@@ -103,7 +103,9 @@ export class Player implements PlayerSystem {
   mode: PlayerMode = 'flying';
   breed: BreedStats;
   readonly model: FlightModel;
+  private readonly contact = { id: 0, reset: 0, impact: 0 };
   readonly wyvernPose: WyvernPose = Object.assign(createWyvernPose(), {
+    touchdown: this.contact,
     control: { pitch: 0, roll: 0, yaw: 0 },
     gust: { l: 0, r: 0 },
     // A tired wyvern's ragged beat (B7): this beat's amplitude, the right wing's lag.
@@ -637,6 +639,9 @@ export class Player implements PlayerSystem {
     this.stillTime = 0;
     this.setMode('landed');
     this.setGait('landing');
+    const contact = this.contact;
+    contact.id++;
+    contact.impact = sink;
     this.deps.events.emit('touchdown', { impact: sink, position: w.position.clone().setY(g.y), surface: g.surface });
     this.syncModelFromGround();
   }
@@ -1030,6 +1035,8 @@ export class Player implements PlayerSystem {
   }
 
   private resetTransitions(): void {
+    this.contact.reset++;
+    this.contact.impact = 0;
     this.takeoffTimer = -1;
     this.respawnPlaced = false;
     this.flapQueued = 0;
@@ -1326,6 +1333,7 @@ export class Player implements PlayerSystem {
     const s = this.model.state;
     const a = clamp01(alpha);
     const wp = this.wyvernPose;
+    wp.touchdown = this.contact;
     wp.position.lerpVectors(this.prevWyPos, s.position, a);
     wp.orientation.slerpQuaternions(this.prevWyQuat, s.orientation, a);
     if (!this.airborne && this.crouch > 0) wp.position.y -= this.crouch * 0.22 * this.breed.standHeight;

@@ -107,6 +107,8 @@ export class WyvernAnimator {
   private bank = 0;
   private prevAirborne = true;
   private prevVelY = 0;
+  private contactId = 0;
+  private contactReset = 0;
   private stallT = 0;
   private readonly spineYaw = new Spring(5);
   /** 0..1 how hard it has been working lately (flapping); decays while gliding or resting. */
@@ -381,7 +383,9 @@ export class WyvernAnimator {
     this.qWInv.copy(pose.orientation).invert();
     this.upM.copy(UP).applyQuaternion(this.qWInv);
 
-    const teleport = !this.initialized || this.lastPos.distanceToSquared(pose.position) > 40 * 40;
+    const contact = pose.touchdown;
+    const teleport = !this.initialized || this.lastPos.distanceToSquared(pose.position) > 40 * 40
+      || (contact !== undefined && contact.reset !== this.contactReset);
     f.teleport = teleport;
     if (teleport) {
       this.lastPos.copy(pose.position);
@@ -395,6 +399,7 @@ export class WyvernAnimator {
       this.ground.reset();
       this.life.reset();
       this.landT = 99;
+      this.landImpact = 0;
     }
 
     // Body angular velocity: the physics value when given, else derived (ghost playback).
@@ -421,7 +426,11 @@ export class WyvernAnimator {
     // Air/ground blends.
     const airborne = pose.airborne;
     f.airborne = airborne;
-    f.touchdown = !airborne && this.prevAirborne && !teleport;
+    f.touchdown = !airborne && !teleport && (contact ? contact.id !== this.contactId : this.prevAirborne);
+    if (contact) {
+      this.contactId = contact.id;
+      this.contactReset = contact.reset;
+    }
     this.airW = damp(this.airW, airborne ? 1 : 0, airborne ? 6 : 12, dt);
     this.legAirW = damp(this.legAirW, airborne ? 1 : 0, airborne ? 7 : 22, dt);
     const airW = this.airW;
@@ -468,10 +477,10 @@ export class WyvernAnimator {
 
     // Touchdown: how hard it came down (the ground layer plants the feet and kicks the settle).
     if (f.touchdown) {
-      const sink = Math.max(0, -this.prevVelY);
+      const sink = Math.max(0, contact ? contact.impact : -this.prevVelY);
       f.sink = sink;
       this.landT = 0;
-      this.landImpact = Math.max(0.35, clamp01(sink / 8));
+      this.landImpact = contact ? clamp01(sink / 8) : Math.max(0.35, clamp01(sink / 8));
     }
     f.landImpact = this.landImpact;
   }

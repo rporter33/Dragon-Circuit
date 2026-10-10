@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from '../game/settings';
 import type { GhostRecording } from '../game/contracts';
 import { GHOST_STRIDE, LEGACY_SAVE_KEY, LocalSaveStore, MemoryGhostStore, SAVE_KEY, defaultSave, migrateSave, validGhost, type KeyValueStorage } from './save';
 import { featherId } from './relics';
+import { airshipStage, recordResearch, researchState, RIDGE_OBSERVATION } from '../research/state';
 
 class MapStorage implements KeyValueStorage {
   map = new Map<string, string>();
@@ -27,6 +28,16 @@ function ghost(raceId = 'roost-loop', n = 10): GhostRecording {
 }
 
 describe('save migration and sanitizing', () => {
+  it('repairs research ids and ignores forged totals while preserving existing finds', () => {
+    const s = migrateSave({ version: 1, collected: ['relic-ember'], discovered: ['roost'],
+      research: { entries: ['survey:gullrest-shrine:inscription', 'survey:gullrest-shrine:inscription', 'bogus', 7],
+        points: { nature: 999999, antiquity: -8, winds: 'bad' } } });
+    expect(s.research).toEqual({ entries: ['survey:gullrest-shrine:inscription'], points: { nature: 0, antiquity: 20, winds: 3 } });
+    expect(migrateSave(JSON.parse(JSON.stringify(s)))).toEqual(s);
+    expect(s.collected).toEqual(['relic-ember']);
+    expect(s.discovered).toEqual(['roost']);
+  });
+
   it('garbage in, default save out', () => {
     for (const junk of [null, undefined, 42, 'x', [], [1, 2]]) expect(migrateSave(junk)).toEqual(defaultSave());
   });
@@ -41,6 +52,7 @@ describe('save migration and sanitizing', () => {
     s.tutorialDone = true;
     s.settings.fov = 70;
     s.wyvern.horns = 'ram';
+    s.research = researchState(s.research, s);
     expect(migrateSave(JSON.parse(JSON.stringify(s)))).toEqual(s);
   });
 
@@ -93,6 +105,26 @@ describe('save migration and sanitizing', () => {
 });
 
 describe('LocalSaveStore', () => {
+  it('backfills old finds, persists research, and resets rewards and observations', () => {
+    const storage = new MapStorage();
+    storage.setItem(SAVE_KEY, JSON.stringify({ version: 1, collected: ['feather-01', 'relic-ember'], discovered: ['roost'] }));
+    const a = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() });
+    expect(a.data.research).toEqual({ entries: [], points: { nature: 1, antiquity: 10, winds: 3 } });
+    a.data.research = recordResearch(a.data.research, a.data, 'survey:gullrest-shrine:inscription').state;
+    a.data.research = recordResearch(a.data.research, a.data, RIDGE_OBSERVATION).state;
+    a.data.settings.invertPitch = true;
+    a.flush();
+    const b = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() });
+    expect(b.data).toEqual(a.data);
+    expect(airshipStage(b.data.research)).toBe(1);
+    expect(recordResearch(b.data.research, b.data, 'survey:gullrest-shrine:inscription').event).toBeNull();
+    b.reset();
+    const c = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() });
+    expect(c.data.research).toEqual({ entries: [], points: { nature: 0, antiquity: 0, winds: 0 } });
+    expect(airshipStage(c.data.research)).toBe(0);
+    expect(c.data.settings.invertPitch).toBe(true);
+  });
+
   it('persists, reloads and resets (keeping settings)', () => {
     const storage = new MapStorage();
     const a = new LocalSaveStore({ storage, ghosts: new MemoryGhostStore() });
