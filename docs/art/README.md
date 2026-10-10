@@ -22,7 +22,7 @@ or validated orthographic modeling blueprints.
 
 ## Preservation and verification
 
-The [original ZIP](Driftwing_Codex_Complete_Art_Reference_Pack.zip) and all 31 extracted
+The [original ZIP](Driftwing_Codex_Complete_Art_Reference_Pack.zip) and all 32 extracted
 files are preserved byte-for-byte. All 31 entries in the bundled
 [SHA-256 manifest](Driftwing_Codex_Handoff/FILE_HASHES.csv) were verified on import.
 Manifest paths are relative to this directory.

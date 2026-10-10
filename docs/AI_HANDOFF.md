@@ -3,7 +3,7 @@
 - Objective: upload the user's complete art reference pack to Git for future Codex art-direction work.
 - Working branch: `docs/art-reference-pack`, based on remote `main` at
   `bb87b14374ab3e177203385c71cbcb06b472566e`.
-- Completed: preserve the original ZIP and 31 extracted files in `docs/art/`, add
+- Completed: preserve the original ZIP and 32 extracted files in `docs/art/`, add
   a browsable index, and point future Codex work to it through root `AGENTS.md`.
 - Verification: source/copy ZIP SHA-256 match; all 31 bundled manifest hashes match.
   No game tests or builds run because this is a documentation/reference import.
