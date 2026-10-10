@@ -27,9 +27,10 @@ const windhaven: Showcase = {
     status.setAttribute('role', 'status');
     status.style.cssText = 'margin:8px 0;color:#c8e3eb';
     const cameras = {
-      overview: [[60, 40, -66], [0, 3, 0]],
+      overview: [[52, 32, -58], [0, 5, 0]],
       top: [[0, 112, -0.1], [0, 0, 0]],
-      side: [[105, 22, 0], [0, 5, 0]],
+      side: [[88, 13, 0], [0, 5, 0]],
+      cabin: [[16, 9, 11], [0, 3, 21]],
     } as const;
     const camera = (name: string) => {
       const pose = cameras[name as keyof typeof cameras];
@@ -46,10 +47,10 @@ const windhaven: Showcase = {
     panel.setAttribute('aria-label', 'Windhaven review');
     panel.style.cssText = 'position:fixed;top:14px;left:14px;z-index:30;max-width:360px;padding:14px 16px;background:#142c3aeb;color:#f2e7cd;border:1px solid #bba074;border-radius:8px;font:14px/1.5 system-ui;pointer-events:auto';
     const title = document.createElement('strong');
-    title.textContent = 'WINDHAVEN / walkable blockout';
+    title.textContent = 'WINDHAVEN / traveling home — art study';
     const note = document.createElement('p');
     note.style.margin = '5px 0 10px';
-    note.textContent = '72 m hull · 28 m working deck. Stationary prototype. Crafting, ship steering and stable services are not connected. Sail cloth has no collision.';
+    note.textContent = '72 m hull · 28 m working deck. A home for journeys between regions. Art preview: destination travel, crafting and stable services are still to come.';
     panel.append(title, note);
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
@@ -63,6 +64,7 @@ const windhaven: Showcase = {
     button('Overview', () => camera('overview'));
     button('Top', () => camera('top'));
     button('Side', () => camera('side'));
+    button('Cabin', () => camera('cabin'));
     const play = (mode: 'landed' | 'onFoot') => {
       place(mode);
       camera('play');

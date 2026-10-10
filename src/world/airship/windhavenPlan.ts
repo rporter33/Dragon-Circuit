@@ -1,4 +1,4 @@
-// Proposed stationary blockout. Ship-local +Z points toward the bow; deck top is y=0.
+// Stationary art study. Ship-local +Z points toward the bow; deck top is y=0.
 // Every solid box is shared by the renderer and terrain queries. Cloth is visual-only.
 import type { BoxCollider } from '../../core/types';
 
@@ -28,19 +28,39 @@ export const WINDHAVEN_ZONES: readonly DeckZone[] = [
 
 export function windhavenPlan(): ShipPart[] {
   const parts: ShipPart[] = [];
-  const add = (id: string, finish: Finish, x: number, y: number, z: number, w: number, h: number, d: number) => {
-    parts.push({ id, finish, box: { kind: 'box', x, y, z, hx: w / 2, hy: h / 2, hz: d / 2, yaw: 0, surface: 'wood' } });
+  const add = (id: string, finish: Finish, x: number, y: number, z: number, w: number, h: number, d: number, yaw = 0) => {
+    parts.push({ id, finish, box: { kind: 'box', x, y, z, hx: w / 2, hy: h / 2, hz: d / 2, yaw, surface: 'wood' } });
   };
   // Narrow ends, broad working middle, and an intentionally generous open stern.
   for (let z = -35; z <= 35; z += 2) {
     const beam = z <= 15 ? 28 : Math.max(3, 28 - (z - 15) * 1.15);
     add(`deck-${z}`, 'deck', 0, -0.4, z, beam, 0.8, 2);
-    add(`hull-${z}`, 'cream', 0, -2, z, beam * 0.96, 2.4, 2);
-    add(`keel-${z}`, 'timber', 0, -4, z, beam * 0.56, 1.6, 2);
     for (const side of [-1, 1]) {
-      add(`band-${side}-${z}`, 'blue', side * (beam * 0.48 + 0.08), -1.6, z, 0.22, 0.65, 2);
       // Rails stop before the landing terrace. Both side approaches and the stern stay open.
-      if (z >= -7) add(`rail-${side}-${z}`, 'bronze', side * (beam / 2 - 0.15), 0.6, z, 0.3, 1.2, 2);
+      if (z >= -7) {
+        if (z < 35) {
+          const nextBeam = z + 2 <= 15 ? 28 : Math.max(3, 28 - (z + 2 - 15) * 1.15);
+          const dx = side * (nextBeam - beam) / 2;
+          add(`rail-${side}-${z}`, 'timber', side * (beam / 2 - 0.15) + dx / 2, 1.12, z + 1, 0.3, 0.16, Math.hypot(dx, 2) + 0.03, Math.atan2(dx, 2));
+        }
+        if ((z + 7) % 4 === 0) add(`baluster-${side}-${z}`, 'cream', side * (beam / 2 - 0.15), 0.52, z, 0.3, 1.04, 0.3);
+      }
+    }
+  }
+  // Fine overlapping strakes make the rounded underbody from the SAME boxes used by
+  // collision. No smooth decorative hull hides a differently shaped collision proxy.
+  // The original deck rectangles above stay byte-for-byte dimensionally unchanged.
+  for (let z = -35.5; z < 36; z += 1) {
+    const deckZ = Math.floor((z + 36) / 2) * 2 - 35;
+    const beam = deckZ <= 15 ? 28 : Math.max(3, 28 - (deckZ - 15) * 1.15);
+    const fullness = Math.pow(Math.max(0, Math.sin((z + 36) / 72 * Math.PI)), 0.65);
+    const depth = 1.2 + 5.2 * fullness;
+    for (let row = 0; row < 12; row++) {
+      const t = row / 12;
+      const width = beam * 0.99 * Math.sqrt(1 - Math.pow(t, 1.4));
+      const height = depth / 12;
+      add(`strake-${z}-${row}`, row === 1 || row === 2 ? 'blue' : row === 11 ? 'timber' : 'cream',
+        0, -0.8 - (row + 0.5) * height, z, width, height, 1);
     }
   }
   // Shelter faces aft: no gate, threshold or centre post across the dragon route.

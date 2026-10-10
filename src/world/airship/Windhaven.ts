@@ -1,59 +1,196 @@
-import { BoxGeometry, BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh } from 'three';
+import {
+  BoxGeometry, BufferGeometry, CatmullRomCurve3, Color, DoubleSide, Float32BufferAttribute,
+  Group, InstancedMesh, Matrix4, Mesh, Quaternion, Shape, ShapeGeometry, TubeGeometry, Vector3,
+} from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { toonMaterial } from '../../render/painterly';
 import { WINDHAVEN_ORIGIN, windhavenPlan, type Finish, type ShipPart } from './windhavenPlan';
 
-const COLORS: Record<Finish, string> = { deck: '#b99361', cream: '#eee0bd', blue: '#638eab', bronze: '#927344', timber: '#70543b' };
+// Master v2 palette. Wood and recessed window values support the pale cloth, not gold armor.
+const COLORS = {
+  deck: '#bda582', cream: '#F2EADA', blue: '#7FA8C4', bronze: '#AA8656', timber: '#705b46',
+  linen: '#FAF8F3', seam: '#c8baa1', window: '#354c5b',
+};
+type Paint = keyof typeof COLORS;
+type Point = (u: number, v: number) => Vector3;
 
-/** Review asset, constructed locally without external models or textures. */
+/** Indexed smooth surface; the same function also places spars and sewn panel seams. */
+function surface(point: Point, nu: number, nv: number, v0 = 0, v1 = 1): BufferGeometry {
+  const vertices: number[] = [], indices: number[] = [];
+  for (let u = 0; u <= nu; u++) for (let v = 0; v <= nv; v++) {
+    vertices.push(...point(u / nu, v0 + (v1 - v0) * v / nv).toArray());
+  }
+  for (let u = 0; u < nu; u++) for (let v = 0; v < nv; v++) {
+    const a = u * (nv + 1) + v, b = a + nv + 1;
+    indices.push(a, b, b + 1, a, b + 1, a + 1);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Procedural art study. Structural boxes use their exact collider transforms.
+ * Cloth and its light fittings are decorative; the landing/ground routes stay clear.
+ */
 export function buildWindhaven(parts: readonly ShipPart[] = windhavenPlan()): Group {
   const group = new Group();
-  group.name = 'Windhaven blockout';
+  group.name = 'Windhaven';
   group.position.set(WINDHAVEN_ORIGIN.x, WINDHAVEN_ORIGIN.y, WINDHAVEN_ORIGIN.z);
-  const materials = Object.fromEntries(Object.entries(COLORS).map(([id, color]) => [id, toonMaterial({ color })])) as Record<Finish, ReturnType<typeof toonMaterial>>;
   const cube = new BoxGeometry(1, 1, 1);
-  for (const part of parts) {
-    const b = part.box;
-    const mesh = new Mesh(cube, materials[part.finish]);
-    mesh.name = part.id;
-    mesh.position.set(b.x, b.y, b.z);
-    mesh.rotation.y = b.yaw;
-    mesh.scale.set(b.hx * 2, b.hy * 2, b.hz * 2);
+  const matrix = new Matrix4(), rotation = new Quaternion(), up = new Vector3(0, 1, 0);
+  const position = new Vector3(), scale = new Vector3();
+  // Shallow overlapping hull strakes cost five structural draw calls.
+  for (const finish of ['deck', 'cream', 'blue', 'bronze', 'timber'] as Finish[]) {
+    const batch = parts.filter(p => p.finish === finish);
+    if (!batch.length) continue;
+    const mesh = new InstancedMesh(cube, toonMaterial({ color: COLORS[finish], rim: 0.28 }), batch.length);
+    mesh.name = `structure-${finish}`;
+    mesh.userData.partIds = batch.map(p => p.id);
+    batch.forEach((part, i) => {
+      const b = part.box;
+      matrix.compose(position.set(b.x, b.y, b.z), rotation.setFromAxisAngle(up, b.yaw), scale.set(b.hx * 2, b.hy * 2, b.hz * 2));
+      mesh.setMatrixAt(i, matrix);
+      if (finish === 'deck') mesh.setColorAt(i, new Color().setScalar(0.96 + (i % 4) * 0.018));
+    });
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
   }
-  const cloth = toonMaterial({ color: '#f2e7cd', side: DoubleSide });
-  const edge = toonMaterial({ color: '#729fba', side: DoubleSide });
-  // Two consistent swept wings, rooted above the masts. Their entire footprint is forward
-  // of the landing terrace. Cloth/fins are silhouette studies and have no collision yet.
-  for (const [z, y, span, chord] of [[18, 22, 29, 16], [28, 17, 20, 10]]) {
-    for (const side of [-1, 1]) {
-      const point = (u: number, v: number) => [side * (1 + u * span), y + Math.sin(u * Math.PI) * 3 - v * 1.6, z - u * 7 + (v - 0.5) * chord * (1 - 0.85 * u)];
-      for (const [v0, v1, mat] of [[0, 0.88, cloth], [0.88, 1, edge]] as const) {
-        const vertices: number[] = [];
-        for (let i = 0; i < 16; i++) {
-          const a = point(i / 16, v0), b = point((i + 1) / 16, v0);
-          const c = point((i + 1) / 16, v1), d = point(i / 16, v1);
-          vertices.push(...a, ...b, ...c, ...a, ...c, ...d);
-        }
-        const geometry = new BufferGeometry();
-        geometry.setAttribute('position', new Float32BufferAttribute(vertices, 3));
-        geometry.computeVertexNormals();
-        const mesh = new Mesh(geometry, mat);
-        mesh.name = 'Proposed sail cloth (visual only)';
-        mesh.castShadow = true;
-        group.add(mesh);
-      }
+
+  // Batch fittings by material. No downloads, individual rivet draws or new shaders.
+  const details = new Map<Paint, BufferGeometry[]>();
+  const add = (paint: Paint, geometry: BufferGeometry) => {
+    const flat = geometry.index ? geometry.toNonIndexed() : geometry;
+    for (const key of Object.keys(flat.attributes)) if (key !== 'position' && key !== 'normal') flat.deleteAttribute(key);
+    if (flat !== geometry) geometry.dispose();
+    const list = details.get(paint) ?? [];
+    list.push(flat);
+    details.set(paint, list);
+  };
+  const box = (paint: Paint, x: number, y: number, z: number, w: number, h: number, d: number) =>
+    add(paint, new BoxGeometry(w, h, d).translate(x, y, z));
+  const tube = (paint: Paint, points: Vector3[], radius: number, segments = 24) =>
+    add(paint, new TubeGeometry(new CatmullRomCurve3(points), segments, radius, 6, false));
+  const path = (fn: (t: number) => Vector3, steps = 24) => Array.from({ length: steps + 1 }, (_, i) => fn(i / steps));
+  const line = (paint: Paint, a: Vector3, b: Vector3, radius: number) => tube(paint, [a, b], radius, 1);
+
+  // Flush caulking rather than raised bars across the landing terrace.
+  for (let x = -13.5; x <= 13.5; x += 0.9) {
+    const end = Math.min(35.9, 15 + (28 - 2 * Math.abs(x)) / 1.15 - 1);
+    box('timber', x, 0.008, (end - 35.9) / 2, 0.018, 0.008, end + 35.9);
+    const joinEnd = Math.min(end, 15 + (28 - 2 * Math.abs(x + 0.84)) / 1.15 - 1);
+    for (let z = -32 + (Math.round((x + 13.5) / 0.9) % 3) * 2; x + 0.84 < 14 && z < joinEnd; z += 8) {
+      box('timber', x + 0.43, 0.009, z, 0.82, 0.008, 0.018);
     }
   }
   for (const side of [-1, 1]) {
-    for (const z of [-16, 8]) {
-      const geometry = new BufferGeometry();
-      geometry.setAttribute('position', new Float32BufferAttribute([side * 9, -3, z + 6, side * 15, -13, z - 6, side * 11, -4, z - 7], 3));
-      geometry.computeVertexNormals();
-      const mesh = new Mesh(geometry, edge);
-      mesh.name = 'Proposed steering cloth (visual only)';
-      group.add(mesh);
+    line('bronze', new Vector3(side * 13.78, 0.012, -35.8), new Vector3(side * 13.78, 0.012, 14), 0.045);
+    for (const y of [0.35, 6, 12, 19.8]) box('bronze', side * 6, y, 14, 0.69, 0.18, 0.69);
+    for (const z of [-9.5, 5.5]) {
+      box('timber', side * 7.3, 0.15, z, 0.55, 0.3, 0.55);
+      box('cream', side * 7.3, 9.35, z, 0.58, 0.3, 0.58);
     }
+  }
+
+  // Crescent wings: cloth, boltropes and curved spars evaluate the same surface.
+  for (const [z, y, span, chord] of [[14, 20, 30, 22], [26, 16, 23, 12]]) {
+    for (const side of [-1, 1]) {
+      const sail: Point = (u, v) => new Vector3(
+        side * u * span,
+        y + Math.sin(u * Math.PI) * 4.1 + u * 1.2 - Math.sin(v * Math.PI) * (1 - u) * 2.1,
+        z - u * 8 + (0.5 - v) * chord * Math.pow(1 - u, 0.72),
+      );
+      add('linen', surface(sail, 36, 12, 0, 0.84));
+      add('blue', surface(sail, 36, 4, 0.84, 1));
+      for (const v of [0, 1]) tube('timber', path(u => sail(u, v)), v === 0 ? 0.13 : 0.075, 36);
+      for (let rib = 0; rib < 6; rib++) tube('seam', path(v => sail(rib / 6, v), 12), 0.028, 12);
+      for (const u of [0.3, 0.64]) tube('bronze', path(v => sail(u, v), 16), 0.055, 16);
+      const mast = new Vector3(side * 6, y, 14);
+      for (const v of [0, 1]) line('timber', mast, sail(0, v), 0.14);
+      line('seam', new Vector3(side * 6, 12, 14), sail(0.7, 0), 0.035);
+      // One restrained ascending-wind spiral, sewn onto the main sail.
+      if (z === 14 && side === 1) {
+        tube('blue', path(t => {
+          const angle = t * Math.PI * 3.6, radius = 0.09 * (1 - t);
+          const p = sail(0.4 + Math.cos(angle) * radius, 0.38 + Math.sin(angle) * radius * 2.4);
+          p.y += 0.06;
+          return p;
+        }, 64), 0.18, 64);
+      }
+    }
+  }
+
+  // Linen shade on the unchanged shelter slab: underside/headroom remains 9.6 m.
+  const shade: Point = (u, v) => new Vector3((u - 0.5) * 15.2, 10.03 + Math.sin(u * Math.PI) * 0.85 + Math.sin(v * Math.PI) * 0.25, -10 + 16 * v);
+  add('linen', surface(shade, 24, 20));
+  for (const v of [0, 1]) tube('timber', path(u => shade(u, v)), 0.09);
+  for (const u of [0, 0.25, 0.5, 0.75, 1]) tube('seam', path(v => shade(u, v)), 0.028);
+  for (const x of [-6, -3, 0, 3, 6]) box('cream', x, 3, 5.81, 0.12, 5.8, 0.05);
+  box('timber', 0, 0.3, 5.8, 14.7, 0.5, 0.08);
+
+  // Opaque arched shutters on solid walls, not false traversable window openings.
+  const arch = (x: number, z: number, yaw: number, width = 1.45) => {
+    const r = width / 2, base = 0.95, shoulder = 2.9;
+    const shape = new Shape();
+    shape.moveTo(-r, base); shape.lineTo(r, base); shape.lineTo(r, shoulder);
+    shape.absarc(0, shoulder, r, 0, Math.PI, false); shape.lineTo(-r, base);
+    const transform = new Matrix4().makeRotationY(yaw).setPosition(x, 0, z);
+    add('window', new ShapeGeometry(shape, 24).applyMatrix4(transform));
+    const place = (xx: number, yy: number) => new Vector3(xx, yy, 0.016).applyMatrix4(transform);
+    const rim = [place(-r, base), ...path(t => place(Math.cos(Math.PI - t * Math.PI) * r, shoulder + Math.sin(t * Math.PI) * r)), place(r, base)];
+    tube('bronze', rim, 0.055, 40);
+    line('timber', place(0, base), place(0, shoulder + r), 0.045);
+    line('blue', place(-r, 1.8), place(r, 1.8), 0.045);
+    line('cream', place(-r - 0.1, base), place(r + 0.1, base), 0.09);
+  };
+  for (const side of [-1, 1]) {
+    for (const z of [18, 21, 24]) arch(side * 4.17, z, side * Math.PI / 2);
+    for (const z of [16.2, 19.5, 22.5, 25.8]) box('cream', side * 4.18, 2.15, z, 0.16, 4.3, 0.18);
+    box('blue', side * 4.17, 0.45, 21, 0.09, 0.55, 9.8);
+    box('bronze', side * 4.2, 4.35, 21, 0.15, 0.12, 10.25);
+    arch(side * 2.7, 15.83, Math.PI, 1.2);
+  }
+  for (const x of [-2.5, 0, 2.5]) arch(x, 26.17, 0);
+  const roof: Point = (u, v) => new Vector3((u - 0.5) * 8.8, 4.82 + Math.sin(u * Math.PI) * 0.95, 15.5 + v * 11);
+  add('blue', surface(roof, 24, 16));
+  for (const v of [0, 1]) tube('cream', path(u => roof(u, v)), 0.12);
+  for (const u of [0, 0.25, 0.5, 0.75, 1]) tube('seam', path(v => roof(u, v)), 0.025);
+  for (const x of [-1.62, 1.62]) box('timber', x, 2.15, 15.8, 0.09, 4.3, 0.05);
+
+  // A single long travel pennon above the cabin, attached near the head of its standard.
+  line('timber', new Vector3(0, 5.8, 24.5), new Vector3(0, 10, 24.5), 0.075);
+  const pennon: Point = (u, v) => new Vector3(0.5 * Math.sin(u * 5), 9.65 - v * 1.35 * (1 - u * 0.75) - 0.2 * Math.sin(u * 5), 24.5 - u * 5);
+  add('linen', surface(pennon, 24, 5, 0, 0.7));
+  add('blue', surface(pennon, 24, 3, 0.7, 1));
+
+  // Broad construction detail stays within the existing workbench/storage footprints.
+  for (const x of [-10.5, 10.5]) {
+    box('deck', x, 1.205, 10, 2.48, 0.01, 2.98);
+    for (const dx of [-0.94, 0.94]) box('bronze', x + dx, 0.66, 4.68, 0.12, 1.1, 0.04);
+    box('timber', x, 1.305, 5.5, 2.48, 0.01, 1.58);
+    box('bronze', x, 0.72, 4.66, 0.24, 0.22, 0.04);
+  }
+  box('linen', 0, 1.305, 30, 2.15, 0.01, 1.2);
+  for (let i = 0; i < 3; i++) tube('blue', path(t => new Vector3(-0.8 + 1.5 * t, 1.318, 29.7 + i * 0.24 + Math.sin(t * 6) * 0.08)), 0.018);
+
+  // Lower crescent stabilizer cloth remains explicitly visual-only.
+  for (const side of [-1, 1]) for (const z of [-16, 8]) {
+    const fin: Point = (u, v) => new Vector3(side * (9 + 7 * u), -2.8 - 8 * Math.sin(u * Math.PI / 2) - v * Math.sin(u * Math.PI), z + 6 - 11 * u - v * 12 * Math.sin(u * Math.PI));
+    add('linen', surface(fin, 28, 10, 0, 0.82));
+    add('blue', surface(fin, 28, 4, 0.82, 1));
+    for (const v of [0, 1]) tube('timber', path(u => fin(u, v)), 0.10);
+    for (const u of [0.3, 0.65]) tube('seam', path(v => fin(u, v)), 0.04);
+  }
+
+  for (const [paint, geometries] of details) {
+    const geometry = mergeGeometries(geometries)!;
+    geometries.forEach(g => g.dispose());
+    const mesh = new Mesh(geometry, toonMaterial({ color: COLORS[paint], side: DoubleSide, rim: 0.28 }));
+    mesh.name = `ornament-${paint}`;
+    mesh.userData.visualOnly = true;
+    mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
   }
   return group;
 }

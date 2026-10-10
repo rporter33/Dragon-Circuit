@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Vector3 } from 'three';
+import { InstancedMesh, Matrix4, Mesh, Quaternion, Vector3 } from 'three';
 import { EventBus } from '../../core/events';
 import type { BreedId, GameEvents, InputFrame } from '../../core/types';
 import { BREEDS, BREED_ORDER } from '../../flight/breeds';
@@ -35,12 +35,51 @@ describe('Windhaven stationary blockout', () => {
     const view = buildWindhaven(parts);
     const colliders = windhavenColliders(parts);
     parts.forEach((p, i) => {
-      const mesh = view.getObjectByName(p.id)!;
+      const mesh = view.getObjectByName(`structure-${p.finish}`) as InstancedMesh;
       expect(mesh).toBeDefined();
+      const index = (mesh.userData.partIds as string[]).indexOf(p.id);
+      expect(index).toBeGreaterThanOrEqual(0);
+      const matrix = new Matrix4(), position = new Vector3(), scale = new Vector3(), rotation = new Quaternion();
+      mesh.getMatrixAt(index, matrix);
+      matrix.decompose(position, rotation, scale);
       const b = colliders[i];
-      expect(mesh.position.clone().add(view.position).toArray()).toEqual([b.x, b.y, b.z]);
-      expect(mesh.scale.toArray()).toEqual([b.hx * 2, b.hy * 2, b.hz * 2]);
+      position.add(view.position).toArray().forEach((v, axis) => expect(v).toBeCloseTo([b.x, b.y, b.z][axis], 4));
+      scale.toArray().forEach((v, axis) => expect(v).toBeCloseTo([b.hx * 2, b.hy * 2, b.hz * 2][axis], 4));
+      expect(rotation.y).toBeCloseTo(Math.sin(b.yaw / 2), 5);
     });
+  });
+
+  it('preserves the approved deck, shelter headroom and cabin doorway dimensions', () => {
+    const parts = windhavenPlan();
+    const deck = parts.filter(p => p.id.startsWith('deck-'));
+    expect(deck).toHaveLength(36);
+    deck.forEach(({ box: b }, i) => {
+      const z = -35 + i * 2;
+      expect(b).toEqual({ kind: 'box', x: 0, y: -0.4, z, hx: (z <= 15 ? 28 : Math.max(3, 28 - (z - 15) * 1.15)) / 2, hy: 0.4, hz: 1, yaw: 0, surface: 'wood' });
+    });
+    const roof = parts.find(p => p.id === 'shelter-roof')!.box;
+    expect(roof.y - roof.hy).toBeCloseTo(9.6);
+    const door = parts.filter(p => p.id.startsWith('cabin-door-'));
+    door.forEach(p => expect(Math.abs(p.box.x) - p.box.hx).toBeCloseTo(1.6));
+  });
+
+  it('keeps decorative sails and fittings clear of the landing envelope with bounded geometry', () => {
+    const view = buildWindhaven();
+    let triangles = 0;
+    let meshes = 0;
+    view.traverse(object => {
+      if (!(object instanceof Mesh)) return;
+      meshes++;
+      const positions = object.geometry.getAttribute('position');
+      triangles += (object.geometry.index?.count ?? positions.count) / 3 * (object instanceof InstancedMesh ? object.count : 1);
+      for (let i = 0; i < positions.count; i++) {
+        const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
+        expect(Number.isFinite(x + y + z)).toBe(true);
+        if (object.userData.visualOnly && Math.abs(x) < 10.25 && z < -11 && z > -34) expect(y).toBeLessThan(0.15);
+      }
+    });
+    expect(meshes).toBeLessThanOrEqual(14);
+    expect(triangles).toBeLessThan(80000);
   });
 
   it('has continuous landing ground and unobstructed airspace for the largest wingspan', () => {
