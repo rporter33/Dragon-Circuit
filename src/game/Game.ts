@@ -39,17 +39,29 @@ import { shrineInteraction } from '../research/firstLeadEncounter';
 import { FirstLead } from '../world/dressing/ventari/FirstLead';
 import { readDebugParams, type DebugParams } from '../debug/params';
 import { findShowcase, type Showcase } from '../debug/showcase';
+import type { WorldLayout } from '../world/layout';
+import type { RaceDef } from './contracts';
+import type { Terrain } from '../world/terrain';
 
 export const FIXED_DT = 1 / 120;
 const MAX_STEPS = 12;
 const TOD_PRESETS = { dawn: 0.27, day: 0.42, dusk: 0.72, night: 0.95 } as const;
+
+/** Opt-in composition for a separate authoring sandbox; ordinary boot keeps every default. */
+export interface GameOptions {
+  layout?: WorldLayout;
+  races?: RaceDef[];
+  save?: LocalSaveStore;
+  /** Authoring adds only manual props; canonical dressing can retain its original terrain. */
+  dressingTerrain?: Terrain;
+}
 
 export class Game implements GameActions {
   readonly events = new EventBus<GameEvents>();
   readonly scene = new Scene();
   readonly camera: PerspectiveCamera;
   readonly renderer: Renderer;
-  readonly save = new LocalSaveStore();
+  readonly save: LocalSaveStore;
   readonly input: Input;
   readonly haptics: Haptics;
   readonly world: World;
@@ -95,7 +107,8 @@ export class Game implements GameActions {
   /** The dressing's decks as solid slabs (filled as decks are built). */
   private deckColliders: BoxCollider[] = [];
 
-  constructor(container: HTMLElement, uiRoot: HTMLElement) {
+  constructor(container: HTMLElement, uiRoot: HTMLElement, options: GameOptions = {}) {
+    this.save = options.save ?? new LocalSaveStore();
     this.debug = readDebugParams();
     const settings = this.settings;
     // First launch: pick a quality preset from what the GPU says about itself.
@@ -113,8 +126,8 @@ export class Game implements GameActions {
 
     this.input = new Input(this.renderer.canvas, () => this.settings, this.events);
     this.haptics = new Haptics(this.events, this.input, () => this.settings);
-    this.world = new World(this.scene, quality);
-    this.dressing = new Dressing({ scene: this.scene, terrain: this.world.terrain, quality, asyncStreaming: !this.debug.manual });
+    this.world = new World(this.scene, quality, options.layout);
+    this.dressing = new Dressing({ scene: this.scene, terrain: options.dressingTerrain ?? this.world.terrain, quality, asyncStreaming: !this.debug.manual });
     // Everything solid that isn't rock (buildings, trees, decks) collides through the terrain's
     // collider index; sources are synced every frame as distant sites finish building.
     const colliders = this.world.terrain.colliders;
@@ -145,6 +158,7 @@ export class Game implements GameActions {
     });
     this.scene.add(this.wyvern.group, this.rider.group);
     this.races = new Races({
+      defs: options.races,
       scene: this.scene,
       events: this.events,
       save: this.save,
