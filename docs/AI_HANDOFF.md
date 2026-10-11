@@ -695,3 +695,16 @@ Owner could not spot the encounter and reported foliage obstruction and bumpy is
   in subsequently authorized art tasks.
 
 The import commit is the Git commit introducing this file; this is a static handoff snapshot.
+
+## Game development resources — 2026-10-10
+
+- Objective: upload the owner's eight game development resource links.
+- Branch: `docs/game-development-resources`; resource directory introduced in
+  `de02b3d23a736b05959a7950de8b7383bf1e7948`.
+- Added `docs/GAME_DEVELOPMENT_RESOURCES.md` with all eight resources, direct
+  official URLs, categories, and a direct Godot Asset Library link.
+- Verification: opened the eight resource destinations; Mixamo returned an empty
+  text extraction, so its interactive functionality was not verified. Checked
+  the directory for completeness and relative documentation link targets.
+- No game tests or builds run: documentation-only change.
+- Next action: review the resource directory pull request for integration.
