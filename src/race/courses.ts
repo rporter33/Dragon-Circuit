@@ -192,7 +192,7 @@ export const COURSE_SPECS: CourseSpec[] = [
     id: 'lantern-dash',
     name: 'Lantern Dash',
     kind: 'sprint',
-    description: 'Ride the Roost’s thermal to the gate, then race west to the Lantern Spire. It stands higher than you start: find lift on the way.',
+    description: 'Race west to Lantern Spire. Find the warm rising air south of the spire, circle to gain height, then glide around its east side and bank through the gold finish ring. Show tips offers optional lift coaching.',
     difficulty: 2,
     landmark: 'lantern',
     start: { p: [230, 630, -40] },
