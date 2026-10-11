@@ -165,7 +165,8 @@ try {
   assert.equal(await page.locator('.dw-windline').isVisible(),false);
   await page.getByText('Controls',{exact:true}).click();
   assert.match(await page.locator('.dw-controls').innerText(),/WINDLINE/);
-  assert.match(await page.locator('.dw-controls').innerText(),/Recall your wyvern/);
+  assert.match(await page.locator('.dw-controls').innerText(),/recall your wyvern/);
+  assert.match(await page.locator('.dw-controls').innerText(),/press again to detach/);
   await page.screenshot({path:'shots/windline-gameplay/controls.png'});
   assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>__dw.errors),[]);
   console.log('Normal-game Windline checks passed:',JSON.stringify(evidence));
