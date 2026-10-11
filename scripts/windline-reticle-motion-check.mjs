@@ -6,8 +6,11 @@ import {chromium} from 'playwright';
 import {browserEvidence} from './browser-evidence.mjs';
 const url=new URL(process.argv[2]??'http://127.0.0.1:5175/');url.search='?debug=1&quality=low';
 const out='/tmp/driftwing-reticle-motion-browser-check.json',shots='shots/windline-reticle-motion';fs.mkdirSync(shots,{recursive:true});
-const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--enable-webgl']});
+// Exercise full Chromium's headless compositor (the local explicit binary uses
+// this mode too), rather than Playwright's default separate headless shell.
+const browser=await chromium.launch({channel:'chromium',executablePath:process.env.CHROMIUM_PATH,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--enable-webgl']});
 const page=await browser.newPage({viewport:{width:640,height:360}}),errors=[],evidence={phases:[]};
+evidence.browser={channel:'chromium',executablePath:process.env.CHROMIUM_PATH??chromium.executablePath(),version:browser.version(),headless:true,softwareGraphics:'SwiftShader'};console.log('RAF browser runtime:',JSON.stringify(evidence.browser));
 page.on('pageerror',e=>errors.push(e.message));
 try{
  await page.goto(url.href);await page.waitForFunction(()=>window.__dw?.ready&&!document.querySelector('#boot:not(.done)'),null,{timeout:180000});evidence.metadata=await browserEvidence(page,url);
