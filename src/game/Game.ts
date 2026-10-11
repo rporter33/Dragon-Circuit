@@ -4,6 +4,8 @@
 
 import { SkyLanceVisuals } from '../traversal/SkyLanceVisuals';
 import { TraversalWorld } from '../traversal/sweep';
+import { centeredCast } from '../traversal/target';
+import { LANCE } from '../traversal/tuning';
 import { PerspectiveCamera, Scene, Vector3 } from 'three';
 import { EventBus } from '../core/events';
 import type { BoxCollider, GameEvents, RiderLook, Settings, WyvernLook } from '../core/types';
@@ -278,7 +280,12 @@ export class Game implements GameActions {
       if (gameplayInput === this.idleInput && this.player.skyLance) this.player.cancelLanceWindup();
       // Presses are per rendered frame; latch them so 0 or several fixed steps see each once.
       if (this.player.skyLance && !gameplayInput.aim) {
-        gameplayInput.aim = this.camera.getWorldDirection(this.lanceAim);
+        this.camera.getWorldDirection(this.lanceAim);
+        if (gameplayInput.pressed.lance && this.player.skyLance.state === 'ready') {
+          const origin = this.player.foot.position.clone(); origin.y += LANCE.harnessHeight;
+          this.lanceAim.copy(centeredCast(this.player.skyLance.world,this.camera.position,this.lanceAim,origin,this.player.foot.velocity).aim);
+        }
+        gameplayInput.aim = this.lanceAim;
       }
       this.player.latchPresses(gameplayInput);
       while (this.accumulator >= FIXED_DT && steps < MAX_STEPS) {

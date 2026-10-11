@@ -3361,6 +3361,8 @@
 .dw-windline-boost { color: #a8e5ff; margin-top: .35em; }
 .dw-windline-meter { height: 4px; background: #315e9c66; margin-top: .3em; border-radius: 2px; overflow: hidden; }
 .dw-windline-meter > div { height: 100%; background: #a8e5ff; }
-.dw-windline-reticle { position: fixed; width: 56px; height: 56px; transform: translate(-50%, -50%); filter: drop-shadow(0 0 2px #182631); color: #f2eada; }
-.dw-windline-reticle [data-aim-status] { position: absolute; top: 58px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 12px; background: #182631e8; padding: 3px 6px; border-radius: 4px; }
+.dw-windline-reticle { position: fixed; width: 20px; height: 20px; transform: translate(-50%, -50%); filter: drop-shadow(0 0 1px #182631); color: #a8ddec; }
+.dw-windline-reticle [data-aim-status] { display: none; }
+.dw-windline-reticle [data-valid-ring] { opacity: 0; stroke: currentColor; filter: drop-shadow(0 0 1px #182631); }
+.dw-windline-reticle.is-valid [data-valid-ring] { opacity: 1; }
 .dw-windline-reticle [data-impact] { display: none; position: absolute; width: 8px; height: 8px; border: 2px solid #79e5ff; box-shadow: 0 0 0 2px #182631; border-radius: 50%; transform: translate(-50%, -50%); }
