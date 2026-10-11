@@ -72,7 +72,8 @@ try {
   const liveErrors = [];
   live.on('pageerror', e => liveErrors.push(e.message));
   live.on('console', m => { if (m.type() === 'error') liveErrors.push(m.text()); });
-  live.setDefaultTimeout(30000);
+  // SwiftShader CI can render far below real time. Keep simulation assertions unchanged.
+  live.setDefaultTimeout(120000);
   await live.goto(`${origin}/?view=windhaven&quality=low&debug=1`);
   await live.waitForFunction(() => window.__dw?.ready && !document.querySelector('#boot:not(.done)'));
   await live.getByText('Inspection paused — choose Walk deck to play.', { exact: true }).waitFor();
@@ -100,9 +101,20 @@ try {
     await live.getByRole('button', { name: 'Ride / take off', exact: true }).click();
     // Flapping is held input: a down/up pair inside a render frame with no fixed step
     // can disappear before gameplay consumes it. Hold through the real launch/climb.
+    const launchStart = await live.evaluate(() => window.__dw.game.save.data.playTime);
     await live.keyboard.down('Space');
     try {
       await live.waitForFunction(() => window.__dw.game.player.mode === 'flying' && window.__dw.game.player.position.y > 657);
+      console.log(`${breed} launch simulation seconds: ${await live.evaluate(t => window.__dw.game.save.data.playTime - t, launchStart)}`);
+    } catch (error) {
+      console.error('Launch failure state', await live.evaluate(t => {
+        const g = window.__dw.game;
+        return { screen: g.screen, mode: g.player.mode, position: g.player.position.toArray(),
+          simulationSeconds: g.save.data.playTime - t, freeze: g.debug.freeze,
+          flap: g.input.frame.flight.flap, activeElement: document.activeElement?.tagName,
+          errors: window.__dw.errors };
+      }, launchStart));
+      throw error;
     } finally { await live.keyboard.up('Space'); }
     await live.keyboard.press('Escape');
     await live.waitForFunction(() => window.__dw.game.screen === 'pause');
