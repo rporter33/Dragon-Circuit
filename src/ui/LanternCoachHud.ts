@@ -18,6 +18,10 @@ export class LanternCoachHud {
   private point = new Vector3();
   private wind = new Vector3();
   private missed = false;
+  private layoutWidth = 0;
+  private layoutHeight = 0;
+  private layoutPhase = '';
+  private labelFloor = 0;
 
   constructor(events: GameEventBus) {
     const title = h('b'); const body = h('span');
@@ -43,7 +47,7 @@ export class LanternCoachHud {
     const show = active && hudVisible && view.screen === 'play' && view.save.data.settings.showControlHints;
     this.line.hidden = !show;
     this.marker.hidden = true;
-    if (!show) return;
+    if (!show) { this.layoutPhase = ''; return; }
     const f = view.player.flight;
     const finishY = r.defs.find(d => d.id === r.activeId)!.rings[0].position[1];
     view.weather.windAt(f.position, this.wind);
@@ -61,7 +65,11 @@ export class LanternCoachHud {
     const y = Math.round((1 - this.point.y) * innerHeight / 2);
     // At short viewport heights the world label can project into the timer/coaching strip.
     // Let the written direction carry that moment rather than overlaying either readout.
-    if (y < this.line.getBoundingClientRect().bottom + 18) return;
+    if (this.layoutWidth !== innerWidth || this.layoutHeight !== innerHeight || this.layoutPhase !== advice.phase) {
+      this.labelFloor = this.line.getBoundingClientRect().bottom + 18;
+      this.layoutWidth = innerWidth; this.layoutHeight = innerHeight; this.layoutPhase = advice.phase;
+    }
+    if (y < this.labelFloor) return;
     this.marker.hidden = false;
     this.label.set(`Suggested lift · ${Math.round(distance / 10) * 10} m`);
     this.markerPos.set(`translate(${x}px,${y}px) translate(-50%,-50%)`);

@@ -11,6 +11,9 @@ on:
       - '.github/workflows/lantern-review.yml'
 permissions:
   contents: read
+concurrency:
+  group: lantern-review-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   package:
     runs-on: ubuntu-latest
@@ -48,6 +51,7 @@ jobs:
           done
           node scripts/lantern-review-check.mjs http://127.0.0.1:5176 --baseline --expected-head=f97bac535611e09c6c732230b5f0ca73b9bbf804 --out=/tmp/lantern-evidence/before
           node scripts/lantern-review-check.mjs http://127.0.0.1:5174 --out=/tmp/lantern-evidence/after
+          node scripts/compare-lantern-review.mjs /tmp/lantern-evidence
       - name: Prepare Windows loopback review build
         run: |
           node scripts/package-lantern-review.mjs /tmp/lantern-review

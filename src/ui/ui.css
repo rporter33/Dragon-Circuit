@@ -1635,7 +1635,10 @@
   text-align: center;
   pointer-events: none;
 }
-.dw-lantern-coach b, .dw-lantern-coach span { display: block; }
+.dw-lantern-coach b, .dw-lantern-coach span {
+  display: block;
+  font-size: clamp(12px, 1.41695vh, 34px);
+}
 .dw-lantern-coach b { color: var(--gold-hi); }
 .dw-lantern-coach span { color: var(--parch); }
 .dw-lantern-lift {
