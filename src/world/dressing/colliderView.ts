@@ -4,16 +4,18 @@
 
 import {
   BoxGeometry,
+  BufferGeometry,
+  Float32BufferAttribute,
   Color,
   CylinderGeometry,
   Group,
   InstancedMesh,
   Matrix4,
+  Mesh,
   MeshBasicMaterial,
   Quaternion,
   SphereGeometry,
   Vector3,
-  type BufferGeometry,
 } from 'three';
 import type { Collider } from '../../core/types';
 
@@ -25,7 +27,7 @@ export function colliderView(lists: readonly (readonly Collider[])[]): Group {
   group.name = 'debug:colliders';
   const all = lists.flat();
   const kinds: { geo: BufferGeometry; items: Collider[] }[] = [
-    { geo: new BoxGeometry(1, 1, 1), items: all.filter((c) => c.kind === 'box') },
+    { geo: new BoxGeometry(1, 1, 1), items: all.filter((c) => c.kind === 'box' && !c.convex) },
     { geo: new CylinderGeometry(1, 1, 1, 12, 1, true), items: all.filter((c) => c.kind === undefined || c.kind === 'cylinder') },
     { geo: new SphereGeometry(1, 10, 6), items: all.filter((c) => c.kind === 'sphere') },
   ];
@@ -34,6 +36,13 @@ export function colliderView(lists: readonly (readonly Collider[])[]): Group {
   const up = new Vector3(0, 1, 0);
   const pos = new Vector3();
   const scale = new Vector3();
+  for (const c of all) {
+    if (c.kind !== 'box' || !c.convex) continue;
+    const geo = new BufferGeometry().setAttribute('position', new Float32BufferAttribute(c.convex.triangles, 3));
+    const mesh = new Mesh(geo, new MeshBasicMaterial({ color: c.soft ? SOFT : SOLID, wireframe: true, transparent: true, opacity: 0.55, depthWrite: false, fog: false }));
+    mesh.position.set(c.x, c.y, c.z); mesh.rotation.y = c.yaw; mesh.renderOrder = 10;
+    group.add(mesh);
+  }
   for (const { geo, items } of kinds) {
     if (items.length === 0) continue;
     const mat = new MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.55, depthWrite: false, fog: false });
