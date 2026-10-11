@@ -369,7 +369,7 @@ export class OrbitRig implements Rig {
     const P = ORBIT_CAM[this.kind];
     // Continue from wherever the camera is looking, so the hand-over is short.
     this.view.yaw = Number.isFinite(from.yaw) ? from.yaw : this.facing(player);
-    this.view.pitch = clamp(Number.isFinite(from.pitch) ? from.pitch : P.pitch, P.pitchMin, P.pitchMax);
+    this.view.pitch = clamp(Number.isFinite(from.pitch) ? from.pitch : P.pitch, this.kind === 'foot' && player.riderPose.equipment ? -89 * D : P.pitchMin, P.pitchMax);
     this.lookIdle = 99;
     this.recenterT = 0;
     this.boom = -1;
@@ -380,6 +380,7 @@ export class OrbitRig implements Rig {
     const P = ORBIT_CAM[this.kind];
     const vel = this.kind === 'mounted' ? player.wyvernPose.velocity : player.riderPose.velocity;
     const hspeed = Math.hypot(vel.x, vel.z);
+    const traversal = this.kind === 'foot' && !!player.riderPose.equipment && player.mode === 'traversing';
 
     if (input.pressed.recenter) {
       this.recenterT = 0.3;
@@ -392,16 +393,16 @@ export class OrbitRig implements Rig {
       this.recenterT -= dt;
       this.view.yaw += angleDelta(this.view.yaw, this.facing(player)) * (1 - Math.exp(-14 * dt));
       this.view.pitch = damp(this.view.pitch, P.pitch, 14, dt);
-    } else if (this.lookIdle > 0.7 && hspeed > 0.7) {
+    } else if (this.lookIdle > 0.7 && hspeed > 0.7 && !traversal && !(player.riderPose.equipment && input.lanceHeld)) {
       const strength = P.follow * Math.min(1, hspeed / 4);
       this.view.yaw = autoFollowYaw(this.view.yaw, Math.atan2(vel.x, vel.z), strength, dt);
       if (this.lookIdle > 2) this.view.pitch = damp(this.view.pitch, P.pitch, 0.8, dt);
     }
-    if (this.kind === 'foot' && this.lookIdle > 0.7 && this.recenterT <= 0) {
+    if (this.kind === 'foot' && !traversal && this.lookIdle > 0.7 && this.recenterT <= 0 && !input.lanceHeld) {
       this.view.yaw += this.companionSwing(player, hspeed, ctx) * dt;
     }
     this.view.yaw = wrapAngle(this.view.yaw);
-    this.view.pitch = clamp(this.view.pitch, P.pitchMin, P.pitchMax);
+    this.view.pitch = clamp(this.view.pitch, this.kind === 'foot' && player.riderPose.equipment ? -89 * D : P.pitchMin, P.pitchMax);
 
     const run = smoothstep(4, 8, hspeed);
     const desired = (P.dist + P.distSpan * player.breed.wingspan + P.runExtra * run) * ctx.zoom;
@@ -448,6 +449,9 @@ export class OrbitRig implements Rig {
     // A boom pulled in to almost nothing would look straight up from the subject's head: aim
     // along the view instead, past the subject.
     if (this.boom < MIN_LOOK) out.target.addScaledVector(arm, MIN_LOOK - this.boom);
+    // The bracer's ray follows the requested pitch exactly, including near-vertical aim.
+    // The ordinary framing offset otherwise adds several degrees and can cross the pole.
+    if (this.kind === 'foot' && player.riderPose.equipment) out.target.copy(out.position).add(arm);
     if (tiltUp > 0) {
       want.subVectors(out.target, out.position).applyAxisAngle(right, tiltUp);
       out.target.copy(out.position).add(want);

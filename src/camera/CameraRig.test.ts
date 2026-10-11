@@ -304,6 +304,29 @@ describe('ground, title and stable framing', () => {
     expect(Math.abs(s.x)).toBeLessThan(0.3);
   });
 
+  it('experimental bracer aims steeply upwards without changing ordinary on-foot limits', () => {
+    for (const experimental of [false,true]) {
+      const {rig:r,camera}=rig(),p=fakePlayer();onFoot(p);
+      p.riderPose.equipment=experimental?'bracer':undefined;
+      for(let i=0;i<30;i++)r.update(DT,idle,p);
+      const input=emptyFrame();input.lookY=-10;input.lookActive=true;input.lookIsRate=false;
+      r.update(DT,input,p);const direction=camera.getWorldDirection(new Vector3());
+      if(experimental)expect(direction.y).toBeGreaterThan(Math.sin(88*Math.PI/180));
+      else expect(direction.y).toBeLessThan(.65);
+      expect(terrain.distance(camera.position)).toBeGreaterThan(.3);
+    }
+  });
+
+  it('keeps freefall steering camera-relative across heading changes and permits deliberate orbit',()=>{
+    const {rig:r}=rig(),p=fakePlayer();onFoot(p);p.mode='traversing';p.riderPose.equipment='bracer';p.riderPose.freefallTilt=0;
+    p.riderPose.position.set(5000,1000,5000);p.riderPose.velocity.set(0,-13,18);
+    for(let i=0;i<90;i++)r.update(DT,idle,p);const start=r.yaw;
+    p.riderPose.velocity.set(-18,-13,0);p.riderPose.yaw=-Math.PI/2;
+    for(let i=0;i<180;i++)r.update(DT,idle,p);expect(r.yaw).toBeCloseTo(start,10);
+    const look=emptyFrame();look.lookActive=true;look.lookIsRate=true;look.lookX=1;
+    for(let i=0;i<60;i++)r.update(DT,look,p);expect(Math.abs(r.yaw-start)).toBeGreaterThan(.8);
+  });
+
   it('falling: rides down beside the cliff, out of the rock, rider in frame', () => {
     const { rig: r, camera } = rig();
     const p = fakePlayer();

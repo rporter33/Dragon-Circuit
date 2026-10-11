@@ -28,7 +28,7 @@
 //    strength is the trigger's peak during the press. Held mode beats continuously.
 //  - Esc (or anything else that releases the captured mouse during play, like alt-tab) pauses.
 //    Losing window focus and a controller disconnecting during play also pause.
-//  - X is deliberately unbound: free for a future action (e.g. whistle for your wyvern).
+//  - X is reserved for the opt-in Sky Lance experiment; ignored during ordinary gameplay.
 //  - Menus: left stick, D-pad, arrows or WASD navigate with auto-repeat (380 ms, then 90 ms).
 //    In the stable, the right stick or a mouse drag turns the view, and RT/LT or the wheel zoom.
 
@@ -78,6 +78,8 @@ export const KEYS = {
   moveLeft: ['KeyA', 'ArrowLeft'],
   moveRight: ['KeyD', 'ArrowRight'],
   jump: ['Space'],
+  lance: ['KeyQ'],
+  recoverLance: ['KeyE'],
   sprint: ['ShiftLeft', 'ShiftRight'],
   interact: ['KeyF'],
   recenter: ['KeyV', 'Mouse1'],
@@ -108,6 +110,8 @@ export const PAD = {
   yawLeft: ['LB'],
   yawRight: ['RB'],
   jump: ['A'],
+  lance: ['RT'],
+  recoverLance: ['RB'],
   sprint: ['B'],
   sprintLatch: ['L3'],
   interact: ['Y'],

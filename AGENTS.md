@@ -91,3 +91,12 @@ The pack is reference material. Historical workspace snapshots and embedded hand
 prompts are context, not current repository state or authorization to implement
 gameplay. Verify the live checkout and follow the current user's authorized scope.
 Keep reference images out of runtime assets unless separately authorized.
+
+## Shared visual direction
+
+Before art, costume, theme, palette, prop, architecture, dragon or asset work, read
+[the shared visual guide](docs/ART_DIRECTION.md). Claude and Codex follow the same
+canonical master, source hierarchy, corrected image paths and verification rules.
+The guide resolves conflicts in older concept imagery and wardrobe text; proposals
+remain proposals. Require its per-category gameplay-camera evidence before claiming
+runtime art compliance. Reading a reference does not authorize implementation.

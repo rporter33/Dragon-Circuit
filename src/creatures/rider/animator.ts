@@ -180,6 +180,7 @@ export class RiderAnimator {
   time = 0;
   // Smoothed state.
   private airW = 0;
+  private freefallW = 0;
   private flailW = 0;
   private waveW = 0;
   private landKick = 0;
@@ -251,6 +252,7 @@ export class RiderAnimator {
     this.yawRate = damp(this.yawRate, Math.abs(dy) < 1 ? dy / Math.max(dt, 1e-3) : 0, 8, dt);
     if (!this.initialized || ctx.snapped) {
       this.gait.reset(pose.position, pose.yaw, ctx.ground);
+      this.freefallW = pose.freefallTilt !== undefined ? 1 : 0;
       this.initialized = true;
     }
 
@@ -264,9 +266,51 @@ export class RiderAnimator {
         this.airW = air ? 1 : 0;
         this.wasAir = air;
         this.flailW = 0;
+        this.freefallW = 0;
         this.landKick = 0;
       }
       this.footLayer(dt, pose, ctx, this.LF);
+      // Supported feet and boarding retain their established pose ownership.
+      if (pose.action !== 'fall' && pose.action !== 'jump') this.freefallW = 0;
+      else this.freefallW = damp(this.freefallW, pose.freefallTilt !== undefined ? 1 : 0, 10, dt);
+      if (this.freefallW > .001) {
+        const L = this.LF, d = this.rig.dims, w = this.freefallW;
+        const dive = (Math.max(-1, Math.min(1, pose.freefallTilt ?? 0)) + 1) * .5;
+        const shape = dive * dive * (3 - 2 * dive);
+        const pitch = MathUtils.lerp(Math.PI / 2 - .08, Math.PI - .08, shape), flutter = Math.sin(this.time * 4) * .04;
+        const steer = pose.freefallSteer ?? 0;
+        L.hipRot.x = MathUtils.lerp(L.hipRot.x, pitch + .12 * (pose.airBoost ?? 0), w);
+        L.hipRot.z = MathUtils.lerp(L.hipRot.z, -.36 * steer, w);
+        L.spine.x = MathUtils.lerp(L.spine.x, .06, w); L.chest.x = MathUtils.lerp(L.chest.x, .04, w);
+        L.head.x = MathUtils.lerp(L.head.x, -.18, w);
+        _q.setFromAxisAngle(X, pitch);
+        for (let i = 0; i < 2; i++) {
+          const side = SIDES[i];
+          // Open, slightly bent arms for braking; streamline beside the torso for diving.
+          const spread = d.shoulderHalfWidth + .985 * (d.upperArm + d.foreArm);
+          _v.set(side * MathUtils.lerp(spread, .27 * d.w, dive),
+            MathUtils.lerp(d.chestLen * .98, -.27 * d.h, dive) + (flutter + side * steer * .08) * d.h,
+            MathUtils.lerp(-.012, .1 * d.h, dive));
+          L.hand[i].lerp(_v, w); L.handQ[i].slerp(_q2.identity(), w);
+          L.curl[i] = MathUtils.lerp(L.curl[i], .15, w); L.thumb[i] = .2;
+          _v.set(side * (.22 - .1 * dive) * d.w, -.74 * d.h, -.12 * d.h).applyQuaternion(_q).add(L.hip);
+          L.foot[i].lerp(_v, w); L.footQ[i].slerp(_q, w);
+          _v.set(side * .12, 0, 1).applyQuaternion(_q); L.knee[i].lerp(_v, w).normalize();
+        }
+      }
+      if (pose.equipment === 'tether' || pose.lanceMotion) {
+        // Fire from the left forearm. The free right hand retains its natural/freefall pose.
+        const L = this.LF, d = this.rig.dims;
+        const t = Math.min(1, Math.max(0, pose.lanceMotionT ?? 0));
+        const cast = pose.lanceMotion === 'cast' ? Math.sin(Math.PI * t) : 0;
+        const recover = pose.lanceMotion === 'recover' ? Math.sin(Math.PI * t) : 0;
+        const weight = pose.equipment === 'tether' ? 1 : Math.max(cast, recover);
+        const tension = pose.lineTension ?? 0;
+        _v.set(.25 * d.w, (-.05 + .12 * cast + .08 * tension) * d.h, (.37 + .12 * cast - .12 * recover) * d.h);
+        L.hand[0].lerp(_v, weight); L.curl[0] = MathUtils.lerp(L.curl[0], .3, weight);
+        L.thumb[0] = MathUtils.lerp(L.thumb[0], .4, weight);
+        L.chest.x += .035 * tension;
+      }
     }
     this.footActive = wM < 0.999;
     if (wM > 0.001) this.mountLayer(dt, pose, ctx, this.LM);
@@ -291,7 +335,7 @@ export class RiderAnimator {
     const hopDis = dismT >= 0 ? 1 - smooth(0.72, 0.98, dismT) : 0;
     const airborne = a === 'jump' || a === 'fall' || hopMount > 0.5 || hopDis > 0.5;
     this.airW = damp(this.airW, airborne ? 1 : 0, airborne ? 14 : 22, dt);
-    const flailing = a === 'fall' && (t > 0.45 || v.y < -9);
+    const flailing = pose.freefallTilt === undefined && a === 'fall' && (t > 0.45 || v.y < -9);
     this.flailW = damp(this.flailW, flailing ? 1 : 0, flailing ? 2.5 : 8, dt);
     const waveT = a === 'wave' ? Math.min(1, t / 0.22) * Math.min(1, Math.max(0, (P.waveTime - t) / 0.3)) : 0;
     this.waveW = damp(this.waveW, waveT, 14, dt);

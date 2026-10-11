@@ -1,5 +1,443 @@
 # Driftwing — AI Development Handoff
 
+## Latest: Windline targeting, deliberate pull, grounded recall, skydiving and 1.75-second boost — 2026-10-10
+
+- Owner authorized these follow-ups, then specified 1.75-second boost recharge / light-blue bottom-right HUD
+  and reported line disconnection during turns. This deliberately supersedes the earlier no-powered-reel
+  contract for explicit A/Space pulls only. No automatic pulling, moving anchors or rope wrapping added.
+- Workspace `/home/robert/Projects/Driftwing-SkyLance`, branch `exp/sky-lance-v1`, HEAD
+  `f3ef231c6a12ed5865cd73562447f6d94a1730bf`; entire pre-existing dirty prototype preserved at `/home/robert/Projects/Driftwing-Preservation/windline-motion-baseline-20261010T233415Z`.
+  All 438 archived project files verified by SHA-256. Codex/Claude checkouts were not edited.
+- A/Space while tethered requests a 0.4-second pull: 60 m/s² radial acceleration, powered inward speed
+  capped at 18 m/s (existing overspeed retained), minimum line 2 m. Reeling follows actual swept inward
+  movement; no snap to a shorter radius. Explicit powered work enters the existing energy budget;
+  unpowered constraints/energy guard remain. Release clears pull and preserves instantaneous velocity.
+  In the production underside trial after 0.3 seconds: line 17.300 → 15.391 m, ascent 12.600 m/s.
+  Detached A/Space retains the waist burst and its independent 1.75-second simulation cooldown.
+- Reticle position now follows the current ballistic near aim every render frame, independently of
+  expensive first-solid prediction (bounded to 20 Hz). Fresh confirmed impact has a separate small dot;
+  stale eligibility becomes CHECKING. This avoids jumping the main ring between hit/fallback depths.
+  Bracer orbit supports 89° up with exact view pitch and no pole reversal; ordinary/flight limits unchanged.
+- Reproduced underside turning disconnect: 8/18/26 m/s trials detached after 504/455/196 fixed steps.
+  Camera-only turn stayed attached. A newly blocked line now sweeps back to its preceding clear body
+  endpoint, dissipates blocked motion and retains its committed length instead of dropping the rider.
+  It may briefly stop at an edge; no wrapping is simulated. Invalid anchors or impossible restoration
+  still detach safely. One full LOS check on ordinary steps, two on the exceptional restoration path.
+  Final reproduction retains all four trials for 720 steps each. Manual release remains available.
+- Ground hold-Y/F now recalls an independently gliding dragon using its actual pose and existing safe
+  greeting-landing planner. Transfer occurs only if a landing spot exists. The recalled hop remains airborne
+  and blends orientation rather than replaying a supported launch. Four breeds return and can mount;
+  existing deliberate midair catch/remount still passes. Existing stable/interactable priority is retained.
+- Full forward tucks the rider head-down and brakes horizontal motion toward a vertical dive; back
+  spreads the body flat and brakes, with side steering retained. No-input horizontal momentum remains.
+  Partial forward still steers. Rider-only descent limits remain 9/13/18 m/s; dragon flight is unchanged.
+  Three-build regressions cover head/hip/foot ordering, arm spread, smooth transition and planted resets.
+- Bottom-right light-blue boost indicator shows READY, active burst, numeric recharge and progress;
+  while linked it identifies the tether-pull action. Hidden during menus/mounted modes; pause freezes time.
+  Production checks verify exact 210-tick recharge, 0% → 100% HUD, upward aim, pull/release, ground recall,
+  vertical dive/flat brake, actual DOM Q controls and simulated-controller RT/A/Y transitions.
+- Baseline focused checks: 161 / 13 passed. Broadened focused checks: 198 / 14 passed before final two
+  energy regressions; final full suite includes both and passes 1,092 / 103. Final typecheck/build pass;
+  production smoke 15/15 passes. Existing golden fixtures/tolerances unchanged.
+- Existing capture harness: nine final 1280×720 captures, six full-dive/brake views across all three
+  rider builds, matched steering before/after, upward READY and cooldown HUD. All inspected. These are
+  representative pose/UI views, not exhaustive garment intersection proof or a full art-compliance audit.
+- Timed production Chromium CPU proxy (drawing disabled): short underside attached mean
+  1.823 ms, moving swing 3.115 ms;
+  forecast sample mean 3.090 ms. Query counts remain bounded. Earlier pass was 1.597 / 2.688 ms;
+  host timing differences do not establish causal cost changes. Long/grazing lines remain a performance
+  limitation from the prior pass; no physical-GPU or physical-controller certification claimed.
+- Assessment, preservation audit, focused incremental diff, logs and captures: `/home/robert/Projects/Driftwing-Preservation/windline-motion-review-20261011T000025Z`.
+  Local play: http://localhost:5176/?view=skyLance&play=1&quality=low — refresh the existing tab.
+  No commits, integration, pushes, deployment, dependency changes, M1, wardrobe or dragon-physics work.
+  Next: owner playtest/review; no automatic scope expansion.
+
+## Latest: faster Windline, tether CPU correction, six-second boost and companion descent — 2026-10-10
+
+- Owner authorized the reported tether/contact slowdown, faster launcher, reusable six-second boost,
+  glide review, and upside-down-looking companion limbs during lower-island arrival. Implemented only
+  in `/home/robert/Projects/Driftwing-SkyLance`, `exp/sky-lance-v1`, unchanged HEAD `f3ef231c6a12ed5865cd73562447f6d94a1730bf`.
+- Dirty baseline preserved at `/home/robert/Projects/Driftwing-Preservation/tether-performance-baseline-20261010T225153Z`. All 435 archived project files verified by SHA-256;
+  tracked, untracked and relevant ignored files included, excluding .git/node_modules/generated dist.
+- Launcher speed 42 → 75 m/s; immediate existing Q/RT interaction, 65 m default range and swept first-solid
+  contacts retained. Legacy unexposed charged speed becomes 90 m/s so it cannot be slower than tap fire.
+- Boost now recharges six seconds after activation on the fixed simulation clock, including airborne,
+  tethered and mounted modes. Pause freezes it; landing/mounting/saddle jumps stop thrust without refilling.
+  Explicit teleport/respawn/practice reset clears it. Existing upward/horizontal impulse and rope prohibition retained.
+  Practice UI shows the remaining cooldown. Freefall speed/steering/camera tuning unchanged after review.
+- Confirmed CPU bottleneck: two full 1 cm rope sweeps per fixed tick beneath procedural rock. Retain immediate
+  new-attachment validation and pre-dispatch static identity checks; steady ropes check obstruction once,
+  after collision-resolved movement, within the same tick. A newly occluded line can receive that tick's
+  constraint reaction before detachment (at most one 1/120 s step); removed/moved identities detach before dispatch.
+- Rock sweeps clip their original lattice against enclosing solid AABBs. Exact query-local vertical column
+  reuse and conservative finite-difference normal rejection avoid repeated procedural height work. The island
+  surface equations, first-solid ordering, slack/locked length, swept body corrections and release operation remain.
+  An exploratory inflated-contact-sphere accelerator failed a retained dense-reference regression and was removed.
+- Companion hops cap descending pitch at 0.55 rad and level before arrival; steep descent prepares limbs through
+  the existing flare channel. Hop feet remain airborne until actual supported settling. Player advances the existing
+  touchdown id on companion arrival so feet replant on the destination. Rescue swoop orientation/flight tuning unchanged.
+- Final verification: focused 186 / 15 passed; full 1,075 / 103 passed; typecheck/build passed; production smoke
+  15/15. Dense sweep reference and original island-contact equations agree across seeded/all-island samples;
+  field-evaluation budgets and cache expiry pass; all four breeds pass descent/ground contact checks.
+  Fixed-step render-rate tests include cooldown. No golden fixtures or tolerances changed.
+- Production browser confirms airborne recharge (+11.846 m/s launch; 3.940 m gain), pause clock, steering/manual
+  camera, READY/actual underside/pillar attachment, held-rescue blocking and release; actual keyboard and simulated
+  standard gamepad cast/boost/dismount/rescue/remount pass. Physical controller testing remains pending.
+- Timed CPU proxy (one fixed tick plus normal frame updates, drawing disabled): short underside attachment mean
+  11.347 → 1.597 ms; moving short swing 2.688 ms.
+  Near-maximum line moving swing mean 5.983, peak 11.500 ms; longer lines remain heavier.
+  These are Chromium/SwiftShader host CPU samples, not physical-GPU or owner playtest evidence.
+- Evidence and focused incremental patch: `/home/robert/Projects/Driftwing-Preservation/tether-performance-review-20261010T232319Z`. Compared the actual pre-fix/final Harrier descent frame;
+  corrected downward-reaching limbs are visible. Other breeds have automated coverage, not new visual captures.
+- Local production prototype: http://localhost:5176/?view=skyLance&play=1&quality=low (refresh existing tab).
+  Existing dev/preview servers retained. No commit, merge, push, dependency change, deployment, M1 or wardrobe work.
+  Next: owner playtest/review; no automatic expansion or integration.
+
+## Latest: responsive freefall, upward burst and general static-surface Windline — 2026-10-10
+
+- Owner authorized this follow-up in the existing isolated prototype: `/home/robert/Projects/Driftwing-SkyLance`, branch
+  `exp/sky-lance-v1`, unchanged HEAD `f3ef231c6a12ed5865cd73562447f6d94a1730bf`.
+- Complete dirty pre-change state preserved at `/home/robert/Projects/Driftwing-Preservation/windline-control-baseline-20261010T221409Z`; all 432 archived SHA-256 hashes verified.
+  Tracked, untracked and ignored project references retained; generated node_modules/dist excluded.
+- Untethered steering follows camera-relative intent with bounded 26 m/s² acceleration and 18 m/s
+  controlled horizontal speed. No-input momentum is retained. Manual camera orbit stays available;
+  automatic velocity-follow/companion avoidance stops during traversal, preventing steering feedback.
+  Rider facing turns smoothly and freefall banking is clearer. Ordinary jumps and dragon flight unchanged.
+- One A/Space waist burst sets vertical velocity to at least +12 m/s (retains faster ascent), then
+  adds up to 10 m/s horizontal impulse over 0.28 s toward stick intent or camera aim. Horizontal added-speed
+  ceiling remains 36 m/s, retaining incoming overspeed. Landing/mount recharges; tether blocks boost/steering.
+- All static hard collision surfaces can anchor, including islands' tops/cliffs/undersides, spires,
+  arches, building/roof/deck proxies, trunks and practice pillars. Soft foliage/decor without collision
+  is excluded. IDs come from collision registration, independent of preview discovery order. Geometry/identity changes invalidate anchors. No moving-anchor following or rope wrapping.
+- Shared analytic terrain contacts now optionally identify the hit solid; the existing collision
+  calculation is unchanged. Tether validation never exempts the whole attached object: crossing its back
+  obstructs/detaches. Fixed maximum length, slack, first-solid collision and release momentum remain.
+- Reticle shows blue READY + distance, LINKED, BLOCKED / TOO CLOSE, NO SURFACE (65 m), FIRING/REFORMING.
+  Forecast uses the real fixed-step projectile and obstruction validation, bounded at 240 steps,
+  refreshed at most 8 Hz. It assumes current harness position; subsequent movement can alter reachability.
+- Verification: baseline 117 / 8 passed; final full suite 1,061 / 100 passed; focused 172 / 12 passed; typecheck and final build passed; smoke 15/15.
+  Browser: 1 s left turn reached -17.956 m/s with zero automatic camera drift; manual orbit 2.6 rad;
+  falling boost launched at +11.846 m/s and gained 3.940 m; real underside READY at 20.551 m, attachment
+  retained under held rescue; ordinary pillar attached. Preview-order independence is regression-tested. No golden fixture/tolerance changes.
+- Range forecast measured 9.04 ms mean / 10.70 ms max (10 warm headless CPU samples).
+  Real GPU and physical-controller feel remain unverified. Software WebGL captures are recorded separately.
+- During final audit, AGENTS.md, CLAUDE.md and a new docs/ART_DIRECTION.md had changed independently
+  of this pass. Read and preserved separately in the evidence folder; author/source not assumed.
+  The guide gives current owner direction precedence, so the wrist-fired magical tether is retained.
+  Full production art compliance is not claimed.
+- Evidence, assessment and incremental diff against the full dirty baseline: `/home/robert/Projects/Driftwing-Preservation/windline-control-review-20261010T224155Z`.
+- Play: http://localhost:5176/?view=skyLance&play=1&quality=low (refresh). Next: owner playtest/review.
+  Work stays uncommitted; no integration, pushes, deployment, dependencies or other-checkout edits.
+
+## Latest: rider traversal fidelity, deliberate saddle jump and waist burst — 2026-10-10
+
+- Owner authorized this focused follow-up to the bracer prototype. Work remains isolated in
+  `/home/robert/Projects/Driftwing-SkyLance`, `exp/sky-lance-v1`, unchanged HEAD
+  `f3ef231c6a12ed5865cd73562447f6d94a1730bf`. No main-game integration or broader Gate C.
+- Full pre-change working tree preserved at `/home/robert/Projects/Driftwing-Preservation/traversal-fidelity-baseline-20261010T202559Z`: 430 archived hashes verified, including
+  untracked implementation, references and ignored project/cache files. No reset/stash/commit.
+- Ordinary jumps remain walker-owned. Five bounded shared-ground queries require a clear four-metre
+  drop and 0.65 m rim clearance before skydiving. Tethered airborne ownership remains separate.
+- Rider descent targets now 9 / 13 / 18 m/s (brake / neutral / dive), with stronger asymmetrical
+  steering poses and camera-relative untethered air control. Descent drag no longer erases upward
+  launch/release momentum. Attached rope still gets no steering thrust or boost.
+- Hold Y/F for 0.4 s while flying to jump away with inherited velocity and a swept outward hop.
+  Release the button before a second hold calls the existing rescue. Same hold cannot catch/eject
+  repeatedly. The dragon glides through the existing FlightModel; flight tuning/breeds unchanged.
+  Independent landing cannot mount the rider or award grounded rest/regeneration to a flying dragon.
+- Experimental foot-camera upward range extended to 80 degrees, retaining terrain boom clearance.
+  Actual camera cast from lower platform attaches to higher marker. Mounted/ordinary limits retained.
+- A/Space gives one untethered 0.28 s waist burst (12 m/s impulse budget, 36 m/s added-speed cap,
+  existing overspeed preserved). It follows current momentum, using aim only at low speed. Landing
+  or mounting restores the charge. Compact procedural bronze/slate vessels and blue plumes use a
+  render-only hip socket; no animated transform controls physics. No reel/winch/powered tether.
+- Final checks: focused 178 tests / 10 files; full 1,042 / 99; typecheck/build passed; final production
+  smoke 15/15. Isolated browser fidelity, DOM keyboard, simulated standard controller RT/Y/A,
+  accessibility toggle and unpowered platform route passed. No golden or tolerance changes.
+- Capture evidence: ordinary-jump before/after, all three rider builds steering, consistent medium
+  waist front/side/rear, actual upper-anchor cast and four actual departure/rescue/catch frames.
+  Software WebGL only; physical-controller feel and real GPU performance remain owner review.
+- A complete lower-to-upper climb using only tether plus one burst has not been demonstrated.
+  Verified dragon recall provides a return option. Static anchors only; no automatic pulling.
+- Evidence, preservation audit and incremental dirty-baseline patch: `/home/robert/Projects/Driftwing-Preservation/traversal-fidelity-review-20261010T210241Z`.
+- Play: `http://localhost:5176/?view=skyLance&play=1&quality=low` (refresh). Next action: owner playtest
+  and feedback. No commits, pushes, merges, deployments, dependency changes or other-checkout edits.
+
+## Latest: bracer-fired magical tether and slow rider freefall — 2026-10-10
+
+- Owner requested replacing the cumbersome lance with a bracer-fired magical tether and a clear,
+  substantially slower freefall. This focused experimental follow-up supersedes the thrown-lance
+  presentation contract here; no main-game integration, flight tuning or broader Gate C is implied.
+- Checkout `/home/robert/Projects/Driftwing-SkyLance`, branch `exp/sky-lance-v1`, unchanged HEAD
+  `f3ef231c6a12ed5865cd73562447f6d94a1730bf`. Complete dirty Gate B state preserved at
+  `/home/robert/Projects/Driftwing-Preservation/bracer-freefall-baseline-20261010T195848Z`:
+  all 428 archived file hashes verified, including ten ignored cache files. No reset/stash/commit.
+- Removed pole, flag and carry-grip presentation. Left bracer fires a small luminous seed and thin
+  blue filament. Existing swept first-solid projectile, approved static anchors, locked maximum
+  length/slack, harness authority, release velocity and automatic reformation remain. Animated
+  wrist sockets remain render-only. Internal SkyLance module names/URL retained for compatibility.
+- Rider-only terminal descent targets: braking 7 m/s, neutral 10 m/s, dive 14 m/s. Vertical implicit
+  quadratic drag smoothly brakes excess inherited speed rather than snapping velocity on release.
+  Weak horizontal drag is independent. Attached swings bypass the new vertical braking entirely;
+  gravity, tether solver reactions/energy guard, dragon flight and breed parameters stay intact.
+- Both arms now participate in the braking pose; diving leans forward and streamlines the limbs.
+  Existing IK handles all three builds. Freefall blend clears on supported touchdown, boarding and
+  teleport. Q/RT hold/release, toggle alternative and deliberate F/Y rescue are unchanged.
+- Final typecheck and full suite passed: 1,022 tests / 98 files. Focused traversal/input/rider checks
+  passed (142 / 12 files), then the final pose/reset checks (7 / 1 file). No golden updates.
+- Initial bracer production build and browser loop passed: neutral fall -9.999999991 m/s,
+  maximum rope excess 2.85e-14 m, release error against next-step forces 0. Keyboard, simulated RT,
+  pause/resume, toggle, deliberate catch and actual far-platform landing verified (release step 140).
+  Final rebuilt-browser confirmation after the pose-reset safeguard: passed with the same metrics.
+- Existing capture harness supplies matching before/after medium freefall views, all three rider
+  builds, left-bracer firing and line against sky. Visual captures and final confirmation are
+  described separately in the evidence report; software WebGL, not physical GPU/controller evidence.
+- Evidence and follow-up-only patch: `/home/robert/Projects/Driftwing-Preservation/bracer-freefall-review-20261010T200930Z`.
+- Local review: `http://localhost:5176/?view=skyLance&play=1&quality=low` (refresh to load latest build).
+  Existing unrelated work retained. No dependency changes, commits, pushes, merges or deployment.
+  Next action: owner playtests bracer/slow-fall feel; integration and Gate C remain separately gated.
+
+
+## Latest: Windline / Sky Lance Gate B — controls and presentation — 2026-10-10
+
+- Owner approved Gate B only. Checkout `/home/robert/Projects/Driftwing-SkyLance`, branch
+  `exp/sky-lance-v1`, unchanged HEAD `f3ef231c6a12ed5865cd73562447f6d94a1730bf`.
+- Complete dirty Gate A baseline preserved outside source at
+  `/home/robert/Projects/Driftwing-Preservation/gate-b-baseline-20261010T182441Z`.
+  All 417 archived file hashes verified; unrelated files retained. No reset/stash/commit/integration.
+- Immediate fresh Q/RT cast, hold retention and release/cancel; explicit opt-in input context prevents
+  held RT across mounted/menu transitions from casting. Practice checkbox enables toggle mode.
+  Pause/Escape releases pointer lock before changing the checkbox. Hold F/Y rescue remains deliberate.
+  Recovery automatically returns equipment to ready after 0.36 simulation seconds. Legacy manual
+  recovery remains compatible. No powered pumping, winching or changes to the tether solver/flight.
+- Procedural left bracer, crossback harness and shoulder-routed load strop use render-only rider
+  sockets; physical harness remains fixed relative to RiderFoot. Restrained cast/tension/recovery IK
+  uses the existing rig. Thin blue tether has a 1.1 px core / 2.3 px edge at viewport resolution,
+  world depth testing and ordering after the existing sky dome. No renderer infrastructure changes.
+- Practice anchor cues check static identity/range/first-solid line of sight at bounded 10 Hz;
+  they do not steer aim or promise a ballistic hit. Added pillar uses the same rendered/collider box.
+  Far platform lowered from surface 415 m to 400 m after the unpowered route proved unreachable.
+- Final verification: `npm run typecheck`, `npm run build`, `npm test` (1,009 tests / 97 files),
+  `git diff --check` passed. Focused rider/input/traversal/camera checks passed (155 / 13 files),
+  followed by the final traversal/input checks (82 / 6 files). No golden updates or weakened tolerances.
+- Production browser check passed via `node scripts/sky-lance-check.mjs http://localhost:5176/`:
+  real DOM Q and toggle, simulated standard RT, buffered quick taps, recovery, pause/resume,
+  camera aim, independent fall / deliberate rescue, and actual far-platform landing.
+  Max rope excess 2.85e-14 m; release error versus expected next-step gravity/drag 0;
+  pillar pass 24.438 m/s; max camera increment 0.085451 rad; right-axis vertical component <7e-19.
+- Existing dragon-capture harness produced matching 720p front/side/rear captures of all three
+  rider builds, actual cast frames, release/recovery and sky/stone/foliage line views. Baseline
+  captured before source edits. Initial occluded views and inherited post-reset poses were corrected
+  in staging; earlier failed/stopped attempts are diagnostic evidence, not accepted final captures.
+- Evidence, assessment and Gate B-only patch: `/home/robert/Projects/Driftwing-Preservation/gate-b-review-20261010T185714Z`.
+  Browser uses SwiftShader: no physical-GPU performance or physical-controller playtest claim.
+  Dense-foliage stress, broad wardrobe/quality coverage and production smoke/performance hardening
+  remain Gate C work. Motion and control feel await owner feedback.
+- Local production preview: `http://localhost:5176/?view=skyLance&play=1&quality=low`.
+  No M1, dragon integration, commits, pushes, merges, deployment or dependency changes.
+  Next action: owner reviews Gate B; Gate C requires separate approval.
+
+## Latest: Sky Lance Gate A — physics and lifecycle reconciliation — 2026-10-10
+
+- Objective: reconcile the existing isolated prototype with the Windline Bracer contract; Gate A only.
+- Checkout `/home/robert/Projects/Driftwing-SkyLance`, branch `exp/sky-lance-v1`, unchanged HEAD
+  `f3ef231c6a12ed5865cd73562447f6d94a1730bf`; all implementation remains uncommitted.
+- Original 15 modified tracked / 11 untracked files preserved in a SHA256-verified 416-file archive at
+  `/home/robert/Projects/Driftwing-Preservation/gate-a-20261010T175251Z` (original Git state included).
+- Removed powered swing pumping and its tuning/integrator input. Grounded attachment retains the
+  walker and support; grounded bound correction preserves support, jump/edge departure transfers
+  ownership, and a subsequent landing detaches. Airborne release retains instantaneous velocity.
+- Swept correction starts at the resolved contact; bounded retries detach on incompatible constraints.
+  Sweeps fail closed above 128 m or 256 broad-phase candidates; primitive/rock budgets remain bounded.
+- Anchors validate stable collider identity, geometry and live source membership before movement;
+  all intervening solid hits obstruct. Miss/detach/invalidation enter the existing manually recoverable
+  spent state; no recovery control or animation changes.
+- Split gravity kicks with an initial radial reaction remove artificial unpowered damping. Energy
+  guard remains. Controlled 60 s, 10 m, 0.05 rad swing: energy loss 0.02306% (original 20.1572%),
+  period 4.68393849 s vs analytic 4.68320982 s, zero guard stops; growth below 1e-8 J/kg per step.
+- Added transition/reset, grounded movement, anchor mutation, collision/budget, scene resource disposal,
+  pause/save reset and 30/60/120/144 FPS plus jittered presentation regressions. Scene teardown and
+  bfcache suspension use a narrow optional showcase lifecycle hook.
+- Baseline command `npx vitest run src/traversal src/player/Player.test.ts src/input/Input.test.ts`:
+  91 passed / 5 files. Final focused command adds `src/world/colliders.test.ts`: 137 passed / 7 files.
+  `npm test`: 1004 passed / 96 files. `npm run typecheck` and `npm run build`: passed.
+  `git diff --check`: passed. No golden fixture or tolerance changes.
+- Evidence and Gate A-only diff:
+  `/home/robert/Projects/Driftwing-Preservation/gate-a-review-20261010T175251Z/assessment.md`.
+- Limits: automated source/unit/build evidence only this gate; no browser, physical-controller,
+  production smoke, capture or GPU/allocation profiling performed. Query-budget saturation blocks
+  conservatively; dense-scene usability/performance remains Gate C work. Controls/art and practice
+  route are otherwise unchanged; no main-game integration or flight physics changes.
+- Next action: owner review. Gates B/C, controls/art, commits, pushes, merges and integration require
+  separate authorization. This handoff is informational, not authorization.
+
+## Latest: Sky Lance controlled freefall and charged throw — 2026-10-10
+
+This section supersedes the V1 release-grace/automatic-rescue behavior below, in this
+experimental worktree only. All prior uncommitted prototype work is retained.
+
+### Authority and checkout
+- Owner approved two focused packages: controlled freefall/deliberate catch, then charged
+  throw/thinner shaft/tip ribbon/aim UI, with tests, build, browser validation and captures.
+- Worktree `/home/robert/Projects/Driftwing-SkyLance`, branch `exp/sky-lance-v1`, HEAD
+  `f3ef231c6a12ed5865cd73562447f6d94a1730bf`. Changes remain uncommitted.
+- Released checkout `/home/robert/Projects/Driftwing-Codex` remains clean at `844e5c2`.
+- No commits, integration, pushes, deployment, dependencies, wardrobes or dragon-mounted
+  grappling authorized. Wyvern flight physics and breed tuning are unchanged.
+
+### Behavior and implementation
+- In the opt-in scenario, leaving the ground enters `PlayerMode.traversing`; ordinary
+  airborne walking braking and automatic rescue do not take movement ownership.
+- Hold Y/F for 0.4 seconds while untethered to request the existing swoop/catch sequence.
+  A tap does not catch; holding during a valid tether cannot interrupt the swing.
+  Grounded mounting retains its existing interact behavior. This is not the complete
+  roadmap leap-and-call feature with distance-dependent companion travel time.
+- Forward W/left stick smoothly streamlines the freefall pose and reduces quadratic drag;
+  backward S/left stick spreads the pose and increases drag. No freefall thrust or winch.
+  Existing fixed 120 Hz and four swept integration substeps remain authoritative.
+- Release preserves instantaneous velocity; subsequent physics applies gravity/air resistance.
+  World contact restores walking. Crossing the existing cloud floor uses fade/respawn rather
+  than an unsolicited swoop; freefall is bounded by that existing world safety boundary.
+- Hold X/Q to wind up (0.8 seconds to full power), release to throw. Tap speed remains
+  42 m/s; full-charge speed is 64 m/s, before inherited rider velocity. Range eligibility
+  grows from 65 to 95 m; actual rope length still locks only on attachment and never retracts.
+- X/Q still immediately detaches a live tether; RB/E still recovers spent equipment.
+  Press/release edges and aim are buffered across zero-step render frames. Pause cancels
+  windup and requires button release before a fresh press. Teleport resets transient state.
+- Rider windup/freefall uses the existing animation layer and joint-limited IK. Shaft radii
+  reduced from .016/.022 to .010/.014 normalized units. Narrow blue ribbon attaches near the
+  tip and hangs downward independently of pole orientation; static decorative geometry,
+  no cloth solver or decorative collision. No new asset imports or wardrobe work.
+- Ivory/bronze reticle projects a short ballistic aim point from the simulation harness after
+  camera update, including inherited rider velocity, with a charge ring. It is an aiming aid
+  at 20 m, not a target lock or a guaranteed endpoint/range predictor.
+- Primary files: `src/player/Player.ts`, `src/traversal/{SkyLance,tether,tuning,SkyLanceVisuals}.ts`,
+  `src/core/types.ts`, `src/input/Input.ts`, `src/creatures/rider/animator.ts`,
+  `src/game/Game.ts`, `src/debug/showcases/skyLance.ts`, related tests, capture manifest,
+  browser check and this handoff. Existing V1 changes in other files are preserved.
+
+### Actual verification
+- `npm run typecheck`: passed.
+- Focused traversal/player/input tests: 91 passed across 5 files.
+- Final `npm test`: 967 passed across 95 files; no golden regeneration or tolerance changes.
+- Final `npm run build`: passed.
+- `node scripts/sky-lance-check.mjs`: passed on final source. Real DOM Q/E and simulated
+  standard-controller X/RB mapping, full windup/release, pause cancellation, ledge freefall,
+  deliberate catch, actual camera-aim attachment, swing/release/recovery/ground restoration.
+  Rope excess 3.20e-14 m; release velocity error against the next gravity/drag step 0.
+  Measured horizontal change during that step .00574 m/s is aerodynamic drag, not a release
+  impulse. Strict 1e-8 release-physics assertion remains; no blanket tolerance relaxation.
+- Final `node scripts/smoke.mjs --no-build --port 5393`: 15/15 passed against the
+  resulting production build, including title/play, pause/resume, quality switches and plain boot.
+- Existing dragon-capture harness: five final captures completed, visually reviewed:
+  all three rider builds at full windup, plus freefall dive/brake. Manifest assertions check
+  actual charge and traversal mode rather than assigning poses. Output:
+  `/tmp/driftwing-sky-lance-r2/index.md`; earlier V1 views remain in
+  `/tmp/driftwing-sky-lance-captures/index.md`. Browser telemetry:
+  `/tmp/driftwing-sky-lance-check.json`.
+- Browser/captures use software WebGL (SwiftShader). Physical gamepad feel, real GPU
+  performance and owner playtesting remain outstanding; no claim of hardware validation.
+- `git diff --check`: passed. No repository cleanup, resets, stash or Git integration done.
+
+### Next authorized action
+Owner playtest/review at `http://localhost:5175/?view=skyLance&play=1&quality=low`.
+Development server remains running on 5175. Await further direction before expanding scope
+or checkpointing/integrating this experiment. Known prototype limits remain: registered
+static anchors only, no rope wrapping, no moving anchors, no rope shortening, no cloth solver.
+
+## Latest: isolated Sky Lance V1 prototype — 2026-10-10
+
+This section supersedes historical objectives below for this worktree; older entries are retained.
+
+### Authority and checkout
+- Owner approved the checkpoint/worktree procedure and isolated implementation, staged tests,
+  locked dependency installation, runtime validation and captures. No commit, integration, push,
+  deployment, dependency changes, wardrobes or dragon-mounted grapple work is authorized.
+- Worktree: `/home/robert/Projects/Driftwing-SkyLance`; branch: `exp/sky-lance-v1`.
+- HEAD remains `f3ef231c6a12ed5865cd73562447f6d94a1730bf`; prototype changes are uncommitted.
+- This verified reference-pack checkpoint contains released gameplay at `844e5c2` plus art/docs.
+  Only `docs/art-reference-pack` was fetched; no branch was merged into the released checkout.
+- Released worktree `/home/robert/Projects/Driftwing-Codex` remains clean on `dev/codex-wsl`
+  at `844e5c25860aab4c596116df4ffb19fa4e98fd1e`. All prior rider, gameplay and music work is preserved.
+
+### Implemented boundaries
+- Opt-in practice scene: `?view=skyLance&play=1`, using the real Game, Player, Rider, camera,
+  analytic terrain and shared collider index. Two elevated decks and two registered static anchors.
+- `PlayerMode.traversing` owns `RiderFoot.position/velocity` during tethered/released travel.
+  Equipment attachment resolves before movement dispatch; pending rescue changes to a return hop
+  from the companion's current position. No catch interrupts a valid swing.
+- Detached travel preserves velocity rather than using ordinary walking acceleration or fall drag.
+  Release grants 1.5 seconds before a fresh ordinary rescue clock. Ground contact restores walking;
+  teleport, spawn, quit and mount transitions reset transient equipment.
+- New `src/traversal/` modules separate equipment state, anchor identity, swept queries, tether
+  solving and procedural presentation. Gameplay never reads animated hand positions for forces.
+- Fixed 120 Hz; four integration substeps. Rope length locks at attachment, allows slack/inward
+  travel, removes outward radial velocity and preserves tangent velocity. Bounded tangential input
+  pumping and an energy guard prevent constraint-created energy. No retraction or winch force.
+- Swept sphere projectile proxy and three swept rider body probes. Primitive structures use
+  signed-distance conservative advancement; rock uses shared analytic contact queries with a
+  conservative sampled envelope (at most 1 cm extra clearance) and bisection. Query exhaustion
+  fails closed. Conflicting world/rope contacts and blocked lines detach; no rope wrapping.
+  Only the attached fixture's own eye is excluded from line obstruction checks, never rider collision.
+- Manual recovery after detachment restores equipment immediately without moving the rider.
+  In-flight throws can also be cancelled by recovery; attached ropes cannot be recovered/retracted.
+- Q / Xbox X (PlayStation square): throw or release. E / RB (R1): recover.
+  Shift / B or L3: run; Space / A: jump; WASD / left stick: move or pump;
+  mouse / right stick: aim; R / View or the practice button: reset.
+- Existing flight tuning, breeds, renderer, golden fixtures, dependencies and ordinary movement
+  paths are unchanged. The opt-in scene supplies its own control/status panel; no M1 expansion.
+
+### Art reference disposition
+- Art master 2.0, the reference pack documents/manifests and all 23 supplied images were reviewed.
+  Existing tracked reference assets were not duplicated, imported into runtime, or modified.
+- Ready to apply: palette, ceremonial silhouette and proportions. The placeholder uses a pole
+  1.45 times nominal rider height, restrained tip, grip wrap, bronze eye and long static blue pennon.
+- JPEG/PNG character, faction, armor and banner artwork is visual reference, not completed 3D art.
+  There are no supplied runtime models, rigs or animations to import. Production garment geometry,
+  rigging, throw/recovery animation and banner cloth remain future modeling/animation work.
+- Physics uses a compact tip proxy and stable torso endpoint; decorative shaft, eye and banner
+  geometry exert no forces. Shaft contact and production eye/grip offsets need later art refinement.
+  Static pennon and instant recovery are deliberate V1 placeholders.
+- Master 2.0 takes precedence over the older atlas's 2.5–3-times-height pole and older wardrobe
+  archery/palette notes. Illustrated serpentine dragons/pagoda roofs are not changes to game canon.
+
+### Actual verification
+- Before editing: existing Player/collision baseline, 55 tests passed.
+- Each system was tested before the next integration stage: projectile/tether, traversal ownership,
+  input/rider presentation, then the complete browser loop.
+- Final `npm run typecheck`: passed.
+- Final `npm test`: 959 passed across 95 files (25 additions over the released 934-test baseline).
+- Final `npm run build`: passed. `node scripts/smoke.mjs --no-build --port 5393`: 15/15 passed.
+- Coverage includes thin/invalid/occluded targets, slack and length bounds, 60-second unpowered
+  energy stability, tangent preservation, pumping bounds, release momentum, restoration, pending
+  catch cancellation, high-speed wall/ceiling/analytic-terrain contacts, repeated recovery, zero dt,
+  teleport/reset, queued aim, and fixed outcomes at 30/60/120/144 FPS plus jittered presentation.
+- `node scripts/sky-lance-check.mjs`: passed in Chromium/SwiftShader. Actual attachment, two-second
+  swing, release, recovery and grounded walking restoration recorded; maximum length excess
+  `2.842170943040401e-14 m`, horizontal release velocity change `0 m/s` in this trajectory.
+  Also passed real keyboard event mapping, simulated standard-pad X/RB edges, pause/resume and
+  attachment with existing camera aim (no custom projectile aim injected for that check).
+- Browser telemetry: `/tmp/driftwing-sky-lance-check.json`. This is software-renderer evidence,
+  not a physical-controller playtest or real-GPU performance measurement.
+- Existing capture harness completed seven images: all three rider builds plus anchor, swing,
+  release and recovery. Index: `/tmp/driftwing-sky-lance-captures/index.md`.
+  Captures were visually reviewed for grip/pennon and tether legibility; binary outputs stay outside Git.
+- `git diff --check`: passed. No golden fixtures or tolerances regenerated/changed.
+
+### Remaining review and next authorized action
+- Owner should playtest the isolated prototype at
+  `http://localhost:5175/?view=skyLance&play=1&quality=low` (practice server left running).
+  Run forward, jump toward the gap, aim up at the first bronze fixture and throw; pump, release,
+  then recover. Release timing determines whether the second deck is reached.
+- Physical-controller feel, real-GPU performance, production art and broader-world anchor placement
+  remain unverified/deferred. Existing discovery notices can appear over the practice scene.
+  Collision queries currently allocate temporary vectors; this isolated prototype is not a zero-
+  allocation production traversal system. Long/grazing rock sweeps have a conservative clearance.
+- Await owner review before changing scope, integrating, committing, pushing or deploying.
+  M1 Gate C remains independent; no wardrobe or dragon integration was started.
+
+---
+
 ## Objective and authority
 M1 "The First Lead", WP1: research state and save integrity. Gate A approved.
 Stop at Gate B before WP2. No commit authorized.
