@@ -268,6 +268,8 @@ try {
   }
   // Same warmed RaceHud update on a static fixture. This isolates CPU presentation cost,
   // excludes render/GPU and does not claim delivered FPS on hardware.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   evidence.hudCost = await page.evaluate(() => {
     const g = __dw.game; g.resume(); __lanternNeutral(); g.races.abort('quit');
     g.player.teleport(g.player.position.clone().set(-900, 560, 500), -Math.PI / 2, 'flying', 30);

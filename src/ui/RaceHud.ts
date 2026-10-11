@@ -101,7 +101,7 @@ export class RaceHud {
     this.best = new LiveText(bestV);
     this.clusterOn = new LiveClass(this.cluster, 'is-on');
     this.lantern = new LanternCoachHud(ctx.events);
-    this.cluster.append(this.lantern.line);
+    this.cluster.insertBefore(this.lantern.line, this.delta);
 
     // A slim line under the race cluster, not a card in the middle: the gate itself (what you aim
     // for) fills the centre of the screen on the approach.

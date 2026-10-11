@@ -96,7 +96,9 @@ corrected to use the existing `beginRace` API and actual breed IDs; an inappropr
 that the pace route must circle 30 m was split into the explicit learning exercise; a staged
 Ironback 180° reversal left the column, so the exercise now starts tangentially in the circling
 direction; the first stall fixture recovered before sampling, so recovery is sampled at a real
-stall in open air; the short-height label overlap was fixed. Original course/physics thresholds
+stall in open air; the short-height label overlap was fixed, and the coach is placed before
+the split delta so a prior record's transient line cannot push it into the world view.
+Original course/physics thresholds
 remain unchanged. Raw final failures, if any, stay in the evidence file and block package CI.
 
 Unrun here: physical Windows launcher execution, physical gamepad/rumble, human usability,
