@@ -49,7 +49,7 @@ export async function diagnoseReticle100(page, pose) {
         const layers = Object.fromEntries(['centreRay', 'projectile', 'tether'].map(k => [k,
           { ms: 0, sweeps: 0, rockContactMs: 0, rockQueries: 0,
             primitiveLookupMs: 0, primitiveCandidateQueries: 0, primitiveCandidatesReturned: 0 }]));
-        const before = { ...w.certificateStats };
+        const before = { ...w.certificateStats }, intervalBefore = { ...w.intervalStats };
         active = { first: true, layers }; v.nextPreview = 0;
         const start = performance.now();
         v.updateReticle(g.camera, p.foot.position, p.foot.velocity, p.skyLance);
@@ -60,6 +60,7 @@ export async function diagnoseReticle100(page, pose) {
           misses: w.certificateStats.misses - before.misses,
           hits: w.certificateStats.hits - before.hits,
           tightened: w.certificateStats.tightened - before.tightened,
+          intervals: Object.fromEntries(Object.keys(intervalBefore).map(k => [k, w.intervalStats[k] - intervalBefore[k]])),
           feet: p.foot.position.toArray(), velocity: p.foot.velocity.toArray(),
           camera: g.camera.position.toArray(), quaternion: g.camera.quaternion.toArray(),
           target: target(), green: el.classList.contains('is-valid'), state: el.dataset.target,

@@ -16,6 +16,12 @@ The tighter noise bound is derived from the installed simplex-noise 4.x kernel, 
 
 The original [bounded report](WINDLINE_SWEEP_SPIKE_2026-10-11.md) describes the unchanged height/stencil contact-plane derivation. Its failed measurements and disabled status belong to historical head `6d5d8d1`; this document describes the subsequently authorized pass. Transcendental rounding guards plus regression evidence are engineering validation, not a universal formal proof of JavaScript arithmetic.
 
+## Exact-domain interval sharing candidate
+
+After diagnostic CI38144909352 failed the stronger complete-query gate (4.594/3.353/1.328 ms at18/45/55 m), the parent authorized one bounded interval-sharing attempt. It shares only radius-independent central and lazy +/-1.5 m stencil bounds under the original validated island definition and identical numeric box. Stored tuples own their numeric values; reusable analytic scratch arrays are never retained. Coarse and fine domains occupy separate maps. Exact definition and `Object.is` box checks prevent cross-domain reuse, including signed zero.
+
+The original radius-specific floor FIFO remains16384 entries. A separate16384-domain FIFO bounds shared snapshots, and floor entries retain no snapshot references. Both clear together. Radius-specific formulas and outward rounding are unchanged, as are original contact/lattice/bisection/exhaustion/fallback and coarse/fine intersection. Added tests exercise copied storage, all three radii, exact-domain mismatch, revisions, seam crossing, eviction and repopulation against the original path. Profile/diagnostic rows disclose interval hit/miss counters. No acceptance threshold or workflow gate changed. Exact candidate CI is required; if it fails, further geometry acceleration or deferral needs a new decision.
+
 ## Required evidence
 
 - Geometry tests: whole-domain kernel proof; 1,500 plane boxes across authored/seeded crags, teeth, rims and angular seams; 320 complete/interrupted exact sweeps; thin primitive, overlap, revision, radius, length and logical-exhaustion checks; cold/hot cell reuse, new blockers, definition changes, cell boundaries, FIFO eviction and repopulation. Original hit/no-hit, fraction, point, normal and anchor must agree.

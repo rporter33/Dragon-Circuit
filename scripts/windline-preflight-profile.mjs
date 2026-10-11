@@ -30,9 +30,9 @@ try{
     g.camera.position.copy(camera);g.camera.position.x+=move;g.camera.position.z+=side;g.camera.quaternion.copy(quaternion);g.camera.rotateY((traversalMotion ? .025 : .003)*Math.sin(i/20));g.camera.updateMatrixWorld();
     const pair={};
     for(const mode of i%2?['reference','candidate']:['candidate','reference']){
-     w.localUndersideBounds=mode==='candidate';if(coldEachQuery&&mode==='candidate')w.clearGeometryCertificates();const before={...w.certificateStats};const layers=Object.fromEntries(['centreRay','projectile','tether'].map(k=>[k,{ms:0,sweeps:0,rockQueries:0}]));active={first:true,layers};v.nextPreview=0;
+     w.localUndersideBounds=mode==='candidate';if(coldEachQuery&&mode==='candidate')w.clearGeometryCertificates();const before={...w.certificateStats},intervalBefore={...w.intervalStats};const layers=Object.fromEntries(['centreRay','projectile','tether'].map(k=>[k,{ms:0,sweeps:0,rockQueries:0}]));active={first:true,layers};v.nextPreview=0;
      const start=performance.now();v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);const ms=performance.now()-start;active=null;pair[mode]=target();
-     records[mode].push({index:i,ms,layers,state:pair[mode]?.state,target:pair[mode],feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),certificateMisses:w.certificateStats.misses-before.misses,certificateHits:w.certificateStats.hits-before.hits,tightened:w.certificateStats.tightened-before.tightened});
+     records[mode].push({index:i,ms,layers,state:pair[mode]?.state,target:pair[mode],feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),certificateMisses:w.certificateStats.misses-before.misses,certificateHits:w.certificateStats.hits-before.hits,tightened:w.certificateStats.tightened-before.tightened,intervals:Object.fromEntries(Object.keys(intervalBefore).map(k=>[k,w.intervalStats[k]-intervalBefore[k]]))});
     }
     if(JSON.stringify(pair.reference)!==JSON.stringify(pair.candidate))mismatches.push({depth,index:i,...pair});
    }

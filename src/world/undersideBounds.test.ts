@@ -6,9 +6,60 @@ import {mulberry32} from '../core/rng';
 import {TraversalWorld} from '../traversal/sweep';
 import {AnchorRegistry} from '../traversal/anchors';
 import {SIMPLEX_GRADIENT_BOUND} from './undersideBounds';
+import type {UndersideIntervalSnapshots,UndersideIntervalStats} from './islandShape';
 import simplexSource from '../../node_modules/simplex-noise/dist/esm/simplex-noise.js?raw';
 
 describe('immutable analytic underside empty-space certificates',()=>{
+  it('owns lazy central and stencil snapshots while retaining exact radius-specific floors',()=>{
+    const s=new Terrain(LAYOUT).islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
+    const definition=JSON.stringify(s.def),solver=s.undersideCertificateSolver(definition)!;
+    const domain=[x,x+.04,z,z+.04] as const;
+    const stats:UndersideIntervalStats={domainHits:0,domainMisses:0,centralHits:0,centralMisses:0,stencilHits:0,stencilMisses:0};
+    const snapshots:UndersideIntervalSnapshots={definition,domain,bounds:[],stats};
+    expect(solver(...domain,.09,-Infinity,snapshots)).toBe(s.undersideContactFloor(...domain,.09,-Infinity));
+    expect(snapshots.bounds).toHaveLength(1);expect(stats.centralMisses).toBe(1);expect(stats.stencilMisses).toBe(0);
+    for(const radius of [.09,.03,.36]){
+      expect(solver(...domain,radius,Infinity,snapshots)).toBe(s.undersideContactFloor(...domain,radius));
+      expect(solver(...domain,radius,-Infinity,snapshots)).toBe(s.undersideContactFloor(...domain,radius,-Infinity));
+    }
+    expect(snapshots.bounds).toHaveLength(5);expect(stats.centralMisses).toBe(1);expect(stats.stencilMisses).toBe(4);
+    expect(stats.centralHits).toBe(6);expect(stats.stencilHits).toBe(8);
+    const owned=snapshots.bounds.map(b=>b?[...b]:b);
+    // Unshared queries overwrite all five reusable analytic scratch slots.
+    for(let i=1;i<8;i++)solver(x+i,x+i+.01,z+i,z+i+.01,.12);
+    expect(snapshots.bounds).toEqual(owned);
+    expect(solver(...domain,.12,Infinity,snapshots)).toBe(s.undersideContactFloor(...domain,.12));
+  });
+  it('ignores snapshots from a different definition or nonidentical coarse/fine domain',()=>{
+    const s=new Terrain(LAYOUT).islands[0],x=s.def.x+s.def.radius*.35,definition=JSON.stringify(s.def),solver=s.undersideCertificateSolver(definition)!;
+    const domain=[x,x+.04,0,.04] as const,expected=solver(...domain,.09);
+    expect(expected).not.toBeNull();
+    for(const snapshots of [
+      {definition:definition+' ',domain,bounds:[[1e9,1e9]]},
+      {definition,domain:[x,x+.01,0,.01],bounds:[[1e9,1e9]]},
+      {definition,domain:[x+1e-12,x+.04,0,.04],bounds:[[1e9,1e9]]},
+      {definition,domain:[x,x+.04,-0,.04],bounds:[[1e9,1e9]]},
+    ] as UndersideIntervalSnapshots[])expect(solver(...domain,.09,Infinity,snapshots)).toBe(expected);
+  });
+  it('shares only bound intervals across radii while preserving full fresh sweep parity',()=>{
+    const t=new Terrain({...LAYOUT,islands:[{...LAYOUT.islands[0]}],spires:[],arches:[]}),s=t.islands[0];
+    const fast=new TraversalWorld(t,new AnchorRegistry([],true),true),reference=new TraversalWorld(t,new AnchorRegistry([],true),false);
+    const x=s.def.x+s.def.radius*.35,z=s.def.z,from=new Vector3(x,s.bottomHeight(x,z)-30,z),to=new Vector3(x+.05,s.bottomHeight(x+.05,z)+1,z+.003);
+    for(const radius of [.08,.02,.35,.08,.02])expect(fast.sweep(from,to,radius,'line')).toEqual(reference.sweep(from,to,radius,'line'));
+    expect(fast.intervalStats.centralHits).toBeGreaterThan(0);expect(fast.intervalStats.stencilHits).toBeGreaterThan(0);
+    const misses=fast.intervalStats.domainMisses;
+    t.colliders.add({kind:'box',x,y:from.y+2,z,hx:2,hy:.001,hz:2,yaw:0});
+    for(const radius of [.08,.02])expect(fast.sweep(from,to,radius,'line')).toEqual(reference.sweep(from,to,radius,'line'));
+    t.colliders.clear();s.def.y+=1;
+    expect(fast.sweep(from,to,.02,'line')).toEqual(reference.sweep(from,to,.02,'line'));
+    expect(fast.intervalStats.domainMisses).toBe(misses); // Revised unsupported definition falls back.
+    s.def.y-=1;
+    expect(fast.sweep(from,to,.02,'line')).toEqual(reference.sweep(from,to,.02,'line'));
+    expect(fast.intervalStats.domainMisses).toBeGreaterThan(misses);
+    fast.clearGeometryCertificates();const cleared=fast.intervalStats.domainMisses;
+    for(const radius of [.08,.02])expect(fast.sweep(from,to,radius,'line')).toEqual(reference.sweep(from,to,radius,'line'));
+    expect(fast.intervalStats.domainMisses).toBeGreaterThan(cleared);
+  });
   it('proves the installed simplex kernel gradient bound over whole domains, not sampled gradients',()=>{
     expect(simplexSource).toContain('const G2 = (3.0 - SQRT3) / 6.0');
     expect(simplexSource).toContain('let t0 = 0.5 - x0 * x0 - y0 * y0');
@@ -78,6 +129,8 @@ describe('immutable analytic underside empty-space certificates',()=>{
       const a=new Vector3(x-.021,y-2,z-.011),b=new Vector3(x+.021,y+.1,z+.011);
       const expected=reference.sweep(a,b,radius,'line');expect(expected?.exhausted).not.toBe(true);
       fast.clearGeometryCertificates();expect(fast.sweep(a,b,radius,'line')).toEqual(expected);
+      // Prime identical domains at a different radius, then revisit each signed seam.
+      const other=radius===.02?.08:.02;expect(fast.sweep(a,b,other,'line')).toEqual(reference.sweep(a,b,other,'line'));
       expect(fast.sweep(a,b,radius,'line')).toEqual(expected);
       // Reverse and interrupt the crossing, preserving original sample/contact order.
       for(const [from,to] of [[b,a],[a,a.clone().lerp(b,.94)]])expect(fast.sweep(from,to,radius,'line')).toEqual(reference.sweep(from,to,radius,'line'));
@@ -134,6 +187,10 @@ describe('immutable analytic underside empty-space certificates',()=>{
       const original=reference.sweep(from,to,.02,'line');expect(original).toBeNull();expect(fast.sweep(from,to,.02,'line'),`empty cell ${i}`).toEqual(original);
     }
     expect(fast.certificateStats.misses).toBeGreaterThan(16384);
+    expect(fast.intervalStats.domainMisses).toBeGreaterThan(16384);
+    const domainBefore=fast.intervalStats.domainMisses;
     const before=fast.certificateStats.misses;expect(fast.sweep(...first,.02,'line')).toEqual(expected);expect(fast.certificateStats.misses).toBeGreaterThan(before);
+    expect(fast.intervalStats.domainMisses).toBeGreaterThan(domainBefore);
+    expect(fast.sweep(...first,.08,'line')).toEqual(reference.sweep(...first,.08,'line'));
   });
 });

@@ -17,7 +17,19 @@ import { smoothstep } from '../core/math';
 import { fbm2, noise2, periodicNoise, ridged2, type Noise2 } from '../core/noise';
 import type { ArchDef, IslandDef, SpireDef } from './layout';
 import {analyticBottomBounds, type AnalyticUnderside} from './undersideBounds';
-export type UndersideFloorSolver=(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY?:number)=>number|null;
+export interface UndersideIntervalStats {
+  domainHits:number; domainMisses:number;
+  centralHits:number; centralMisses:number; stencilHits:number; stencilMisses:number;
+}
+/** Own numeric copies of radius-independent bounds for one exact immutable box.
+ * Slots are central, +X, -X, +Z, -Z; the stencil remains lazy. */
+export interface UndersideIntervalSnapshots {
+  readonly definition:string;
+  readonly domain:readonly [number,number,number,number];
+  readonly bounds:(readonly [number,number]|null|undefined)[];
+  readonly stats?:UndersideIntervalStats;
+}
+export type UndersideFloorSolver=(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY?:number,snapshots?:UndersideIntervalSnapshots)=>number|null;
 
 /** Height the top surface rolls off by at the very rim (m). */
 export const RIM_DROP = 3;
@@ -131,7 +143,7 @@ export class IslandShape {
     this.minY = def.y - def.depth * 1.3 - def.lip * this.lipVar * 1.6 - lean - 6;
     this.track = def.kind === 'roost' ? this.buildTrack() : null;
     this.boundsParameters={...def,ridgeFreq:this.ridgeFreq,lumpFreq:this.lumpFreq,toothCell:this.toothCell,outlineRadius:(a:number)=>this.outlineRadius(a),noise:this.underN,tooth:(x:number,z:number)=>this.toothAt(x,z),coneExp:this.coneExp,skew:this.skew,skewDir:this.skewDir,twin:this.twin,twinDir:this.twinDir,tiltX:this.tiltX,tiltZ:this.tiltZ,rag:this.rag,lipVar:this.lipVar,toothScale:this.toothScale,lipAt:(a:number)=>this.lipAt(a)};
-    this.floorSolver=(minX,maxX,minZ,maxZ,radius,queryMaxY)=>this.immutableUndersideFloor(minX,maxX,minZ,maxZ,radius,queryMaxY);
+    this.floorSolver=(minX,maxX,minZ,maxZ,radius,queryMaxY,snapshots)=>this.immutableUndersideFloor(minX,maxX,minZ,maxZ,radius,queryMaxY,snapshots);
   }
 
   /** Height of the island's list (tilt) at local offset (dx, dz) from its center. */
@@ -292,10 +304,24 @@ export class IslandShape {
     if(![s.x,s.y,s.z,s.radius,s.depth,s.lip,s.outline,s.coneExp,s.skew,s.twin,s.tiltX,s.tiltZ,s.rag,s.lipVar,s.toothScale,s.ridgeFreq,s.lumpFreq,s.toothCell].every(Number.isFinite)||s.radius<=0||s.toothCell<=0||s.depth<s.lip||s.coneExp<=0||s.outline<0||s.outline+s.rag>=1)return null;
     return this.floorSolver;
   }
-  private immutableUndersideFloor(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY=Infinity):number|null {
+  private immutableUndersideFloor(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY=Infinity,snapshots?:UndersideIntervalSnapshots):number|null {
     const args=this.boundsParameters;
+    // Validate exact domains, including signed zero. A mismatched snapshot has
+    // no effect on the original bound evaluation or its rounding/fallback.
+    const shared=snapshots?.definition===this.boundsDefinition&&
+      Object.is(minX,snapshots.domain[0])&&Object.is(maxX,snapshots.domain[1])&&
+      Object.is(minZ,snapshots.domain[2])&&Object.is(maxZ,snapshots.domain[3])?snapshots:undefined;
     let stencil=0;
-    const height=(x:number,z:number)=>analyticBottomBounds(args,minX+x,maxX+x,minZ+z,maxZ+z,this.boundsScratch[stencil++]);
+    const height=(x:number,z:number)=>{
+      const slot=stencil++,cached=shared?.bounds[slot];
+      if(cached!==undefined){if(shared?.stats)shared.stats[slot===0?'centralHits':'stencilHits']++;return cached;}
+      const value=analyticBottomBounds(args,minX+x,maxX+x,minZ+z,maxZ+z,this.boundsScratch[slot]);
+      if(!shared)return value;
+      // analyticBottomBounds writes reusable scratch storage: never retain it.
+      const owned=value?[value[0],value[1]] as const:null;
+      shared.bounds[slot]=owned;if(shared.stats)shared.stats[slot===0?'centralMisses':'stencilMisses']++;
+      return owned;
+    };
     const b=height(0,0);
     if(!b)return null;
     // collideIsland already rejects below this global normal envelope. Distant slices
