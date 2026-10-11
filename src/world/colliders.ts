@@ -9,6 +9,7 @@
 
 import { Vector3 } from 'three';
 import type { BoxCollider, Collider, ContactInfo, CylinderCollider, SphereCollider, SurfaceKind } from '../core/types';
+import { convexDistance } from './convexDistance';
 
 /**
  * Grid cell size (m). Most shapes are a few meters across, so a cell holds only the handful of
@@ -35,6 +36,7 @@ interface Entry {
 const tmpN = new Vector3();
 
 interface Source {
+  id: string;
   get: () => readonly Collider[];
   list: readonly Collider[] | null;
   seen: number;
@@ -63,6 +65,9 @@ export class ColliderIndex {
   readonly work: ColliderWork = { queries: 0, candidates: 0, exact: 0 };
   private grid = new Map<number, Entry[]>();
   private entries: Entry[] = [];
+  private membership = new Map<Collider, Source | null>();
+  private readonly colliderIds = new WeakMap<Collider,string>();
+  private nextColliderId = 0;
   private stamp = 0;
   private scratch: Entry[] = [];
   private sources = new Map<string, Source>();
@@ -73,7 +78,11 @@ export class ColliderIndex {
     return this.entries.length;
   }
 
-  add(c: Collider): void {
+  add(c: Collider): void { this.addEntry(c, null); }
+
+  private addEntry(c: Collider, source: Source | null): void {
+    this.membership.set(c, source);
+    if (!this.colliderIds.has(c)) this.colliderIds.set(c,`solid-${this.nextColliderId++}`);
     let minX: number, maxX: number, minZ: number, maxZ: number, top: number, bottom: number;
     if (isSphere(c)) {
       minX = c.x - c.radius;
@@ -121,9 +130,34 @@ export class ColliderIndex {
    * appended entries are indexed incrementally; a replaced list triggers a full rebuild.
    */
   addSource(id: string, get: () => readonly Collider[]): void {
-    this.sources.set(id, { get, list: null, seen: 0 });
+    if (this.sources.has(id)) this.removeSource(id);
+    this.sources.set(id, { id, get, list: null, seen: 0 });
     this.sourceList = [...this.sources.values()];
     this.sync();
+  }
+
+  /** Validate live source membership as well as indexed identity (including source replacement). */
+  contains(c: Collider): boolean {
+    if (!this.membership.has(c)) return false;
+    const source = this.membership.get(c);
+    return !source || (this.sources.get(source.id) === source && source.get().includes(c));
+  }
+
+  /** Assigned when geometry is indexed, never by presentation/aim queries. Survives index rebuilds
+   * for the same object; replacement geometry gets a distinct identity. */
+  identity(c: Collider): string | null {
+    return this.contains(c) ? this.colliderIds.get(c) ?? null : null;
+  }
+
+  /** Remove one experimental source without dropping unrelated direct or sourced colliders. */
+  removeSource(id: string): void {
+    const removed = this.sources.get(id);
+    if (!removed) return;
+    const remaining = this.entries.filter(e => this.membership.get(e.c) !== removed)
+      .map(e => ({ c: e.c, source: this.membership.get(e.c) ?? null }));
+    this.sources.delete(id); this.sourceList = [...this.sources.values()];
+    this.clear();
+    for (const e of remaining) this.addEntry(e.c, e.source);
   }
 
   /** Bring the index up to date with its sources. Cheap when nothing changed. */
@@ -146,7 +180,7 @@ export class ColliderIndex {
       const src = sources[s];
       const list = src.get();
       src.list = list;
-      for (let i = src.seen; i < list.length; i++) this.add(list[i]);
+      for (let i = src.seen; i < list.length; i++) this.addEntry(list[i], src);
       src.seen = list.length;
     }
   }
@@ -155,10 +189,14 @@ export class ColliderIndex {
   clear(): void {
     this.grid.clear();
     this.entries.length = 0;
+    this.membership.clear();
   }
 
   /** Entries whose horizontal bounds come within r of (x, z). Reuses an internal array. */
-  private near(x: number, z: number, r: number): Entry[] {
+  /** Read-only broad phase for experimental swept queries. Array is reused; do not nest queries. */
+  candidates(x: number, z: number, radius: number, limit = Infinity): readonly Entry[] { return this.near(x, z, radius, limit); }
+
+  private near(x: number, z: number, r: number, limit = Infinity): Entry[] {
     const out = this.scratch;
     out.length = 0;
     const s = ++this.stamp;
@@ -173,6 +211,7 @@ export class ColliderIndex {
           if (e.stamp === s) continue;
           e.stamp = s;
           out.push(e);
+        if (out.length > limit) return out;
         }
       }
     }
@@ -313,6 +352,19 @@ function insideTopFace(c: Collider, x: number, z: number): boolean {
     // Local axes: +x' = (cos, 0, -sin), +z' = (sin, 0, cos) (yaw turns +Z toward +X).
     const lx = dx * cs - dz * sn;
     const lz = dx * sn + dz * cs;
+    if (c.convex) {
+      const planes = c.convex.planes;
+      for (let i = 0; i < planes.length; i += 4) {
+        if (planes[i] * lx + planes[i + 1] * c.hy + planes[i + 2] * lz + planes[i + 3] > 1e-6) return false;
+      }
+      return true;
+    }
+    const radius = Math.min(c.roundXZ ?? 0, c.hx, c.hz);
+    if (radius > 0) {
+      const qx = Math.max(Math.abs(lx) - (c.hx - radius), 0);
+      const qz = Math.max(Math.abs(lz) - (c.hz - radius), 0);
+      return qx * qx + qz * qz <= radius * radius;
+    }
     return Math.abs(lx) <= c.hx && Math.abs(lz) <= c.hz;
   }
   const dx = x - c.x;
@@ -382,6 +434,32 @@ function boxDistance(c: BoxCollider, p: Vector3, n: Vector3 | null): number {
   const dz = p.z - c.z;
   const lx = dx * cs - dz * sn;
   const lz = dx * sn + dz * cs;
+  if (c.convex) {
+    const distance = convexDistance(c.convex, lx, dy, lz, n);
+    if (n) { const nx = n.x, nz = n.z; n.x = nx * cs + nz * sn; n.z = -nx * sn + nz * cs; }
+    return distance;
+  }
+  const radius = Math.min(c.roundXZ ?? 0, c.hx, c.hz);
+  if (radius > 0) {
+    // Rounded rectangle extruded vertically: the renderer uses this same outer footprint.
+    const qx = Math.abs(lx) - c.hx + radius, qz = Math.abs(lz) - c.hz + radius;
+    const ex = Math.max(qx, 0), ez = Math.max(qz, 0), len = Math.sqrt(ex * ex + ez * ez);
+    const horizontal = len + Math.min(Math.max(qx, qz), 0) - radius;
+    const vertical = Math.abs(dy) - c.hy;
+    let nx = len > 1e-9 ? ex / len * Math.sign(lx) : qx >= qz ? Math.sign(lx) || 1 : 0;
+    let nz = len > 1e-9 ? ez / len * Math.sign(lz) : qz > qx ? Math.sign(lz) || 1 : 0;
+    let ny = 0;
+    let distance: number;
+    if (horizontal > 0 && vertical > 0) {
+      distance = Math.sqrt(horizontal * horizontal + vertical * vertical);
+      nx *= horizontal / distance; nz *= horizontal / distance;
+      ny = (Math.sign(dy) || 1) * vertical / distance;
+    } else if (vertical >= horizontal) {
+      distance = vertical; nx = nz = 0; ny = Math.sign(dy) || 1;
+    } else distance = horizontal;
+    n?.set(nx * cs + nz * sn, ny, -nx * sn + nz * cs);
+    return distance;
+  }
   const qx = Math.abs(lx) - c.hx;
   const qy = Math.abs(dy) - c.hy;
   const qz = Math.abs(lz) - c.hz;

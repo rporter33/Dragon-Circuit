@@ -91,6 +91,39 @@ describe('Input on fake devices', () => {
     return { input: new Input(target, () => settings, events), target };
   }
 
+  it('reports held tether, release edges, and deliberate catch independently', () => {
+    const { input } = make(), g = fakePad('standard', 4, 17); pads = [g]; input.traversal = true; input.poll(1 / 120);
+    press(g.buttons[STD.RT]); press(g.buttons[3]); let f = input.poll(1 / 120);
+    expect(f.lanceHeld).toBe(true); expect(f.callHeld).toBe(true); expect(f.pressed.lanceRelease).toBe(false);
+    press(g.buttons[STD.RT], 0); f = input.poll(1 / 120);
+    expect(f.lanceHeld).toBe(false); expect(f.pressed.lanceRelease).toBe(true); expect(f.callHeld).toBe(true);
+    expect(input.poll(1 / 120).pressed.lanceRelease).toBe(false);
+    input.setScripted({}); f = input.poll(1 / 120); expect(f.lanceHeld).toBe(false); expect(f.callHeld).toBe(false);
+  });
+  it('a complete keyboard tap between polls carries both cast and release edges', () => {
+    const { input } = make(); input.traversal = true; input.poll(1/120);
+    const raw = input as unknown as {keysDown: Set<string>}; raw.keysDown.add('KeyQ');
+    const f = input.poll(1/120);
+    expect(f.pressed.lance).toBe(true); expect(f.lanceHeld).toBe(false); expect(f.pressed.lanceRelease).toBe(true);
+    expect(input.poll(1/120).pressed.lance).toBe(false);
+  });
+
+  it('requires a fresh trigger after mode changes and preserves flight and menu roles', () => {
+    const { input } = make(), g = fakePad('standard', 4, 17); pads = [g];
+    input.poll(1 / 120); press(g.buttons[STD.RT]);
+    let f = input.poll(1 / 120); expect(f.pressed.lance).toBe(false);
+    expect(f.flight.flap).toBeGreaterThan(.9); expect(f.zoom).toBeGreaterThan(0);
+    input.traversal = true; f = input.poll(1 / 120);
+    expect(f.pressed.lance).toBe(false); expect(f.lanceHeld).toBe(false);
+    press(g.buttons[STD.RT], 0); input.poll(1 / 120);
+    press(g.buttons[STD.RT]); f = input.poll(1 / 120);
+    expect(f.pressed.lance).toBe(true); expect(f.lanceHeld).toBe(true);
+    expect(input.poll(1 / 120).pressed.lance).toBe(false);
+    input.traversal = false; f = input.poll(1 / 120);
+    expect(f.pressed.lanceRelease).toBe(false); expect(f.lanceHeld).toBe(false);
+    input.traversal = true; expect(input.poll(1 / 120).pressed.lance).toBe(false);
+  });
+
   it('flaps from a non-standard pad whose triggers are axes, and says the layout was guessed', () => {
     const events = new EventBus<GameEvents>();
     const toasts: string[] = [];

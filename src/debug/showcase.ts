@@ -14,6 +14,8 @@ export interface Showcase {
   description: string;
   setup(game: Game, params: URLSearchParams): void;
   update?(game: Game, dt: number): void;
+  /** Release only resources owned by this optional scene. */
+  dispose?(game: Game): void;
 }
 
 const loaders = import.meta.glob<{ default: Showcase }>('./showcases/*.ts');

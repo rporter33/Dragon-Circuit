@@ -15,7 +15,7 @@ const COLLIDER_REACH = 24;
 /** Ground hits on structures report this island id (they aren't part of any island). */
 export const STRUCTURE_GROUND_ID = -1000;
 
-type Solid =
+export type TerrainSolid =
   | { type: 'island'; shape: IslandShape; stamp: number }
   | { type: 'spire'; shape: SpireShape; stamp: number }
   | { type: 'arch'; shape: ArchShape; stamp: number };
@@ -25,6 +25,9 @@ const tmpN = new Vector3();
 const hyp = (a: number, b: number): number => Math.sqrt(a * a + b * b);
 const tmpP = new Vector3();
 const tmpQ = new Vector3();
+const rockProbe = new Vector3();
+/** Query-local exact column reuse for vertical sweeps; never retained across world updates. */
+export type RockColumns = Map<IslandShape,{x:number;z:number;bottom:number;top:number;normal:Vector3|null}>;
 
 export class Terrain implements TerrainQuery {
   readonly layout: WorldLayout;
@@ -33,10 +36,10 @@ export class Terrain implements TerrainQuery {
   readonly arches: ArchShape[];
   /** Buildings, trees, decks, gates…: everything solid that isn't analytic rock. */
   readonly colliders = new ColliderIndex();
-  private grid = new Map<number, Solid[]>();
-  private solids: Solid[] = [];
+  private grid = new Map<number, TerrainSolid[]>();
+  private solids: TerrainSolid[] = [];
   private stamp = 0;
-  private scratch: Solid[] = [];
+  private scratch: TerrainSolid[] = [];
 
   constructor(layout: WorldLayout = LAYOUT) {
     this.layout = layout;
@@ -52,7 +55,7 @@ export class Terrain implements TerrainQuery {
     return (cx + 1000) * 4096 + (cz + 1000);
   }
 
-  private insert(solid: Solid, x: number, z: number, r: number): void {
+  private insert(solid: TerrainSolid, x: number, z: number, r: number): void {
     this.solids.push(solid);
     const x0 = Math.floor((x - r) / CELL);
     const x1 = Math.floor((x + r) / CELL);
@@ -69,7 +72,7 @@ export class Terrain implements TerrainQuery {
   }
 
   /** Solids whose horizontal bounds come within `r` of (x, z). Reuses an internal array. */
-  candidates(x: number, z: number, r: number): Solid[] {
+  candidates(x: number, z: number, r: number): TerrainSolid[] {
     const out = this.scratch;
     out.length = 0;
     const s = ++this.stamp;
@@ -182,7 +185,18 @@ export class Terrain implements TerrainQuery {
     return true;
   }
 
-  private collideRock(p: Vector3, radius: number, outNormal: Vector3): boolean {
+  /** Experimental swept traversal queries: same analytic rock, excluding structure/foliage proxies. */
+  rockContact(center: Vector3, radius: number, push: Vector3, normal: Vector3, contact?: { solid: TerrainSolid | null }, columns?: RockColumns): boolean {
+    const p = rockProbe.copy(center);
+    normal.set(0, 0, 0);
+    if (contact) contact.solid = null;
+    if (!this.collideRock(p, radius, normal, contact, columns)) return false;
+    push.subVectors(p, center);
+    normal.normalize();
+    return true;
+  }
+
+  private collideRock(p: Vector3, radius: number, outNormal: Vector3, contact?: { solid: TerrainSolid | null }, columns?: RockColumns): boolean {
     let hit = false;
     const center = p;
     const list = this.candidates(center.x, center.z, radius + 1);
@@ -190,10 +204,11 @@ export class Terrain implements TerrainQuery {
       const s = list[i];
       // Resolve against each solid in turn, accumulating the correction.
       let pushed = false;
-      if (s.type === 'island') pushed = this.collideIsland(s.shape, p, radius);
+      if (s.type === 'island') pushed = this.collideIsland(s.shape, p, radius, columns);
       else if (s.type === 'spire') pushed = this.collideSpire(s.shape, p, radius);
       else pushed = this.collideArch(s.shape, p, radius);
       if (pushed) {
+        if (contact) contact.solid = s;
         hit = true;
         outNormal.add(tmpN);
       }
@@ -202,7 +217,7 @@ export class Terrain implements TerrainQuery {
   }
 
   /** Pushes p out of the island in place. On contact, tmpN holds the contact normal. */
-  private collideIsland(shape: IslandShape, p: Vector3, radius: number): boolean {
+  private collideIsland(shape: IslandShape, p: Vector3, radius: number, columns?: RockColumns): boolean {
     const d = shape.def;
     if (p.y > shape.maxY + radius || p.y < shape.minY - radius) return false;
     const dx = p.x - d.x;
@@ -211,23 +226,33 @@ export class Terrain implements TerrainQuery {
     if (rxz > shape.maxRadius + radius) return false;
     const theta = Math.atan2(dz, dx);
     const R = shape.outlineRadius(theta);
-    const top = shape.topHeight(p.x, p.z);
-    const bottom = shape.bottomHeight(p.x, p.z);
-
-    if (rxz <= R) {
-      const mid = (top + bottom) * 0.5;
-      if (p.y >= mid) {
-        const n = shape.topNormal(p.x, p.z, tmpN);
-        const dist = (p.y - top) * n.y;
-        if (dist >= radius) return false;
-        p.addScaledVector(n, radius - dist);
-        return true;
+    let column=columns?.get(shape);
+    if (columns && (!column || column.x!==p.x || column.z!==p.z)) {
+      column={x:p.x,z:p.z,bottom:shape.bottomHeight(p.x,p.z),top:NaN,normal:null};
+      columns?.set(shape,column);
+    }
+    const bottom=column?.bottom ?? shape.bottomHeight(p.x,p.z);
+    // If even the top's enclosing lower bound places the midpoint above p, do not
+    // evaluate top terrain at all. Its bound is constructed with the same list/rim geometry.
+    const lower = rxz<=R && p.y<(shape.minTopY+bottom)*.5;
+    let top=column?.top ?? NaN;
+    if (!lower && Number.isNaN(top)) {top=shape.topHeight(p.x,p.z);if(column)column.top=top;}
+    if (rxz<=R) {
+      // The finite-difference normal stencil samples within the enclosing vertical bounds
+      // (+4 m covers its <=1.5 m reach beyond the footprint). This worst-case vertical
+      // magnitude allows exact far-side rejection before four more height evaluations.
+      const span=shape.maxY-shape.minY+4;
+      if (!lower && p.y>=(top+bottom)*.5) {
+        if ((p.y-top)*(2/Math.sqrt(2*span*span+4))>=radius) return false;
+        const n=shape.topNormal(p.x,p.z,tmpN),dist=(p.y-top)*n.y;
+        if (dist>=radius) return false;
+        p.addScaledVector(n,radius-dist);return true;
       }
-      const n = shape.bottomNormal(p.x, p.z, tmpN);
-      const dist = (bottom - p.y) * -n.y;
-      if (dist >= radius) return false;
-      p.addScaledVector(n, radius - dist);
-      return true;
+      if ((bottom-p.y)*(3/Math.sqrt(2*span*span+9))>=radius) return false;
+      if (column && !column.normal) column.normal=shape.bottomNormal(p.x,p.z,new Vector3());
+      const n=column?.normal?tmpN.copy(column.normal):shape.bottomNormal(p.x,p.z,tmpN),dist=(bottom-p.y)*-n.y;
+      if (dist>=radius) return false;
+      p.addScaledVector(n,radius-dist);return true;
     }
 
     // Outside the footprint: collide with the cliff rim band [bottom, top] at radius R.

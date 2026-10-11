@@ -8,6 +8,21 @@ import { LAYOUT } from './layout';
 const n = new Vector3();
 
 describe('collider shapes', () => {
+  it('agrees on rounded box corners, top support and rotated collision normals', () => {
+    const b: BoxCollider = { kind: 'box', x: 0, y: 0, z: 0, hx: 3, hy: 1, hz: 5, yaw: 0, roundXZ: 1 };
+    expect(signedDistance(b, new Vector3(3, 0, 5), n)).toBeCloseTo(Math.SQRT2 - 1);
+    expect(n.x).toBeCloseTo(Math.SQRT1_2);
+    expect(n.z).toBeCloseTo(Math.SQRT1_2);
+    expect(signedDistance(b, new Vector3(0, 2, 0), n)).toBeCloseTo(1);
+    expect(n.y).toBe(1);
+    const index = new ColliderIndex(); index.add(b);
+    expect(index.groundAt(2.9, 4.9, 1.1, 0.2)).toBeNull();
+    expect(index.groundAt(2.5, 4.5, 1.1, 0.2)?.y).toBe(1);
+    b.yaw = Math.PI / 2;
+    expect(signedDistance(b, new Vector3(5, 0, -3), n)).toBeCloseTo(Math.SQRT2 - 1);
+    expect(n.x).toBeCloseTo(Math.SQRT1_2);
+    expect(n.z).toBeCloseTo(-Math.SQRT1_2);
+  });
   it('measures signed distance to a cylinder from the side, the top and inside', () => {
     const c: Collider = { x: 0, z: 0, radius: 2, y0: 0, y1: 10 };
     expect(signedDistance(c, new Vector3(5, 5, 0), n)).toBeCloseTo(3);
@@ -59,6 +74,26 @@ describe('ColliderIndex', () => {
     expect(idx.groundAt(30, 0, 100, 0.6)).toBeNull();
   });
 
+  it('validates live identity and removes a source without losing unrelated geometry', () => {
+    const idx = new ColliderIndex(), direct: Collider = { kind: 'sphere', x: 0, y: 0, z: 0, radius: 1 };
+    const experiment: Collider = { ...direct, x: 10 }, other: Collider = { ...direct, x: 20 };
+    let list = [experiment]; idx.add(direct); idx.addSource('experiment', () => list); idx.addSource('other', () => [other]);
+    expect(idx.contains(experiment)).toBe(true); list = [{ ...experiment }];
+    expect(idx.contains(experiment)).toBe(false);
+    idx.removeSource('experiment'); expect(idx.contains(direct)).toBe(true); expect(idx.contains(other)).toBe(true);
+    expect(idx.size).toBe(2); expect(idx.distance(new Vector3(10, 0, 0), 2)).toBe(Infinity);
+  });
+  it('replacing a named source invalidates old identities and indexes only its replacement', () => {
+    const idx = new ColliderIndex(), old: Collider = { kind: 'sphere', x: 0, y: 0, z: 0, radius: 1 }, replacement = { ...old };
+    idx.addSource('anchor', () => [old]); idx.addSource('anchor', () => [replacement]);
+    expect(idx.contains(old)).toBe(false); expect(idx.contains(replacement)).toBe(true); expect(idx.size).toBe(1);
+  });
+  it('assigns solid identities at registration and preserves them through unrelated rebuilds',()=>{
+    const idx=new ColliderIndex(),a:Collider={kind:'sphere',x:0,y:0,z:0,radius:1},b={...a,x:10};
+    idx.add(a);idx.addSource('temporary',()=>[b]);const aid=idx.identity(a),bid=idx.identity(b);
+    expect(aid).not.toBe(bid);idx.removeSource('temporary');expect(idx.identity(a)).toBe(aid);expect(idx.identity(b)).toBeNull();
+    const replacement={...a};idx.add(replacement);expect(idx.identity(replacement)).not.toBe(aid);
+  });
   it('follows sources that grow and rebuilds when one is replaced', () => {
     const idx = new ColliderIndex();
     let list: Collider[] = [{ x: 0, z: 0, radius: 1, y0: 0, y1: 1 }];

@@ -10,6 +10,7 @@
     "ui": "hide"
   },
   "boots": {
+    "sky-lance": {"url": "?view=skyLance&play=1&manual=1&quality=low&weather=clear&tod=.5", "desc": "opt-in Sky Lance vertical slice; real Player and shared world"},
     "showcase": {"url": "?view=wyvern&play=1&manual=1&quality=high&weather=clear&pose=idle", "desc": "wyvern showcase, quality high"},
     "showcase-low": {"url": "?view=wyvern&play=1&manual=1&quality=low&weather=clear&pose=idle", "desc": "wyvern showcase, quality low"},
     "flight": {"url": "?play=1&manual=1&quality=high&weather=clear&tod=0.7&at=60,345,190&yaw=150&mode=flying&speed=24", "desc": "the real game, flying, chase camera"},
@@ -483,6 +484,816 @@
       ]
     }
   ]
-}
+},
+    {
+      "id": "sky-lance",
+      "boot": "sky-lance",
+      "dir": "sky-lance",
+      "title": "Sky Lance V1: grip, anchor, swing, release and recovery",
+      "items": [
+        {
+          "id": "lance-ready-slight",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'slight'});__dw.render()"
+            }
+          ],
+          "desc": "slight rider: compact magical bracer with no carried pole"
+        },
+        {
+          "id": "lance-ready-slight-front",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'slight'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:0,y:1.2,z:3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "slight rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, front"
+        },
+        {
+          "id": "lance-ready-slight-side",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'slight'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:3.4,y:1.2,z:0}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "slight rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, side"
+        },
+        {
+          "id": "lance-ready-slight-rear",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'slight'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:0,y:1.2,z:-3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "slight rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, rear"
+        },
+        {
+          "id": "lance-ready-medium",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'medium'});__dw.render()"
+            }
+          ],
+          "desc": "medium rider: compact magical bracer with no carried pole"
+        },
+        {
+          "id": "lance-ready-medium-front",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'medium'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:0,y:1.2,z:3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "medium rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, front"
+        },
+        {
+          "id": "lance-ready-medium-side",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'medium'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:3.4,y:1.2,z:0}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "medium rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, side"
+        },
+        {
+          "id": "lance-ready-medium-rear",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'medium'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:0,y:1.2,z:-3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "medium rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, rear"
+        },
+        {
+          "id": "lance-ready-broad",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'broad'});__dw.render()"
+            }
+          ],
+          "desc": "broad rider: compact magical bracer with no carried pole"
+        },
+        {
+          "id": "lance-ready-broad-front",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'broad'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:0,y:1.2,z:3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "broad rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, front"
+        },
+        {
+          "id": "lance-ready-broad-side",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'broad'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:3.4,y:1.2,z:0}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "broad rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, side"
+        },
+        {
+          "id": "lance-ready-broad-rear",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'broad'});__dw.render()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();g.cameraRig.setOverride({position:p.clone().add({x:0,y:1.2,z:-3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "broad rider: compact magical bracer with no carried pole; render-only left bracer and crossback harness, rear"
+        },
+        {
+          "id": "lance-anchor",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1,sprint:true});__lanceFrame({jump:true},{moveY:1,sprint:true});__lanceFrame({lance:true},{moveY:1,sprint:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__lanceFrame({},{moveY:1,sprint:true});if(!__dw.game.player.skyLance.rope)throw Error('Capture failed to attach');})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:20,y:8,z:-15}),target:p.clone().add({x:0,y:4,z:5})});})()"
+            }
+          ],
+          "desc": "Actual fixed-step anchor state; no pose-only staging"
+        },
+        {
+          "id": "lance-swing",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1,sprint:true});__lanceFrame({jump:true},{moveY:1,sprint:true});__lanceFrame({lance:true},{moveY:1,sprint:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__lanceFrame({},{moveY:1,sprint:true});if(!__dw.game.player.skyLance.rope)throw Error('Capture failed to attach');})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1});if(!__dw.game.player.skyLance.rope)throw Error('Capture lost tether');})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:20,y:8,z:-15}),target:p.clone().add({x:0,y:4,z:5})});})()"
+            }
+          ],
+          "desc": "Actual fixed-step swing state; no pose-only staging"
+        },
+        {
+          "id": "lance-release",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1,sprint:true});__lanceFrame({jump:true},{moveY:1,sprint:true});__lanceFrame({lance:true},{moveY:1,sprint:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__lanceFrame({},{moveY:1,sprint:true});if(!__dw.game.player.skyLance.rope)throw Error('Capture failed to attach');})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1});if(!__dw.game.player.skyLance.rope)throw Error('Capture lost tether');})()"
+            },
+            {
+              "eval": "__lanceFrame({lanceRelease:true});if(__dw.game.player.skyLance.rope)throw Error('Capture failed to release')"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:20,y:8,z:-15}),target:p.clone().add({x:0,y:4,z:5})});})()"
+            }
+          ],
+          "desc": "Actual fixed-step release state; no pose-only staging"
+        },
+        {
+          "id": "lance-recover",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1,sprint:true});__lanceFrame({jump:true},{moveY:1,sprint:true});__lanceFrame({lance:true},{moveY:1,sprint:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__lanceFrame({},{moveY:1,sprint:true});if(!__dw.game.player.skyLance.rope)throw Error('Capture failed to attach');})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1});if(!__dw.game.player.skyLance.rope)throw Error('Capture lost tether');})()"
+            },
+            {
+              "eval": "(()=>{__lanceFrame({lanceRelease:true});for(let i=0;i<44;i++)__lanceFrame();if(__dw.game.player.skyLance.state!=='ready')throw Error('Capture failed to recover');})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:20,y:8,z:-15}),target:p.clone().add({x:0,y:4,z:5})});})()"
+            }
+          ],
+          "desc": "Actual fixed-step recover state; no pose-only staging"
+        },
+        {
+          "id": "lance-freefall-dive",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "for(let i=0;i<250;i++)__lanceFrame({},{moveY:1,sprint:true});for(let i=0;i<60;i++)__lanceFrame({},{moveY:1});if(__dw.game.player.mode!=='traversing')throw Error('Not independent freefall');"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:4,y:1,z:3}),target:p.clone().add({x:0,y:1,z:0})});__dw.render()})()"
+            }
+          ],
+          "desc": "Actual independent freefall dive: no automatic catch; rider-only 7/10/14 m/s terminal descent limits"
+        },
+        {
+          "id": "lance-freefall-brake",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "for(let i=0;i<250;i++)__lanceFrame({},{moveY:1,sprint:true});for(let i=0;i<60;i++)__lanceFrame({},{moveY:-1});if(__dw.game.player.mode!=='traversing')throw Error('Not independent freefall');"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:4,y:1,z:3}),target:p.clone().add({x:0,y:1,z:0})});__dw.render()})()"
+            }
+          ],
+          "desc": "Actual independent freefall brake: no automatic catch; rider-only 7/10/14 m/s terminal descent limits"
+        },
+        {
+          "id": "lance-line-sky",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1,sprint:true});__lanceFrame({jump:true},{moveY:1,sprint:true});__lanceFrame({lance:true},{moveY:1,sprint:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__lanceFrame({},{moveY:1,sprint:true});if(!__dw.game.player.skyLance.rope)throw Error('Capture failed to attach');})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<160;i++)__lanceFrame();if(!__dw.game.player.skyLance.rope)throw Error('No actual tether');})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position.clone().add(g.player.skyLance.rope.anchor).multiplyScalar(.5);g.cameraRig.setOverride({position:p.clone().add({x:-22,y:-3,z:0}),target:p});document.querySelector('#sky-lance-controls').style.visibility='hidden';document.querySelector('#sky-lance-reticle').style.visibility='hidden';g.frame(0,true)})()"
+            }
+          ],
+          "desc": "Actual attachment: thin line readability from sky direction (inspect background in result)"
+        },
+        {
+          "id": "lance-line-stone",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1,sprint:true});__lanceFrame({jump:true},{moveY:1,sprint:true});__lanceFrame({lance:true},{moveY:1,sprint:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__lanceFrame({},{moveY:1,sprint:true});if(!__dw.game.player.skyLance.rope)throw Error('Capture failed to attach');})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<160;i++)__lanceFrame();if(!__dw.game.player.skyLance.rope)throw Error('No actual tether');})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position.clone().add(g.player.skyLance.rope.anchor).multiplyScalar(.5);g.cameraRig.setOverride({position:p.clone().add({x:-15,y:14,z:-12}),target:p});document.querySelector('#sky-lance-controls').style.visibility='hidden';document.querySelector('#sky-lance-reticle').style.visibility='hidden';g.frame(0,true)})()"
+            }
+          ],
+          "desc": "Actual attachment: thin line readability from stone direction (inspect background in result)"
+        },
+        {
+          "id": "lance-line-foliage",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<120;i++)__lanceFrame({},{moveY:1,sprint:true});__lanceFrame({jump:true},{moveY:1,sprint:true});__lanceFrame({lance:true},{moveY:1,sprint:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__lanceFrame({},{moveY:1,sprint:true});if(!__dw.game.player.skyLance.rope)throw Error('Capture failed to attach');})()"
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<160;i++)__lanceFrame();if(!__dw.game.player.skyLance.rope)throw Error('No actual tether');})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position.clone().add(g.player.skyLance.rope.anchor).multiplyScalar(.5);g.cameraRig.setOverride({position:p.clone().add({x:-15,y:32,z:-20}),target:p});document.querySelector('#sky-lance-controls').style.visibility='hidden';document.querySelector('#sky-lance-reticle').style.visibility='hidden';g.frame(0,true)})()"
+            }
+          ],
+          "desc": "Actual attachment: thin line readability from foliage direction (inspect background in result)"
+        },
+        {
+          "id": "lance-motion",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position.clone();for(let i=0;i<120;i++)__lanceFrame();g.cameraRig.setOverride({position:p.clone().add({x:3.4,y:1.2,z:0}),target:p.clone().add({x:0,y:1,z:0})});document.querySelector('#sky-lance-controls').style.visibility='hidden';document.querySelector('#sky-lance-reticle').style.visibility='hidden';__lanceFrame({lance:true});})()"
+            }
+          ],
+          "desc": "Actual left-bracer magical filament cast frames; no carried lance",
+          "size": "1280x720",
+          "kind": "sequence",
+          "shots": [
+            {
+              "eval": "__lanceFrame()",
+              "shot": {
+                "id": "lance-cast-0",
+                "desc": "Actual cast at fixed-step frame 1"
+              }
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<8;i++)__lanceFrame();})()",
+              "shot": {
+                "id": "lance-cast-1",
+                "desc": "Actual cast at fixed-step frame 9"
+              }
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<8;i++)__lanceFrame();})()",
+              "shot": {
+                "id": "lance-cast-2",
+                "desc": "Actual cast at fixed-step frame 17"
+              }
+            },
+            {
+              "eval": "(()=>{for(let i=0;i<8;i++)__lanceFrame();})()",
+              "shot": {
+                "id": "lance-cast-3",
+                "desc": "Actual cast at fixed-step frame 25"
+              }
+            }
+          ]
+        },
+        {
+          "id": "bracer-freefall-slight-dive",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{const r=__dw.game.rider;r.setLook({...__dw.game.save.data.rider,build:'slight'})})()"
+            },
+            {
+              "eval": "for(let i=0;i<250;i++)__lanceFrame({},{moveY:1,sprint:true});for(let i=0;i<60;i++)__lanceFrame({},{moveY:1});if(__dw.game.player.mode!=='traversing')throw Error('Not independent freefall');"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:4,y:1,z:3}),target:p.clone().add({x:0,y:1,z:0})});__dw.render()})()"
+            }
+          ],
+          "desc": "slight: controlled freefall dive, current rig and magical bracer"
+        },
+        {
+          "id": "bracer-freefall-slight-brake",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{const r=__dw.game.rider;r.setLook({...__dw.game.save.data.rider,build:'slight'})})()"
+            },
+            {
+              "eval": "for(let i=0;i<250;i++)__lanceFrame({},{moveY:1,sprint:true});for(let i=0;i<60;i++)__lanceFrame({},{moveY:-1});if(__dw.game.player.mode!=='traversing')throw Error('Not independent freefall');"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:4,y:1,z:3}),target:p.clone().add({x:0,y:1,z:0})});__dw.render()})()"
+            }
+          ],
+          "desc": "slight: controlled freefall brake, current rig and magical bracer"
+        },
+        {
+          "id": "bracer-freefall-broad-dive",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{const r=__dw.game.rider;r.setLook({...__dw.game.save.data.rider,build:'broad'})})()"
+            },
+            {
+              "eval": "for(let i=0;i<250;i++)__lanceFrame({},{moveY:1,sprint:true});for(let i=0;i<60;i++)__lanceFrame({},{moveY:1});if(__dw.game.player.mode!=='traversing')throw Error('Not independent freefall');"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:4,y:1,z:3}),target:p.clone().add({x:0,y:1,z:0})});__dw.render()})()"
+            }
+          ],
+          "desc": "broad: controlled freefall dive, current rig and magical bracer"
+        },
+        {
+          "id": "bracer-freefall-broad-brake",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{const r=__dw.game.rider;r.setLook({...__dw.game.save.data.rider,build:'broad'})})()"
+            },
+            {
+              "eval": "for(let i=0;i<250;i++)__lanceFrame({},{moveY:1,sprint:true});for(let i=0;i<60;i++)__lanceFrame({},{moveY:-1});if(__dw.game.player.mode!=='traversing')throw Error('Not independent freefall');"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:4,y:1,z:3}),target:p.clone().add({x:0,y:1,z:0})});__dw.render()})()"
+            }
+          ],
+          "desc": "broad: controlled freefall brake, current rig and magical bracer"
+        },
+        {
+          "id": "windline-flat-jump",
+          "settle": 0,
+          "ui": "hide",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "for(let i=0;i<120;i++)__lanceFrame();__lanceFrame({jump:true});for(let i=0;i<44;i++)__lanceFrame();"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:3.4,y:1.2,z:0}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "Actual descending ordinary jump over launch platform, 45 fixed steps after jump; compare upright jump versus erroneous freefall"
+        },
+        {
+          "id": "windline-steer-{build}",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'{build}'});for(let i=0;i<250;i++)__lanceFrame({},{moveY:1,sprint:true});for(let i=0;i<90;i++)__lanceFrame({},{moveX:.8,moveY:.3});if(__dw.game.player.riderPose.freefallSteer<.7)throw Error('No actual steering');"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:3.7,y:1.4,z:3}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "{build}: actual freefall steering, asymmetric arms and bank, no tether",
+          "each": {
+            "build": [
+              "slight",
+              "medium",
+              "broad"
+            ]
+          }
+        },
+        {
+          "id": "windline-waist-{v.name}",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "__dw.game.rider.setLook({...__dw.game.save.data.rider,build:'medium'});for(let i=0;i<250;i++)__lanceFrame({},{moveY:1,sprint:true});__lanceFrame({jump:true});for(let i=0;i<6;i++)__lanceFrame();if(__dw.game.player.airBoost.remaining<=0)throw Error('No actual boost');"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:{v.x},y:1.3,z:{v.z}}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()"
+            }
+          ],
+          "desc": "Actual single waist burst, {v.name}; compact slate/bronze vessels and blue plumes",
+          "each": {
+            "v": [
+              {
+                "name": "front",
+                "x": 0,
+                "z": 3.4
+              },
+              {
+                "name": "side",
+                "x": 3.4,
+                "z": 0
+              },
+              {
+                "name": "rear",
+                "x": 0,
+                "z": -3.4
+              }
+            ]
+          }
+        },
+        {
+          "id": "windline-upward-anchor",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;p.teleport(p.foot.position.clone().set(0,400,-46),Math.PI,'onFoot');g.cameraRig.snap(p);globalThis.__windlineCameraFrame=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};for(let i=0;i<5;i++)__windlineCameraFrame();__windlineCameraFrame({lookActive:true,lookIsRate:false,lookY:-1.08});__windlineCameraFrame({pressed:{lance:true},lanceHeld:true});for(let i=0;i<240&&!p.skyLance.rope&&p.skyLance.state==='projectile';i++)__windlineCameraFrame({lanceHeld:true});if(p.skyLance.anchorId!=='test-anchor-0')throw Error('Camera cast did not reach upper anchor');__dw.render()})()"
+            }
+          ],
+          "desc": "Actual steep-upward camera cast from lower platform attaches to higher bronze marker; no scripted aim"
+        },
+        {
+          "id": "windline-saddle-cycle",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__lanceFrame=(pressed={},foot={},held={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim,...held});g.frame(1/120,false);g.input.setScripted(null);};})()"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;p.teleport(p.foot.position.clone().set(0,460,-90),0,'flying',30);g.cameraRig.snap(p);__lanceFrame();for(let i=0;i<48;i++)__lanceFrame({},{},{callHeld:true});if(p.mode!=='traversing')throw Error('No actual dismount');globalThis.__windlineSide=()=>{const p=g.player.riderPose.position;g.cameraRig.setOverride({position:p.clone().add({x:10,y:4,z:-8}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true);};__windlineSide();})()"
+            }
+          ],
+          "desc": "Actual saddle jump, independent freefall, deliberate rescue and remount; hold must be released between actions",
+          "kind": "sequence",
+          "shots": [
+            {
+              "eval": "__windlineSide()",
+              "shot": {
+                "id": "windline-saddle-depart",
+                "desc": "First actual ejection step; inherited dragon momentum plus outward hop"
+              }
+            },
+            {
+              "eval": "for(let i=0;i<120;i++)__lanceFrame({},{},{callHeld:true});if(__dw.game.player.mode!=='traversing')throw Error('Held button caused catch');__windlineSide();",
+              "shot": {
+                "id": "windline-saddle-freefall",
+                "desc": "Freefall while dragon continues its existing FlightModel; held Y does not recall"
+              }
+            },
+            {
+              "eval": "__lanceFrame();for(let i=0;i<48;i++)__lanceFrame({},{},{callHeld:true});if(__dw.game.player.mode!=='falling')throw Error('No deliberate rescue');__windlineSide();",
+              "shot": {
+                "id": "windline-saddle-rescue",
+                "desc": "Fresh deliberate hold enters existing swoop rescue"
+              }
+            },
+            {
+              "eval": "for(let i=0;i<100;i++)__lanceFrame({},{},{callHeld:true});if(__dw.game.player.mode!=='flying')throw Error('No actual catch');__dw.game.cameraRig.setOverride(null);__dw.game.cameraRig.snap(__dw.game.player);__dw.render();",
+              "shot": {
+                "id": "windline-saddle-remounted",
+                "desc": "Actual catch back into flight; rider and dragon reunited"
+              }
+            }
+          ]
+        },
+        {
+          "id": "windline-upward-burst",
+          "desc": "Fast descent \u2192 immediate upward launch \u2192 bounded apex; actual Player velocity, single charge",
+          "kind": "sequence",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();globalThis.__airTick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};p.foot.position.set(5000,1000,5000);p.foot.grounded=false;p.foot.velocity.set(0,-18,0);__airTick();})()"
+            }
+          ],
+          "shots": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position;g.cameraRig.setOverride({position:p.clone().add({x:3.4,y:1.2,z:3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()",
+              "shot": {
+                "id": "fall",
+                "desc": "Before boost: actual untethered descending rider"
+              }
+            },
+            {
+              "eval": "__airTick({pressed:{jump:true},aim:__dw.game.player.foot.position.clone().set(0,-1,1).normalize()});if(__dw.game.player.foot.velocity.y<11.8)throw Error('Boost failed upward launch');(()=>{const g=__dw.game,p=g.player.foot.position;g.cameraRig.setOverride({position:p.clone().add({x:3.4,y:1.2,z:3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()",
+              "shot": {
+                "id": "launch",
+                "desc": "Fresh air jump launches upward with two waist jets"
+              }
+            },
+            {
+              "eval": "for(let i=0;i<79;i++)__airTick();(()=>{const g=__dw.game,p=g.player.foot.position;g.cameraRig.setOverride({position:p.clone().add({x:3.4,y:1.2,z:3.4}),target:p.clone().add({x:0,y:1,z:0})});g.frame(0,true)})()",
+              "shot": {
+                "id": "apex",
+                "desc": "About four metres higher at the apex; no repeated boost"
+              }
+            }
+          ]
+        },
+        {
+          "id": "windline-solid-underside",
+          "desc": "Actual camera aim at analytic island underside: READY range cue, attachment, sustained harness tether",
+          "kind": "sequence",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player,s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;document.querySelector('#sky-lance-controls button').click();globalThis.__airTick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};p.foot.position.set(x,s.bottomHeight(x,z)-18,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);__airTick();g.cameraRig.snap(p);__airTick({lookActive:true,lookIsRate:false,lookY:-10});})()"
+            },
+            {
+              "eval": "new Promise(resolve=>setTimeout(resolve,150))"
+            }
+          ],
+          "shots": [
+            {
+              "eval": "__dw.game.frame(0,true);if(document.querySelector('#sky-lance-reticle').dataset.target!=='reachable')throw Error('No reachable underside cue');",
+              "shot": {
+                "id": "ready",
+                "desc": "Actual ballistic cue shows READY at about 21 metres"
+              }
+            },
+            {
+              "eval": "__airTick({pressed:{lance:true},lanceHeld:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__airTick({lanceHeld:true});if(__dw.game.player.skyLance.anchorId!=='rock-island-0')throw Error('No actual underside attachment');__dw.game.frame(0,true);",
+              "shot": {
+                "id": "linked",
+                "desc": "Actual island anchor acquired with LINKED feedback"
+              }
+            },
+            {
+              "eval": "for(let i=0;i<120;i++)__airTick({lanceHeld:true,callHeld:true});if(!__dw.game.player.skyLance.rope)throw Error('Underside tether lost');(()=>{const g=__dw.game,p=g.player.foot.position;g.cameraRig.setOverride({position:p.clone().add({x:12,y:5,z:-16}),target:p.clone().lerp(g.player.skyLance.rope.anchor,.45)});g.frame(0,true)})()",
+              "shot": {
+                "id": "suspended",
+                "desc": "Retains underside tether despite held rescue; wide view of load path"
+              }
+            }
+          ]
+        },
+        {
+          "id": "windline-range-ready",
+          "desc": "Fresh-page actual camera view: high-contrast READY distance cue on island underside",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player,s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;document.querySelector('#sky-lance-controls button').click();globalThis.__airTick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};p.foot.position.set(x,s.bottomHeight(x,z)-18,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);__airTick();g.cameraRig.snap(p);__airTick({lookActive:true,lookIsRate:false,lookY:-10});})()"
+            },
+            {
+              "eval": "new Promise(resolve=>setTimeout(resolve,150))"
+            },
+            {
+              "eval": "__dw.game.frame(0,true);if(document.querySelector('#sky-lance-reticle').dataset.target!=='reachable')throw Error('No reachable underside cue');"
+            }
+          ]
+        },
+        {
+          "id": "windline-range-linked",
+          "desc": "Fresh-page real underside attachment; wide view of rider, luminous tether and rock",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player,s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;document.querySelector('#sky-lance-controls button').click();globalThis.__airTick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};p.foot.position.set(x,s.bottomHeight(x,z)-18,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);__airTick();g.cameraRig.snap(p);__airTick({lookActive:true,lookIsRate:false,lookY:-10});})()"
+            },
+            {
+              "eval": "new Promise(resolve=>setTimeout(resolve,150))"
+            },
+            {
+              "eval": "__airTick({pressed:{lance:true},lanceHeld:true});for(let i=0;i<180&&!__dw.game.player.skyLance.rope;i++)__airTick({lanceHeld:true});if(__dw.game.player.skyLance.anchorId!=='rock-island-0')throw Error('No actual underside attachment');__dw.game.frame(0,true);"
+            },
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player.foot.position;g.cameraRig.setOverride({position:p.clone().add({x:12,y:5,z:-16}),target:p.clone().lerp(g.player.skyLance.rope.anchor,.45)});g.frame(0,true)})()"
+            }
+          ]
+        },
+        {
+          "id": "windline-companion-descent",
+          "desc": "Actual companion hop from practice platform to lower island, midpoint descent; no staged pose",
+          "settle": 0,
+          "ui": "show",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player,t=g.world.terrain;document.querySelector('#sky-lance-controls button').click();const origin=p.model.state.position.clone();const islands=t.islands.filter(s=>s.topHeight(s.def.x,s.def.z)<origin.y-30).sort((a,b)=>Math.hypot(a.def.x-origin.x,a.def.z-origin.z)-Math.hypot(b.def.x-origin.x,b.def.z-origin.z));const s=islands[0],x=s.def.x,z=s.def.z,y=s.topHeight(x,z);p.foot.position.set(x,y+.01,z);p.foot.velocity.set(0,-1,0);p.foot.grounded=false;p.companion.called=true;const tick=()=>{g.input.setScripted({});g.frame(1/120,false);g.input.setScripted(null);};for(let i=0;i<30&&p.companion.state!=='hop';i++)tick();if(p.companion.state!=='hop')throw Error('Lower-island hop not entered');while(p.companion.state==='hop'&&p.companion.stateTime/p.companion.duration<.5)tick();const point=p.model.state.position.clone();g.cameraRig.setOverride({position:point.clone().add({x:15,y:3,z:-18}),target:point.clone()});g.frame(0,true);if(!p.wyvernPose.airborne)throw Error('Expected airborne descent');})()"
+            }
+          ]
+        },
+        {
+          "id": "windline-motion-{build}-dive",
+          "settle": 0,
+          "ui": "show",
+          "desc": "{build}: actual full dive control, fluid pose, production harness and boost HUD",
+          "each": {
+            "build": [
+              "slight",
+              "medium",
+              "broad"
+            ]
+          },
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();g.rider.setLook({...g.save.data.rider,build:'{build}'});p.foot.position.set(5000,1000,5000);p.foot.grounded=false;p.foot.velocity.set(0,-10,12);const tick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};tick();for(let i=0;i<240;i++)tick({foot:{moveY:1}});if(p.mode!=='traversing'||p.riderPose.freefallTilt===undefined)throw Error('No actual skydiving');const r=p.riderPose.position;g.cameraRig.setOverride({position:r.clone().add({x:4.2,y:.7,z:3.2}),target:r.clone().add({x:0,y:1,z:0})});g.frame(0,true);})()"
+            }
+          ]
+        },
+        {
+          "id": "windline-motion-{build}-brake",
+          "settle": 0,
+          "ui": "show",
+          "desc": "{build}: actual full brake control, fluid pose, production harness and boost HUD",
+          "each": {
+            "build": [
+              "slight",
+              "medium",
+              "broad"
+            ]
+          },
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();g.rider.setLook({...g.save.data.rider,build:'{build}'});p.foot.position.set(5000,1000,5000);p.foot.grounded=false;p.foot.velocity.set(0,-10,12);const tick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};tick();for(let i=0;i<240;i++)tick({foot:{moveY:-1}});if(p.mode!=='traversing'||p.riderPose.freefallTilt===undefined)throw Error('No actual skydiving');const r=p.riderPose.position;g.cameraRig.setOverride({position:r.clone().add({x:4.2,y:.7,z:3.2}),target:r.clone().add({x:0,y:1,z:0})});g.frame(0,true);})()"
+            }
+          ]
+        },
+        {
+          "id": "windline-boost-cooldown",
+          "settle": 0,
+          "ui": "show",
+          "desc": "Actual airborne boost recharge: light-blue bottom-right indicator",
+          "steps": [
+            {
+              "eval": "(()=>{const g=__dw.game,p=g.player;document.querySelector('#sky-lance-controls button').click();p.foot.position.set(0,380,-40);p.foot.grounded=false;p.foot.velocity.set(0,-4,0);const tick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};tick();tick({pressed:{jump:true}});for(let i=0;i<90;i++)tick();g.frame(0,true);if(document.querySelector('#windline-boost-hud').dataset.state!=='cooldown')throw Error('Expected recharge');})()"
+            }
+          ]
+        }
+      ]
+    }
   ]
 }

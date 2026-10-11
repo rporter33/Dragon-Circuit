@@ -43,7 +43,7 @@ export function emptyPresses(): InputPresses {
   return {
     confirm: false, back: false, interact: false, pause: false, restart: false, jump: false,
     navUp: false, navDown: false, navLeft: false, navRight: false, tabPrev: false, tabNext: false,
-    recenter: false, toggleHud: false,
+    recenter: false, toggleHud: false, lance: false, lanceRelease: false, recoverLance: false,
   };
 }
 
@@ -108,6 +108,10 @@ export class Input implements InputSystem, RumbleSink {
    * takes the mouse in flight; on the ground it still looks around.
    */
   flying = false;
+  /** Explicit opt-in; RT retains its flight/menu roles outside independent traversal. */
+  traversal = false;
+  private previousTraversal = false;
+  private lanceArmed = true;
 
   private target: HTMLElement;
   private settings: () => Settings;
@@ -244,10 +248,13 @@ export class Input implements InputSystem, RumbleSink {
     return this.wantLock;
   }
 
+  private previousLanceHeld = false;
+
   poll(dt: number): InputFrame {
     const s = this.settings();
     const f = this.frame;
     const p = f.pressed;
+    f.aim = undefined;
     this.readPads();
     const pad = this.pad;
 
@@ -364,6 +371,23 @@ export class Input implements InputSystem, RumbleSink {
     this.wheel = 0;
 
     // --- Presses ------------------------------------------------------------------------------
+    let rawLanceHeld = this.padHeldAny(PAD.lance);
+    for (const code of KEYS.lance) rawLanceHeld ||= this.keys.has(code);
+    if (this.traversal !== this.previousTraversal) {
+      this.lanceArmed = !rawLanceHeld;
+      this.previousLanceHeld = false;
+    }
+    if (!rawLanceHeld) this.lanceArmed = true;
+    f.lanceHeld = this.traversal && this.lanceArmed && rawLanceHeld;
+    f.callHeld = this.held(KEYS.interact) || this.padHeldAny(PAD.interact);
+    p.lanceRelease = this.traversal && this.previousLanceHeld && !f.lanceHeld;
+    p.lance = this.traversal && this.lanceArmed &&
+      (this.down(KEYS.lance) || this.padPressedAny(PAD.lance));
+    // A buffered keyboard tap may begin and end between render polls.
+    p.lanceRelease ||= !!p.lance && !rawLanceHeld;
+    this.previousLanceHeld = !!f.lanceHeld;
+    this.previousTraversal = this.traversal;
+    p.recoverLance = this.traversal && (this.down(KEYS.recoverLance) || this.padPressedAny(PAD.recoverLance));
     p.confirm = this.down(KEYS.confirm) || this.padPressedAny(PAD.confirm);
     p.jump = this.down(KEYS.jump) || this.padPressedAny(PAD.jump);
     p.back = this.down(KEYS.back) || this.padPressedAny(PAD.back);
@@ -658,6 +682,8 @@ export class Input implements InputSystem, RumbleSink {
     f.lookIsRate = false;
     f.zoom = 0;
     f.jumpHeld = false;
+    f.lanceHeld = sc.lanceHeld ?? false;
+    f.callHeld = sc.callHeld ?? false;
     const p = f.pressed as unknown as Record<string, boolean>;
     for (const k in p) p[k] = false;
     if (sc.flight) Object.assign(fl, sc.flight);
@@ -670,6 +696,7 @@ export class Input implements InputSystem, RumbleSink {
     if (sc.zoom !== undefined) f.zoom = sc.zoom;
     if (sc.jumpHeld !== undefined) f.jumpHeld = sc.jumpHeld;
     if (sc.device) f.device = sc.device;
+    if (sc.aim) f.aim = sc.aim;
   }
 
   // --- Haptics -------------------------------------------------------------------------------

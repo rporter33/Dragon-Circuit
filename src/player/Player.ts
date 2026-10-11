@@ -39,6 +39,12 @@ import { RiderFoot } from './foot';
 import { Companion } from './companion';
 import { PLAYER_TUNING as P } from './tuning';
 import { FixedHome, type HomeAnchor } from './home';
+import { SkyLance } from '../traversal/SkyLance';
+import { integrate, resolveTether, ROPE_EPSILON } from '../traversal/tether';
+import { moveBody, type SweepWorld } from '../traversal/sweep';
+import { LANCE } from '../traversal/tuning';
+import { fallSpeed } from '../traversal/freefall';
+import { AirBoost, openDrop, steerFreefall } from '../traversal/air';
 import { boundaryPush01 } from '../sky/windField';
 
 export interface PlayerDeps {
@@ -128,6 +134,40 @@ export class Player implements PlayerSystem {
   /** Where the stable is and where to fall back to (the Roost today; one day an airship). */
   readonly home: HomeAnchor;
 
+  /** Null outside the opt-in experimental scenario. */
+  skyLance: SkyLance | null = null;
+  traversalPhase: 'tethered' | 'released' = 'released';
+  lanceInteraction: 'hold' | 'toggle' = 'hold';
+  setLanceInteraction(value: 'hold' | 'toggle'): void {
+    this.lanceInteraction = value; this.skyLance?.reset(); this.cancelLanceWindup();
+  }
+  private callTime = 0;
+  private readonly traversalStart = new Vector3();
+  freefallTilt = 0;
+  freefallSteer = 0;
+  freefallOpen = false;
+  readonly airBoost = new AirBoost();
+  private mountHoldBlocked = false;
+  private unmountedFlight = false;
+  private readonly companionFlight: FlightInput = {pitch:0,roll:0,yaw:0,flap:0,tuck:0,flare:0};
+  private latchLance = false;
+  private latchLanceRelease = false;
+  private blockWindup = false;
+  private latchRecover = false;
+  private prevLance = false;
+  private prevRecover = false;
+  private readonly latchedLanceAim = new Vector3();
+  private hasLanceAim = false;
+  private readonly harness = new Vector3();
+
+  enableSkyLance(world: SweepWorld): void { this.disableSkyLance(); this.skyLance = new SkyLance(world); this.blockWindup = false; }
+  /** Equipment teardown does not alter rider world velocity or the normal movement systems. */
+  disableSkyLance(): void {
+    this.skyLance?.reset(); this.cancelLanceWindup(); this.skyLance = null;
+    this.traversalPhase = 'released';
+    this.unmountedFlight = false; this.airBoost.reset(); this.freefallOpen = false; this.freefallSteer = 0;
+    if (this.mode === 'traversing') this.setMode('onFoot');
+  }
   private deps: PlayerDeps;
   private simTime = 0;
   private cameraYaw = 0;
@@ -269,6 +309,7 @@ export class Player implements PlayerSystem {
   /** True when the wyvern is close enough (and settled enough) for the rider to mount. */
   get canMount(): boolean {
     const d = this.wyvernDistance;
+    if (this.unmountedFlight) return false;
     return d <= P.mountRange || (d <= P.mountReach && this.companion.state === 'idle');
   }
 
@@ -277,7 +318,7 @@ export class Player implements PlayerSystem {
   setBreed(id: BreedId): void {
     this.breed = BREEDS[id];
     this.model.setBreed(this.breed);
-    if (this.mode !== 'flying' && this.mode !== 'respawning' && this.mode !== 'falling' && this.companion.state !== 'hop') {
+    if (this.mode !== 'flying' && this.mode !== 'respawning' && this.mode !== 'falling' && this.mode !== 'traversing' && this.companion.state !== 'hop') {
       const w = this.companion.walker;
       w.settle(this.deps.terrain, this.breed.standHeight, w.groundY + 3);
       this.syncModelFromGround();
@@ -408,11 +449,22 @@ export class Player implements PlayerSystem {
     this.latched = true;
     if (input.pressed.interact) this.latchInteract = true;
     if (input.pressed.jump) this.latchJump = true;
+    if (input.pressed.lance && !this.latchLance) {
+      this.latchLance = true;
+      this.hasLanceAim = !!input.aim;
+      if (input.aim) this.latchedLanceAim.copy(input.aim);
+    }
+    if (input.pressed.lanceRelease) {
+      this.latchLanceRelease = true;
+    }
+    if (input.pressed.recoverLance) this.latchRecover = true;
   }
 
   // --- Simulation -----------------------------------------------------------------------------
 
   fixedUpdate(dt: number, input: InputFrame, cameraYaw: number): void {
+    if (!(dt > 0)) return;
+    this.airBoost.tick(dt);
     this.simTime += dt;
     this.modeTime += dt;
     this.cameraYaw = cameraYaw;
@@ -441,7 +493,30 @@ export class Player implements PlayerSystem {
     this.prevInteract = input.pressed.interact;
     this.prevJump = input.pressed.jump;
 
+    if (this.skyLance) {
+      if (!input.callHeld) this.mountHoldBlocked = false;
+      if ((this.mode === 'flying' || this.mode === 'landed') && !this.mountHoldBlocked) {
+        this.callTime = input.callHeld ? this.callTime + dt : 0;
+        if (this.callTime + 1e-9 >= LANCE.callHold) {
+          this.callTime = 0; this.mountHoldBlocked = true;
+          if (this.mode === 'flying') this.jumpFromWyvern();
+          else if (this.landBlend >= 1 && !this.home.nearStable(this.riderPos)) this.startDismount();
+        }
+      }
+    }
+    // Equipment resolves before mode dispatch: an attachment wins over a catch on this step.
+    const lancePress = this.latched ? this.latchLance : !!input.pressed.lance && !this.prevLance;
+    const recover = this.latched ? this.latchRecover : !!input.pressed.recoverLance && !this.prevRecover;
+    this.latchLance = this.latchRecover = false;
+    this.prevLance = !!input.pressed.lance; this.prevRecover = !!input.pressed.recoverLance;
+    const lanceRelease = this.latched ? this.latchLanceRelease : !!input.pressed.lanceRelease;
+    this.latchLanceRelease = false;
+    this.updateLance(dt, input, lancePress, recover, lanceRelease);
+    this.hasLanceAim = false;
     switch (this.mode) {
+      case 'traversing':
+        this.updateTraversal(dt, input, jump);
+        break;
       case 'flying':
         this.updateFlying(dt, input);
         break;
@@ -466,11 +541,178 @@ export class Player implements PlayerSystem {
     }
     this.prevFlap = input.flight.flap;
     this.position.copy(this.model.state.position);
-    this.controllable = this.mode === 'flying' || this.mode === 'landed' || this.mode === 'onFoot';
+    this.controllable = this.mode === 'flying' || this.mode === 'landed' || this.mode === 'onFoot' || this.mode === 'traversing' || (this.mode === 'falling' && this.skyLance !== null);
     this.updateRest(dt);
     this.updateSafeGround(dt);
     this.updateChannels(dt);
     this.updateLookTarget(dt);
+  }
+
+  // --- Experimental independent rider traversal -------------------------------------------------
+
+  /** Called when play loses input ownership. A held button must be released before a fresh windup. */
+  cancelLanceWindup(): void {
+    this.skyLance?.cancelCharge(); this.callTime = 0; this.mountHoldBlocked = true;
+    if (this.skyLance?.state === 'projectile') this.skyLance.detach('Cast cancelled');
+    this.latchLance = this.latchLanceRelease = this.latchRecover = false; this.hasLanceAim = false;
+    this.latchJump = this.latchInteract = false;
+    this.blockWindup = true;
+  }
+
+  private updateLance(dt: number, input: InputFrame, press: boolean, recover: boolean, released: boolean): void {
+    const lance = this.skyLance;
+    if (!lance) return;
+    const riderFree = this.mode === 'onFoot' || this.mode === 'falling' || this.mode === 'traversing';
+    if (!riderFree) { lance.reset(); return; }
+    this.harness.copy(this.foot.position).addScaledVector(UP, LANCE.harnessHeight);
+    if (this.blockWindup) {
+      if (!input.lanceHeld) this.blockWindup = false;
+      press = false;
+    }
+    if (press) {
+      if (lance.state === 'anchored' || lance.state === 'projectile') {
+        if (this.lanceInteraction === 'toggle') lance.detach();
+      } else if (lance.state === 'ready') {
+        _fwd.set(Math.sin(this.cameraYaw), 0.35, Math.cos(this.cameraYaw)).normalize();
+        lance.throw(this.harness, this.hasLanceAim ? this.latchedLanceAim : input.aim ?? _fwd, this.foot.velocity);
+        if (!this.foot.grounded) this.beginTraversal();
+      }
+    }
+    if (released && this.lanceInteraction === 'hold' && (lance.rope || lance.state === 'projectile')) {
+      lance.detach(); this.callTime = 0;
+    }
+    if (!lance.rope) this.traversalPhase = 'released';
+    if (recover) { lance.cancelCharge(); lance.recover(); } // Never changes an attached rope or rider velocity.
+    if (lance.step(dt, this.harness, true)) {
+      this.callTime = 0; this.traversalPhase = 'tethered';
+      // Grounded attachment does not transfer movement ownership or remove support.
+      if (this.mode !== 'onFoot' || !this.foot.grounded) this.beginTraversal();
+    }
+  }
+
+  private beginTraversal(): void {
+    if (this.mode === 'falling') {
+      this.home.respawn(_v);
+      this.companion.cancelRescue(_v, this.breed.standHeight);
+    }
+    if (this.mode !== 'traversing') { this.setMode('traversing'); this.callTime = 0; }
+  }
+
+  /** A newly blocked line is a movement boundary, not an automatic equipment release.
+   * Restore the previous clear body endpoint through a sweep. Retain its committed length;
+   * an attempted powered reel cannot commit shortening across a blocked path.
+   * A failed restoration still detaches safely. At most two line checks on this exceptional path. */
+  private keepTetherClear(lance: SkyLance, beforeFeet: Vector3, length: number): boolean {
+    if (!lance.rope || lance.validate(this.harness, true, true)) return false;
+    const rope = lance.rope;
+    if (!rope) return false; // Invalid static identity always detaches.
+    _v.copy(beforeFeet);
+    this.foot.velocity.set(0,0,0);
+    moveBody(lance.world, this.foot.position, _v, this.foot.velocity);
+    this.foot.position.copy(_v); this.harness.copy(_v).addScaledVector(UP,LANCE.harnessHeight);
+    rope.length = length;
+    if (this.harness.distanceTo(rope.anchor) > length + ROPE_EPSILON || !lance.validate(this.harness)) {
+      if (lance.rope) lance.detach('Blocked line cannot be restored');
+    } else { lance.reason = 'Line caught at edge'; lance.pullTime = 0; }
+    return true;
+  }
+
+  private updateTraversal(dt: number, input: InputFrame, jump: boolean): void {
+    const lance = this.skyLance!, foot = this.foot, terrain = this.deps.terrain;
+    const rope = lance.rope, committedLength = rope?.length ?? 0;
+    this.traversalStart.copy(foot.position);
+    this.freefallOpen = !rope && openDrop(terrain, foot.position);
+    this.traversalPhase = rope ? 'tethered' : 'released';
+    // Torso endpoint is stable simulation data; animated hands never exert physics forces.
+    this.harness.copy(foot.position).addScaledVector(UP, LANCE.harnessHeight);
+    const bodyCollision = (from: Vector3, to: Vector3, velocity: Vector3) => {
+      _v.copy(from).addScaledVector(UP, -LANCE.harnessHeight);
+      _v2.copy(to).addScaledVector(UP, -LANCE.harnessHeight);
+      moveBody(lance.world, _v, _v2, velocity);
+      to.copy(_v2).addScaledVector(UP, LANCE.harnessHeight);
+    };
+    this.freefallTilt += (Math.max(-1, Math.min(1, input.foot.moveY)) - this.freefallTilt) * (1 - Math.exp(-5 * dt));
+    this.freefallSteer = damp(this.freefallSteer, this.freefallOpen ? clamp(input.foot.moveX,-1,1) : 0, 8, dt);
+    if (rope) { this.airBoost.stop(); if (jump) lance.pull(); }
+    else {
+      if (jump) {
+        const x = input.foot.moveX, y = input.foot.moveY;
+        _fwd.set(-Math.cos(this.cameraYaw)*x + Math.sin(this.cameraYaw)*y,0,Math.sin(this.cameraYaw)*x + Math.cos(this.cameraYaw)*y);
+        this.airBoost.start(foot.velocity, _fwd.lengthSq() > .01 ? _fwd : input.aim, this.cameraYaw);
+      }
+      this.airBoost.step(dt, foot.velocity);
+      if (this.freefallOpen) steerFreefall(foot.velocity, input.foot.moveX, input.foot.moveY, this.cameraYaw, dt);
+    }
+    const drag = rope || !this.freefallOpen ? 0 : LANCE.spreadDrag + (LANCE.diveDrag - LANCE.spreadDrag) * (this.freefallTilt + 1) * .5;
+    lance.taut = integrate(this.harness, foot.velocity, dt, rope, bodyCollision, drag, undefined, rope || !this.freefallOpen ? 0 : fallSpeed(this.freefallTilt), lance.pullTime > 0 ? LANCE.pullAcceleration : 0);
+    lance.pullTime = Math.max(0, lance.pullTime - dt);
+    foot.position.copy(this.harness).addScaledVector(UP, -LANCE.harnessHeight);
+    foot.grounded = false; foot.airTime += dt;
+    foot.speed = Math.hypot(foot.velocity.x, foot.velocity.z);
+    if (foot.speed > 0.5) {
+      const turn = Math.atan2(Math.sin(Math.atan2(foot.velocity.x,foot.velocity.z)-foot.yaw),Math.cos(Math.atan2(foot.velocity.x,foot.velocity.z)-foot.yaw));
+      foot.yaw += turn * (1-Math.exp(-10*dt));
+    }
+    // A constraint correction must not push the rider into a wall. Detach rather than stretch or snap.
+    if (rope && this.harness.distanceTo(rope.anchor) > rope.length + ROPE_EPSILON) {
+      lance.detach('Contact conflicts with tether'); this.callTime = 0;
+    }
+    if (lance.rope) this.keepTetherClear(lance, this.traversalStart, committedLength);
+    if (rope && !lance.rope) this.callTime = 0;
+    this.traversalPhase = lance.rope ? 'tethered' : 'released';
+    const g = terrain.groundAt(foot.position.x, foot.position.z, foot.position.y);
+    if (g && foot.velocity.y <= 0 && foot.position.y <= g.y + 0.015 && g.normal.y >= P.maxSlopeY) {
+      if (lance.rope) lance.detach('Landed');
+      foot.position.y = g.y; foot.velocity.y = 0; foot.grounded = true; foot.airTime = 0;
+      foot.groundY = g.y; foot.normal.copy(g.normal); foot.surface = g.surface;
+      this.traversalPhase = 'released';
+      this.setMode('onFoot'); this.airBoost.stop(); this.freefallOpen = false; this.landActionTimer = 0.35;
+    } else {
+      this.callTime = !lance.rope && !this.mountHoldBlocked && input.callHeld ? this.callTime + dt : 0;
+      if (this.callTime + 1e-9 >= LANCE.callHold) { this.callTime = 0; this.startFall(); return; }
+      // Keep the existing world-boundary recovery, but never summon a dragon automatically.
+      if (foot.position.y < terrain.layout.cloudFloor) { lance.reset(); this.startRespawn(); return; }
+    }
+    this.updateIndependentCompanion(dt);
+    this.syncRiderFromFoot();
+    this.setRiderAction(foot.grounded ? 'land' : foot.velocity.y > 0 ? 'jump' : 'fall');
+  }
+
+  /** Deliberate saddle jump: retain dragon momentum and add a small upwards/outwards hop.
+   * The unmounted wyvern continues through the same FlightModel until called or landed. */
+  private jumpFromWyvern(): void {
+    const state = this.model.state;
+    this.seatPosition(this.foot.position).addScaledVector(UP, .8 - P.riderHip);
+    _left.set(1,0,0).applyQuaternion(state.orientation);
+    _v.copy(this.foot.position);
+    this.foot.position.addScaledVector(_left, .7);
+    this.foot.velocity.copy(state.velocity).addScaledVector(UP, 5).addScaledVector(_left, 2.5);
+    // Sweep the initial outward hop as well as every subsequent airborne step.
+    if (this.skyLance) moveBody(this.skyLance.world, _v, this.foot.position, this.foot.velocity);
+    this.foot.yaw = Math.atan2(state.velocity.x, state.velocity.z);
+    this.foot.grounded = false; this.foot.airTime = 0;
+    this.unmountedFlight = true; this.airBoost.stop(); this.skyLance?.reset();
+    this.setMode('traversing'); this.callTime = 0;
+    this.syncRiderFromFoot(); this.setRiderAction('jump');
+    this.deps.events.emit('dismount', {});
+  }
+
+  private updateIndependentCompanion(dt: number): void {
+    if (this.unmountedFlight && this.foot.grounded && this.companion.called) {
+      // Transfer the actual gliding pose only after a safe greeting landing has been found.
+      if (this.companion.recallFromAir(this.foot.position, this.breed, this.deps.terrain)) this.unmountedFlight = false;
+    }
+    if (this.unmountedFlight) {
+      this.model.step(dt, this.companionFlight, this.deps.env, this.deps.events);
+      this.airTime += dt; this.copyFlightAnim(); this.legContact(dt);
+      // Keep the catch origin at the actual gliding dragon, never its stale ground position.
+      this.companion.walker.position.copy(this.model.state.position);
+      this.companion.orientation.copy(this.model.state.orientation);
+      this.companion.velocity.copy(this.model.state.velocity);
+    } else {
+      this.companion.update(dt, this.foot.position, this.foot.grounded, this.breed, this.deps.terrain, this.deps.events, this.simTime);
+      this.syncModelFromCompanion();
+    }
   }
 
   // --- Flying -----------------------------------------------------------------------------------
@@ -637,7 +879,9 @@ export class Player implements PlayerSystem {
     this.model.reset(s.position, s.orientation, s.velocity);
     this.takeoffTimer = -1;
     this.stillTime = 0;
-    this.setMode('landed');
+    if (this.unmountedFlight) {
+      this.unmountedFlight = false; this.companion.standStill();
+    } else this.setMode('landed');
     this.setGait('landing');
     const contact = this.contact;
     contact.id++;
@@ -730,6 +974,7 @@ export class Player implements PlayerSystem {
   }
 
   private startDismount(): void {
+    this.mountHoldBlocked = true;
     const w = this.companion.walker;
     const sh = this.breed.standHeight;
     w.forward(_fwd);
@@ -778,22 +1023,65 @@ export class Player implements PlayerSystem {
   private updateOnFoot(dt: number, input: InputFrame, interact: boolean, jump: boolean): void {
     const t = this.deps.terrain;
     const ev = this.deps.events;
-    this.groundRegen(dt);
+    if (!this.unmountedFlight) this.groundRegen(dt);
     const f = input.foot;
+    if (jump && this.skyLance?.rope) this.skyLance.pull();
+    const beforeWalk = this.skyLance?.rope ? this.foot.position.clone() : null;
     const r = this.foot.step(dt, { moveX: f.moveX, moveY: f.moveY, sprint: f.sprint, jump }, this.cameraYaw, t);
+    if (beforeWalk && this.skyLance?.rope) {
+      const lance = this.skyLance, rope = lance.rope!;
+      // Walker is the sole integrator. Only collision/tether projection follows it, without gravity.
+      moveBody(lance.world, beforeWalk, this.foot.position, this.foot.velocity);
+      this.harness.copy(this.foot.position).addScaledVector(UP, LANCE.harnessHeight);
+      lance.taut = resolveTether(this.harness, this.foot.velocity, rope, (from, to, velocity) => {
+        _v.copy(from).addScaledVector(UP, -LANCE.harnessHeight);
+        _v2.copy(to).addScaledVector(UP, -LANCE.harnessHeight);
+        moveBody(lance.world, _v, _v2, velocity);
+        to.copy(_v2).addScaledVector(UP, LANCE.harnessHeight);
+      }, this.foot.grounded);
+      this.foot.position.copy(this.harness).addScaledVector(UP, -LANCE.harnessHeight);
+      if (this.harness.distanceTo(rope.anchor) > rope.length + ROPE_EPSILON) lance.detach('Contact conflicts with tether');
+      // Recheck support after correction; a deliberate jump must never be snapped back down.
+      if (this.foot.grounded) {
+        const support = t.groundAt(this.foot.position.x, this.foot.position.z, this.foot.position.y);
+        this.foot.grounded = !!support && Math.abs(support.y - this.foot.position.y) <= .015;
+        if (support && this.foot.grounded) {
+          this.foot.groundY = support.y; this.foot.normal.copy(support.normal); this.foot.surface = support.surface;
+        }
+      }
+      if (lance.rope && this.keepTetherClear(lance, beforeWalk, rope.length) && !jump) {
+        const support = t.groundAt(this.foot.position.x, this.foot.position.z, this.foot.position.y);
+        this.foot.grounded = !!support && Math.abs(support.y-this.foot.position.y) <= .015;
+        if (support && this.foot.grounded) { this.foot.groundY = support.y; this.foot.normal.copy(support.normal); this.foot.surface = support.surface; }
+      }
+      if (r.landed && lance.rope) { lance.detach('Landed'); this.traversalPhase = 'released'; }
+      this.foot.speed = Math.hypot(this.foot.velocity.x, this.foot.velocity.z);
+    }
     if (r.footstep) ev.emit('footstep', { position: this.foot.position.clone(), surface: this.foot.surface, heavy: false });
     if (r.landed && r.impact > 2) {
       ev.emit('footstep', { position: this.foot.position.clone(), surface: this.foot.surface, heavy: r.impact > 7 });
       if (r.impact > 6) this.landActionTimer = 0.35;
     }
-    if (!this.foot.grounded) {
+    if (!this.foot.grounded && this.skyLance && (this.skyLance.rope || openDrop(t, this.foot.position))) {
+      this.beginTraversal();
+      this.syncRiderFromFoot();
+      this.setRiderAction(this.foot.velocity.y > 0 ? 'jump' : 'fall');
+      return;
+    }
+    if (!this.foot.grounded && !this.skyLance) {
       const below = t.groundAt(this.foot.position.x, this.foot.position.z, this.foot.position.y);
       if (!below || this.foot.position.y - below.y > P.fallDepth || this.foot.position.y < t.layout.cloudFloor) {
         this.startFall();
         return;
       }
     }
-    if (interact && !this.deps.interactableNear?.(this.foot.position)) {
+    let groundCall = false;
+    if (this.skyLance) {
+      this.callTime = input.callHeld && !this.mountHoldBlocked && this.foot.grounded ? this.callTime + dt : 0;
+      groundCall = this.callTime + 1e-9 >= LANCE.callHold;
+      if (groundCall) { this.callTime = 0; this.mountHoldBlocked = true; }
+    }
+    if ((interact || groundCall) && !this.deps.interactableNear?.(this.foot.position)) {
       if (this.canMount) {
         this.startMount();
         return;
@@ -804,8 +1092,8 @@ export class Player implements PlayerSystem {
         this.companion.called = true;
       }
     }
-    this.companion.update(dt, this.foot.position, this.foot.grounded, this.breed, t, ev, this.simTime);
-    this.syncModelFromCompanion();
+    if (this.foot.grounded) this.airBoost.stop();
+    this.updateIndependentCompanion(dt);
     this.syncRiderFromFoot();
     const fs = this.foot;
     if (this.waveTimer > 0) this.setRiderAction('wave');
@@ -815,6 +1103,7 @@ export class Player implements PlayerSystem {
   }
 
   private startMount(): void {
+    this.mountHoldBlocked = true; this.airBoost.stop();
     this.transFrom.copy(this.foot.position);
     // A wyvern standing a few steps away: the rider covers the gap at a jog before climbing on.
     this.mountDuration = P.mountTime + Math.max(0, this.wyvernDistance - P.mountRange) / P.runSpeed;
@@ -850,6 +1139,7 @@ export class Player implements PlayerSystem {
   // --- Falling off an island ---------------------------------------------------------------------
 
   private startFall(): void {
+    this.unmountedFlight = false; this.airBoost.stop();
     const fp = this.foot.position;
     this.setMode('falling');
     this.deps.events.emit('fellOff', { position: fp.clone() });
@@ -889,6 +1179,7 @@ export class Player implements PlayerSystem {
   }
 
   private catchRider(): void {
+    this.mountHoldBlocked = true; this.airBoost.stop();
     const v = this.foot.velocity;
     const yaw = Math.sqrt(v.x * v.x + v.z * v.z) > 0.5 ? Math.atan2(v.x, v.z) : this.foot.yaw;
     const body = this.bodyUnderSeat(this.foot.position, yaw, _v2);
@@ -985,8 +1276,8 @@ export class Player implements PlayerSystem {
   private updateRest(dt: number): void {
     const c = this.companion.state;
     const grounded =
-      this.mode === 'landed' || ((this.mode === 'onFoot' || this.mode === 'mounting' || this.mode === 'dismounting') && (c === 'idle' || c === 'follow'));
-    if (this.mode === 'flying' && this.airTime > P.restFlight) this.flownSinceRest = true;
+      !this.unmountedFlight && (this.mode === 'landed' || ((this.mode === 'onFoot' || this.mode === 'mounting' || this.mode === 'dismounting') && (c === 'idle' || c === 'follow')));
+    if ((this.mode === 'flying' || this.unmountedFlight) && this.airTime > P.restFlight) this.flownSinceRest = true;
     if (grounded) {
       this.groundTime += dt;
       // Basking: in sunlight the wyvern warms up a little sooner (never slower at night).
@@ -1028,13 +1319,24 @@ export class Player implements PlayerSystem {
     this.mode = mode;
     this.modeTime = 0;
     if (mode !== 'respawning') this.fade = 0;
+    if (this.skyLance && mode !== 'onFoot' && mode !== 'falling' && mode !== 'traversing') {
+      this.skyLance.reset(); this.cancelLanceWindup(); this.traversalPhase = 'released';
+    }
     this.riderMounted = mode === 'flying' || mode === 'landed' || mode === 'respawning';
+    if (this.riderMounted) {this.unmountedFlight = false; this.airBoost.stop(); this.freefallOpen = false;}
     if (this.riderMounted) this.setRiderAction('mounted');
     if (mode === 'onFoot' || mode === 'landed' || mode === 'mounting' || mode === 'dismounting') this.airborne = false;
     if (from !== mode) this.deps.events.emit('modeChange', { from, to: mode });
   }
 
   private resetTransitions(): void {
+    this.skyLance?.reset();
+    this.unmountedFlight = false; this.mountHoldBlocked = false; this.airBoost.reset();
+    this.freefallOpen = false; this.freefallSteer = 0;
+    this.hasLanceAim = false; this.latchLanceRelease = false; this.blockWindup = false;
+    this.callTime = 0; this.freefallTilt = 0; this.traversalPhase = 'released';
+    this.latchLance = this.latchRecover = this.prevLance = this.prevRecover = false;
+    this.latchJump = this.latchInteract = this.prevJump = this.prevInteract = false;
     this.contact.reset++;
     this.contact.impact = 0;
     this.takeoffTimer = -1;
@@ -1124,6 +1426,12 @@ export class Player implements PlayerSystem {
   private syncModelFromCompanion(): void {
     const c = this.companion;
     const s = this.model.state;
+    // Companion hops use the same authoritative touchdown channel as ridden landings.
+    // Without a new contact id the animator can retain feet planted on the departure island.
+    if (this.airborne && !c.anim.airborne && (c.state === 'idle' || c.state === 'follow')) {
+      this.contact.id++;
+      this.contact.impact = Math.max(0,-s.velocity.dot(c.walker.normal));
+    }
     s.position.copy(c.walker.position);
     s.orientation.copy(c.orientation);
     s.velocity.copy(c.velocity);
@@ -1294,7 +1602,7 @@ export class Player implements PlayerSystem {
       out.normalize().multiplyScalar(40).add(p);
       return;
     }
-    if (this.mode === 'mounting' || this.mode === 'dismounting' || this.mode === 'falling') {
+    if (this.mode === 'mounting' || this.mode === 'dismounting' || this.mode === 'falling' || this.mode === 'traversing') {
       out.copy(riderHead);
       return;
     }
@@ -1380,6 +1688,17 @@ export class Player implements PlayerSystem {
     wp.lookTarget.copy(this.lookSmooth);
 
     const rp = this.riderPose;
+    rp.equipment = this.skyLance && !this.riderMounted
+      ? this.skyLance.rope ? 'tether' : 'bracer' : undefined;
+    rp.lanceCharge = 0;
+    const equipment = this.skyLance;
+    rp.lanceMotion = equipment && !this.riderMounted
+      ? equipment.state === 'spent' ? 'recover' : equipment.castAge < LANCE.castTime ? 'cast' : undefined : undefined;
+    rp.lanceMotionT = equipment ? equipment.state === 'spent' ? Math.min(1, equipment.age / LANCE.recoveryTime) : Math.min(1, equipment.castAge / LANCE.castTime) : 0;
+    rp.lineTension = equipment?.taut ? 1 : 0;
+    rp.freefallTilt = this.mode === 'traversing' && this.freefallOpen && !this.skyLance?.rope && this.foot.velocity.y <= -.5 ? this.freefallTilt : undefined;
+    rp.freefallSteer = rp.freefallTilt !== undefined ? this.freefallSteer : 0;
+    rp.airBoost = this.skyLance && this.airBoost.remaining > 0 ? this.airBoost.remaining / LANCE.boostDuration : 0;
     rp.mounted = this.riderMounted;
     if (this.riderMounted) {
       this.seatLocal(rp.position).applyQuaternion(wp.orientation).add(wp.position);
