@@ -73,8 +73,8 @@ describe('immutable analytic underside empty-space certificates',()=>{
   });
   it('matches cold and retained proofs at fine-cell seams near real contact',()=>{
     const t=new Terrain({...LAYOUT,islands:LAYOUT.islands.slice(0,3),spires:[],arches:[]}),fast=new TraversalWorld(t,undefined,true),reference=new TraversalWorld(t,undefined,false);
-    for(const s of t.islands)for(const radius of [.02,.08])for(const shift of [-1e-8,0,1e-8]){
-      const x=Math.round((s.def.x+s.def.radius*.35)*100)/100+shift,z=Math.round(s.def.z*100)/100+shift,y=s.bottomHeight(x,z);
+    for(const s of t.islands)for(const radius of [.02,.08])for(const shift of [-1e-8,-1e-12,0,1e-12,1e-8]){
+      const x=Math.round((s.def.x+s.def.radius*.35)/.04)*.04+shift,z=Math.round(s.def.z/.04)*.04+shift,y=s.bottomHeight(x,z);
       const a=new Vector3(x-.021,y-2,z-.011),b=new Vector3(x+.021,y+.1,z+.011);
       const expected=reference.sweep(a,b,radius,'line');expect(expected?.exhausted).not.toBe(true);
       fast.clearGeometryCertificates();expect(fast.sweep(a,b,radius,'line')).toEqual(expected);

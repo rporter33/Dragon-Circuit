@@ -191,8 +191,10 @@ export class TraversalWorld implements SweepWorld {
             // Charge, but do not evaluate, consecutive original lattice nodes that stay
             // inside this certified XZ cell and strictly below its enclosing plane floor.
             let until=end;
-            if(delta.x!==0)until=Math.min(until,((delta.x>0?cx+1:cx)*cell-from.x)/delta.x);
-            if(delta.z!==0)until=Math.min(until,((delta.z>0?cz+1:cz)*cell-from.z)/delta.z);
+            // Intersect coarse and fine domains explicitly. Floating division at
+            // a shared seam can choose adjacent cells despite mathematical nesting.
+            if(delta.x!==0)until=Math.min(until,((delta.x>0?x+1:x)*CERTIFICATE_CELL-from.x)/delta.x,((delta.x>0?cx+1:cx)*cell-from.x)/delta.x);
+            if(delta.z!==0)until=Math.min(until,((delta.z>0?z+1:z)*CERTIFICATE_CELL-from.z)/delta.z,((delta.z>0?cz+1:cz)*cell-from.z)/delta.z);
             if(delta.y>0)until=Math.min(until,(floor-from.y)/delta.y);
             const skip=Math.min(last,end>0?Math.floor((until-1e-9)/end*count):last);
             if(skip>i){
