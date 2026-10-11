@@ -6,6 +6,7 @@ on:
     paths:
       - 'editor*.html'
       - 'src/editor/**'
+      - 'src/audio/**'
       - 'src/game/Game.ts'
       - 'src/world/World.ts'
       - 'vite.config.ts'

@@ -1,5 +1,14 @@
 # Driftwing — AI Development Handoff
 
+## Latest: approved editor release and audio integration — 2026-10-11 UTC
+
+- Robert approved editor and audio release; the separate reticle task remains unmerged. Serialized release coordination starts from main `bc86843a494c64bed347ca6cdca7c52e3ef1ee66`. No PR #5 merge, ship/model changes or broader gameplay work is authorized by this entry.
+- Reviewed editor head `6dd789435c9a3f40ccd834265f94e935bf1854b4` passed editor CI38124353870 and integration CI38124353868. PR #8 merged first as `59c774501992f6320f66fd939637bb3113fd8834`; its tree equals the reviewed editor tree. Pages run38126694519 passed build and deploy. Local merge-head production build, ordinary smoke15/15 and three-cycle editor workflow passed, including repeated activation, save/load and player-save/ghost isolation.
+- Gameplay URL: `https://rporter33.github.io/Driftwing/`; editor: `https://rporter33.github.io/Driftwing/editor.html`. Live-host requests remain blocked by proxy403, including after editor deployment. Workflow/build verification does not certify actual served bytes or a live browser visit; no denial workaround was attempted.
+- Reviewed audio head `a67d30a936a50642d7607ad472818feec537665e` passed its original CI38111460683. The commit introducing this entry integrates that candidate with released editor main before a fresh combined review gate. The only conflict was the appended HUD-repair/audio handoff sections; both are retained. Audio runtime and QA source remain identical to the approved audio candidate; editor, Game/Player/input/HUD/reticle/collision/model source remains identical to editor main.
+- The editor verification trigger now includes `src/audio/**`, because sandbox gameplay imports the shared audio system. Existing integration and Pages deployment workflows remain unchanged. Combined checks must cover full unit/build, normal production play, editor lifecycle/save isolation, audio mixer/cues and exact-head GitHub checks before PR #7 merge and the second release.
+- Exact candidate head, checks, audio merge SHA and second deployment result belong in PR #7 and the final release report. Local QA uses isolated `/workspace/Driftwing-Release-20261011`; other worktrees are untouched. Physical device, native Safari/Firefox and perceptual mix limits remain distinct from software signal tests. Historical instructions below describe earlier approvals/status and do not override Robert's current explicit release authorization.
+
 ## Latest: bounded region authoring foundation — 2026-10-11 UTC
 
 - Objective authorized after historical research: implement a new island/curated-prop/race authoring foundation, push a separate branch and open a draft PR; no merge or deployment. This is not recovered Claude code. Available published histories yielded no editor entrypoint; the release's Windows/Ubuntu bundles and original source archives remain missing from this investigation because authenticated binary release downloads returned Forbidden.
@@ -753,6 +762,16 @@ The import commit is the Git commit introducing this file; this is a static hand
 - Evidence: `shots/windline-gameplay/` and `/tmp/driftwing-windline-gameplay-browser-check.json`; PR CI uploads browser artifacts. Local browser is system Chromium with SwiftShader. Repositioned scenarios use the real Game loop/shared world; controller inputs are simulated. No physical iPhone/controller/GPU tests or complete per-category art certification were performed.
 - Cloud setup: Node 24.19.0 locally (Node 22 in CI); `npm ci --cache /workspace/.cache/npm` passed. For local browser scripts use `CHROMIUM_PATH=/usr/bin/chromium`; default Playwright download domains were unavailable in this environment, so no dependency/lockfile change was made.
 - Next authorized action: review exact final diff, run final-head checks, promote/merge PR #4 once CI passes, and verify the resulting main SHA and successful latest Pages deployment. Do not bring in updated character work or complete additional M1/ship milestones.
+
+## Bounded audio QA and draft candidate (2026-10-11)
+
+- Objective: normal-game audio QA and narrow fixes, separate from HUD/reticle/traversal PR5/PR6. Repository `rporter33/Driftwing`; verified main/base `193e56f382ae29fd44647e4b9c29b2fa31b9e281`. Isolated worktree `/workspace/Driftwing-audio`, branch `qa/audio-20261011`, implementation commit `f8c2dccd4a6369f3fb095fb6da01373a0133e833`.
+- Fixed a real-mixer reproduction where unmuting during the startup fade was later overwritten to silence. Added short existing-palette Windline cast/attach/release/pull/boost feedback through a presentation-only observer. Existing recall cues, music and breed-mass wingbeats retained. No Game/Player/input/HUD/reticle/collision/traversal/shared-contract edits.
+- Verification: typecheck; 45 focused audio tests; 1,141 unit tests; production build; 15/15 Chromium smoke; existing normal-game Windline browser check; 42 audio QA checks and 24 offline real-mixer scenes, all passed. Three repeated action cycles each create exactly five cues; 500 attached audio updates create no extra SFX voices. All captures finite/unclipped, dense overlap stress peak −1.1 dBFS.
+- Playback capture/export is supported; the listening route explicitly reports audio input unsupported. No subjective listening claim. Human audition, musical seams, fast-dive cue masking, speakers/headphones, mobile and native Firefox/Safari remain review limits. CPU scheduling sample: mean 0.029 ms, p95 0.100 ms, max 0.500 ms; not a device-DSP or total-frame certification.
+- Full report: `docs/AUDIO_QA_2026-10-11.md`. Local before/after WAVs and JSON evidence: `/tmp/driftwing-audio-before/` and `/tmp/driftwing-audio-after/`; reproducible harness `scripts/audio-qa.mjs`. Review bundle retained separately; no captured sounds added to runtime assets.
+- Integration risk: low overlap with PR5/PR6; audio observes existing optional equipment fields. GitHub CLI auth is invalid, but the connected GitHub app and isolated branch push route work. Next authorized action: parent/user reviews the draft PR and auditions samples. Do not merge or deploy without review; main-only deploy workflow remains unchanged.
+
 
 ## User-reported tether performance and HUD obstruction repair — 2026-10-11
 
