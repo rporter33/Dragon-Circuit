@@ -88,9 +88,14 @@ try{
   await page.evaluate(()=>__dw.game.frame(1/120,false));
  }
  // Inserting a new thin first solid after aiming must affect the actual press.
- await readyPose();const inserted=await page.evaluate(()=>{const g=__dw.game,at=g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(g.player.foot.position.clone()),12);g.world.terrain.colliders.addSource('neutral-cast-wall',()=>[{kind:'box',x:at.x,y:at.y,z:at.z,hx:2,hy:2,hz:.001,yaw:0}]);g.frame(0,false);const w=g.player.skyLance.world,hit=w.sweep(g.camera.position,g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(at.clone()),100),.08);return {anchor:hit?.anchorId,point:hit?.point.toArray()};});
+ await readyPose();const inserted=await page.evaluate(()=>{
+  const g=__dw.game,ray=g.camera.getWorldDirection(g.player.foot.position.clone()),at=g.camera.position.clone().addScaledVector(ray,12),extent=[2,2,2],components=[Math.abs(ray.x),Math.abs(ray.y),Math.abs(ray.z)];extent[components.indexOf(Math.max(...components))]=.001;
+  const wall={kind:'box',x:at.x,y:at.y,z:at.z,hx:extent[0],hy:extent[1],hz:extent[2],yaw:0},solids=[wall];g.world.terrain.colliders.addSource('neutral-cast-wall',()=>solids);
+  const w=g.player.skyLance.world,hit=w.sweep(g.camera.position,g.camera.position.clone().addScaledVector(ray,100),.08);return {anchor:hit?.anchorId,wallId:g.world.terrain.colliders.identity(wall),point:hit?.point.toArray(),exhausted:!!hit?.exhausted};
+ });
+ assert.equal(inserted.anchor,inserted.wallId,'the newly inserted thin solid is the first camera-ray hit');assert.equal(inserted.exhausted,false);assert.match(inserted.wallId,/^solid-/);
  neutral(await cue());await page.evaluate(()=>{__reticlePad.buttons[7]={pressed:true,touched:true,value:.8};const g=__dw.game;g.frame(1/120,false);for(let i=0;i<240&&g.player.skyLance.state==='projectile';i++)g.frame(1/120,false);});
- evidence.newSolid=await page.evaluate(()=>({anchor:__dw.game.player.skyLance.anchorId,rope:!!__dw.game.player.skyLance.rope}));assert.equal(evidence.newSolid.rope,true);assert.equal(evidence.newSolid.anchor,inserted.anchor);
+ evidence.newSolid=await page.evaluate(()=>({anchor:__dw.game.player.skyLance.anchorId,rope:!!__dw.game.player.skyLance.rope,point:__dw.game.player.skyLance.position.toArray()}));evidence.newSolid.expected=inserted;assert.equal(evidence.newSolid.rope,true);assert.equal(evidence.newSolid.anchor,inserted.wallId);assert.ok(Math.hypot(...evidence.newSolid.point.map((n,i)=>n-inserted.point[i]))<.16);
  await page.evaluate(()=>{__reticlePad.buttons[7]={pressed:false,touched:false,value:0};__dw.game.frame(1/120,false);__dw.game.world.terrain.colliders.removeSource('neutral-cast-wall');});
  // No surface within range: the neutral dot makes no promise and actual cast misses.
  await page.evaluate(()=>{const g=__dw.game,p=g.player;g.placeAtSpawn();p.foot.position.set(5000,1000,5000);p.foot.grounded=false;p.foot.velocity.set(0,0,0);g.frame(1/120,false);g.cameraRig.snap(p);g.frame(0,true);});neutral(await cue());await capture('neutral-empty-range');
