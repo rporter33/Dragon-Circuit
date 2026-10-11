@@ -121,7 +121,16 @@ export class SkyLanceVisuals {
   updateReticle(camera: Camera, feet: Vector3, velocity: Vector3, lance: SkyLance): void {
     this.reticle ??= document.getElementById('sky-lance-reticle');
     this.updateLineWidth(camera);
-    if (!this.reticle || this.reticle.hidden || this.reticle.closest('[hidden]')) return;
+    if (!this.reticle) return;
+    if (this.reticle.hidden || this.reticle.closest('[hidden]')) {
+      // A caller may reveal this element later in the same frame. Hidden feedback
+      // must carry no old eligibility, and the first visible update must query now.
+      this.target=null;this.forecastWorld=null;this.nextPreview=0;
+      this.reticle.dataset.target=lance.state==='ready'?'checking':lance.state;
+      this.reticle.style.color='#a8ddec';this.reticle.classList.toggle('is-valid',false);
+      const label=this.reticle.querySelector<HTMLElement>('[data-aim-status]');if(label)label.textContent='';
+      return;
+    }
     camera.getWorldDirection(this.aimDirection);
     this.previewOrigin.copy(feet).addScaledVector(UP,LANCE.harnessHeight);
     const now=performance.now();

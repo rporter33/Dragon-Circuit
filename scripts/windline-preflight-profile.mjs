@@ -32,14 +32,14 @@ try{
     for(const mode of i%2?['reference','candidate']:['candidate','reference']){
      w.localUndersideBounds=mode==='candidate';if(coldEachQuery&&mode==='candidate')w.clearGeometryCertificates();const before={...w.certificateStats};const layers=Object.fromEntries(['centreRay','projectile','tether'].map(k=>[k,{ms:0,sweeps:0,rockQueries:0}]));active={first:true,layers};v.nextPreview=0;
      const start=performance.now();v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);const ms=performance.now()-start;active=null;pair[mode]=target();
-     records[mode].push({ms,layers,state:pair[mode]?.state,certificateMisses:w.certificateStats.misses-before.misses,certificateHits:w.certificateStats.hits-before.hits,tightened:w.certificateStats.tightened-before.tightened});
+     records[mode].push({index:i,ms,layers,state:pair[mode]?.state,target:pair[mode],feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),certificateMisses:w.certificateStats.misses-before.misses,certificateHits:w.certificateStats.hits-before.hits,tightened:w.certificateStats.tightened-before.tightened});
     }
     if(JSON.stringify(pair.reference)!==JSON.stringify(pair.candidate))mismatches.push({depth,index:i,...pair});
    }
-   cases.push({depth,movingPoses:80,poseChangePerQueryMeters:traversalMotion ? .03 : .001,target:target(),reference:summary(records.reference),candidate:summary(records.candidate)});
+   cases.push({depth,movingPoses:80,poseChangePerQueryMeters:traversalMotion ? .03 : .001,target:target(),reference:summary(records.reference),candidate:summary(records.candidate),queries:records});
   }}finally{active=null;w.sweep=sweep;t.rockContact=rock;w.localUndersideBounds=originalMode;}
   function summary(rows){const eligible=rows.filter(r=>r.state==='reachable');return {completeMs:stat(rows.map(r=>r.ms)),eligibleMs:eligible.length?stat(eligible.map(r=>r.ms)):null,stateCounts:Object.fromEntries(['reachable','blocked','out-of-range'].map(state=>[state,rows.filter(r=>r.state===state).length])),firstCompleteMs:rows[0].ms,certificateMisses:stat(rows.map(r=>r.certificateMisses)),certificateHits:stat(rows.map(r=>r.certificateHits)),tightened:stat(rows.map(r=>r.tightened)),layers:Object.fromEntries(['centreRay','projectile','tether'].map(k=>[k,{ms:stat(rows.map(r=>r.layers[k].ms)),sweeps:stat(rows.map(r=>r.layers[k].sweeps)),rockQueries:stat(rows.map(r=>r.layers[k].rockQueries))}]))};}
-  return {cases,mismatches,coldEachQuery,traversalMotion,normalBoundsEnabled:originalMode,ship:!!g.scene.getObjectByName('Windhaven'),errors:__dw.errors};
+  return {cases,mismatches,coldEachQuery,traversalMotion,cacheClearedBeforeEachDepth:true,excludedWarmupQueries:0,renderMode:'manual Game, complete query CPU only; no 3D submission in measured queries',normalBoundsEnabled:originalMode,ship:!!g.scene.getObjectByName('Windhaven'),errors:__dw.errors};
  },{coldEachQuery,traversalMotion});
  result.metadata=metadata;result.pageErrors=errors;result.budgetMs=2.5;result.candidateBudgetPass=result.cases.every(c=>c.candidate.completeMs.mean<=2.5&&c.candidate.eligibleMs?.mean<=2.5);
  fs.writeFileSync(out,JSON.stringify(result,null,2));

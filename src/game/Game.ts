@@ -331,7 +331,6 @@ export class Game implements GameActions {
     // Photo mode (opened from the pause menu) flies the camera while the world holds still.
     const cameraInput = this.screen === 'play' || this.screen === 'stable' || this.cameraRig.mode === 'photo';
     this.cameraRig.update(dt, cameraInput ? input : this.idleInput, this.player);
-    if (this.player.skyLance) this.skyLanceVisuals?.updateReticle(this.camera, this.player.foot.position, this.player.foot.velocity, this.player.skyLance);
     this.dressing.update(dt, this.camera, focus);
     this.races.update(dt, this.camera, this.player);
     this.collectibles.update(dt, this.camera, this.player);
@@ -348,6 +347,9 @@ export class Game implements GameActions {
     this.view.screen = this.screen;
     this.view.prompt = this.prompt;
     this.ui.update(dt, this.view);
+    // Visibility can change on this frame (resume, HUD reveal or leaving the
+    // saddle). Validate after that decision, before any newly visible cue paints.
+    if (this.player.skyLance) this.skyLanceVisuals?.updateReticle(this.camera, this.player.foot.position, this.player.foot.velocity, this.player.skyLance);
 
     if (this.screen === 'play') this.save.data.playTime += dt;
     if (render) {

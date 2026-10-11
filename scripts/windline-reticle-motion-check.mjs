@@ -16,10 +16,14 @@ try{
   const pad=window.__motionPad={id:'Xbox standard controller movement QA',index:0,mapping:'standard',connected:true,timestamp:0,axes:[.9,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,touched:false,value:0}))};
   Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[pad]});g.frame(1/120,false);pad.axes[0]=0;g.frame(1/120,false);
   window.__motionPhase=null;
-  const update=v.updateReticle.bind(v);v.updateReticle=(...args)=>{const start=performance.now();try{return update(...args);}finally{const phase=window.__motionPhase;if(phase){phase.reticleMs+=performance.now()-start;phase.updates++;if(p.skyLance.state==='ready')phase.forecasts++;}}};
+  const update=v.updateReticle.bind(v);v.updateReticle=(...args)=>{const start=performance.now();try{return update(...args);}finally{const phase=window.__motionPhase;if(phase){phase.lastQueryMs=performance.now()-start;phase.reticleMs+=phase.lastQueryMs;phase.updates++;if(p.skyLance.state==='ready')phase.forecasts++;}}};
   const render=g.renderer.render.bind(g.renderer);g.renderer.render=(...args)=>{
    const phase=window.__motionPhase;if(!phase?.uiOnly)render(...args);
-   if(phase){const el=document.querySelector('#sky-lance-reticle'),t=v.target;phase.frames.push({ms:performance.now(),state:el.dataset.target,valid:el.classList.contains('is-valid'),target:t?{state:t.state,anchor:t.anchorId,distance:t.distance,point:t.point.toArray()}:null,feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),revision:p.skyLance.world.revision});}
+   if(phase){const now=performance.now(),el=document.querySelector('#sky-lance-reticle'),t=v.target;phase.frames.push({ms:now,queryMs:phase.lastQueryMs,state:el.dataset.target,valid:el.classList.contains('is-valid'),target:t?{state:t.state,anchor:t.anchorId,distance:t.distance,point:t.point.toArray()}:null,feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),yaw:g.cameraRig.yaw,revision:p.skyLance.world.revision});
+    // Exercise the native standard-pad path above its deadzones. Alternate small
+    // real look/steer inputs so the continuously eligible target remains in view.
+    if(phase.uiOnly){const sign=Math.floor((now-phase.start)/120)%2?1:-1;__motionPad.axes[2]=sign*.22;__motionPad.axes[0]=sign*.22;}
+   }
   };
  });
  assert.equal(await page.evaluate(()=>__dw.game.input.device),'gamepad');
@@ -29,7 +33,7 @@ try{
    const x=s.def.x+s.def.radius*.35,z=s.def.z;p.foot.position.set(x,s.bottomHeight(x,z)-18,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);
    g.frame(1/120,false);g.frame(1/120,false);g.cameraRig.snap(p);g.input.setScripted({lookActive:true,lookIsRate:false,lookX:g.cameraRig.yaw+Math.PI/2,lookY:-10});g.frame(1/120,false);g.input.setScripted(null);
    if(scenario.startsWith('stationary')){g.debug.freeze=true;g.cameraRig.setOverride({position:g.camera.position.clone(),target:g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(p.foot.position.clone()),100)});}
-   if(scenario.includes('painted-ui')){pad.axes[2]=.08;pad.axes[0]=.08;}
+   if(scenario.includes('painted-ui')){pad.axes[2]=.22;pad.axes[0]=.22;}
    g.skyLanceVisuals.nextPreview=0;g.frame(0,true);
    window.__motionPhase={scenario,uiOnly:scenario.includes('painted-ui'),frames:[],reticleMs:0,updates:0,forecasts:0,start:performance.now()};
    return {cue:document.querySelector('#sky-lance-reticle').dataset.target,ship:!!g.scene.getObjectByName('Windhaven')};
@@ -53,10 +57,11 @@ try{
   },data.frames);
   const frames=data.frames,span=data.end-data.start,green=frames.filter(f=>f.valid).length,checking=frames.filter(f=>f.state==='checking').length,intervals=frames.slice(1).map((f,i)=>f.ms-frames[i].ms).sort((a,b)=>a-b);
   let transitions=0;for(let i=1;i<frames.length;i++)if(frames[i].valid!==frames[i-1].valid)transitions++;
-  const summary={scenario,uiOnly:data.uiOnly,settlingMs:data.settlingMs??0,elapsedMs:span,frames:frames.length,callbacksPerSecond:frames.length/span*1000,green,checking,validityTransitions:transitions,reticleMsPerUpdate:data.reticleMs/data.updates,forecasts:data.forecasts,p50CallbackMs:intervals[Math.floor(intervals.length*.5)],p95CallbackMs:intervals[Math.floor(intervals.length*.95)]};
+  const extent=values=>Math.max(...values)-Math.min(...values),yawSpan=extent(frames.map(f=>f.yaw)),horizontalSpan=Math.hypot(extent(frames.map(f=>f.feet[0])),extent(frames.map(f=>f.feet[2]))),verticalSpan=extent(frames.map(f=>f.feet[1]));
+  const summary={scenario,uiOnly:data.uiOnly,settlingMs:data.settlingMs??0,elapsedMs:span,frames:frames.length,callbacksPerSecond:frames.length/span*1000,green,checking,validityTransitions:transitions,reticleMsPerUpdate:data.reticleMs/data.updates,forecasts:data.forecasts,yawSpan,horizontalSpan,verticalSpan,p50CallbackMs:intervals[Math.floor(intervals.length*.5)],p95CallbackMs:intervals[Math.floor(intervals.length*.95)]};
   evidence.phases.push({initial,summary,parity,frames});console.log('Movement cue:',JSON.stringify(summary));
   assert.equal(initial.ship,false);assert.equal(initial.cue,'reachable');assert.ok(frames.length>10);assert.equal(checking,0);assert.equal(parity.geometryStable,true);assert.deepEqual(parity.mismatches,[]);
-  if(data.uiOnly){assert.ok(summary.callbacksPerSecond>=45,'high-refresh painted UI callback rate');assert.equal(green,frames.length,'continuously eligible moving poses stay green');assert.equal(transitions,0);assert.ok(summary.reticleMsPerUpdate<=2.5,'complete current-query mean budget');}
+  if(data.uiOnly){assert.ok(summary.callbacksPerSecond>=45,'high-refresh painted UI callback rate');assert.equal(green,frames.length,'continuously eligible moving poses stay green');assert.equal(transitions,0);assert.ok(summary.reticleMsPerUpdate<=2.5,'complete current-query mean budget');assert.ok(yawSpan>.005,'native right stick produces real camera yaw');assert.ok(horizontalSpan>.01,'native left stick produces real steering');assert.ok(verticalSpan>.1,'actual falling poses move');}
  }
  evidence.errors=errors;assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>__dw.errors),[]);
 }finally{fs.writeFileSync(out,JSON.stringify(evidence,null,2));await browser.close();}

@@ -39,21 +39,54 @@ try{
  await capture('blue-1280');await capture('blue-dot-zoom-source',{x:626,y:346,width:28,height:28});
  await readyPose();
  evidence.budget=await page.evaluate(()=>{
-  const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,original=w.sweep,position=p.foot.position.clone();let queried=false,forecasts=0,validFrames=0,checkingFrames=0;
+  const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,original=w.sweep,position=p.foot.position.clone(),rows=[];let queried=false,forecasts=0,validFrames=0,checkingFrames=0;
+  w.clearGeometryCertificates(); // Include first-query construction and every miss.
   w.sweep=function(...args){queried=true;return original.apply(this,args);};const start=performance.now();
   const el=document.querySelector('#sky-lance-reticle');
-  try{for(let i=0;i<100;i++){queried=false;p.foot.position.x+=.001;v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);if(queried)forecasts++;if(el.classList.contains('is-valid'))validFrames++;if(el.dataset.target==='checking')checkingFrames++;}}
+  try{for(let i=0;i<100;i++){queried=false;p.foot.position.x+=.001;const before={...w.certificateStats},tick=performance.now();v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);rows.push({ms:performance.now()-tick,misses:w.certificateStats.misses-before.misses,hits:w.certificateStats.hits-before.hits,tightened:w.certificateStats.tightened-before.tightened});if(queried)forecasts++;if(el.classList.contains('is-valid'))validFrames++;if(el.dataset.target==='checking')checkingFrames++;}}
   finally{w.sweep=original;p.foot.position.copy(position);}
   const elapsed=performance.now()-start;v.nextPreview=performance.now()+500;
   const at=g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(position.clone()),.5),blocker={kind:'box',x:at.x,y:at.y,z:at.z,hx:.1,hy:.1,hz:.1,yaw:0};
   w.terrain.colliders.addSource('reticle-boundary-qa',()=>[blocker]);v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);
   const invalidated={target:el.dataset.target,valid:el.classList.contains('is-valid'),color:getComputedStyle(el).color};w.terrain.colliders.removeSource('reticle-boundary-qa');
-  return {calls:100,forecasts,elapsed,validFrames,checkingFrames,invalidated};
+  return {calls:100,forecasts,elapsed,firstCompleteMs:rows[0].ms,coldStart:true,rows,validFrames,checkingFrames,invalidated};
  });
+ console.log('Complete 100-pose CPU diagnostics:',JSON.stringify(evidence.budget));
  assert.equal(evidence.budget.forecasts,100,'every changed-pose render executes a full query');
  assert.equal(evidence.budget.validFrames,100,'continuously eligible movement remains green');assert.equal(evidence.budget.checkingFrames,0);
  assert.ok(evidence.budget.elapsed/100<2.5,'complete moving-pose preview mean CPU cost');
  assert.equal(evidence.budget.invalidated.target,'blocked');assert.equal(evidence.budget.invalidated.valid,false);
+ // Capture the first renderer submission after actual Game/UI visibility changes.
+ // Only these lifecycle captures suppress 3D; current-pose validation still runs.
+ evidence.lifecycle=[];
+ for(const action of ['pause','hud','mount-leap']){
+  await readyPose();
+  const result=await page.evaluate(action=>{
+   const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,el=document.querySelector('#sky-lance-reticle'),render=g.renderer.render,sw=w.sweep,paints=[];let queries=0;
+   const snapshot=()=>({visible:!el.hidden&&!el.closest('[hidden]'),valid:el.classList.contains('is-valid'),state:el.dataset.target,queries,mode:p.mode});
+   g.renderer.render=()=>paints.push(snapshot());w.sweep=function(...args){queries++;return sw.apply(this,args);};
+   const tick=pressed=>{g.input.setScripted(pressed?{pressed}:null);g.frame(0,true);g.input.setScripted(null);};
+   let hidden,firstVisible;
+   try{
+    if(action==='pause'){g.pause();tick();}
+    else if(action==='hud')tick({toggleHud:true});
+    else {p.teleport(p.foot.position.clone().set(5000,900,5000),0,'flying',30);g.frame(1/120,true);}
+    hidden=snapshot();
+    const at=g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(p.foot.position.clone()),.5),blocker={kind:'box',x:at.x,y:at.y,z:at.z,hx:.1,hy:.1,hz:.1,yaw:0};
+    if(action!=='mount-leap')w.terrain.colliders.addSource('reticle-lifecycle-qa',()=>[blocker]);
+    const before=queries;
+    if(action==='pause'){g.resume();tick();}
+    else if(action==='hud')tick({toggleHud:true});
+    else {__reticlePad.buttons[3]={pressed:true,touched:true,value:1};for(let i=0;i<48&&!paints.some(f=>f.visible);i++)g.frame(1/120,true);__reticlePad.buttons[3]={pressed:false,touched:false,value:0};}
+    firstVisible=paints.find(f=>f.visible);return {action,hidden,firstVisible,freshQueries:queries-before,paints};
+   }finally{g.renderer.render=render;w.sweep=sw;w.terrain.colliders.removeSource('reticle-lifecycle-qa');g.input.setScripted(null);__reticlePad.buttons[3]={pressed:false,touched:false,value:0};}
+  },action);
+  evidence.lifecycle.push(result);
+  assert.equal(result.hidden.visible,false);assert.equal(result.hidden.valid,false,'hidden frames clear prior green');
+  assert.ok(result.firstVisible,'visibility transition reaches a renderer submission');assert.equal(result.firstVisible.valid,false,'first visible submission cannot retain prior green');
+  assert.equal(result.firstVisible.state,action==='mount-leap'?'out-of-range':'blocked');assert.ok(result.freshQueries>0,'first visible frame validates the changed pose/geometry');
+ }
+ console.log('First-visible Game lifecycle diagnostics:',JSON.stringify(evidence.lifecycle));
  await readyPose();
  evidence.cast=await page.evaluate(()=>{
   const g=__dw.game,p=g.player,target=g.skyLanceVisuals.target,point=target.point.clone(),anchor=target.anchorId;

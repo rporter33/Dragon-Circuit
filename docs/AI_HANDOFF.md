@@ -1,5 +1,13 @@
 # Driftwing — AI Development Handoff
 
+## Latest: reticle review corrections and adaptive proof — 2026-10-11 UTC
+
+- Draft PR #5 head dc8d0a4 failed CI38130760517's real 100 complete queries: 529.6 ms / 100 = 5.296 ms/query, all green, no checking. Later profile/RAF/editor/audio/HUD/prototype gates did not run. Editor CI38130760546 separately timed out at the 180-second sandbox boot wait. Main/editor/audio release a7adb45 and Pages38128620191 remain preserved; no PR5 merge/deployment authority.
+- Narrow fix: update reticle after UI visibility decisions and before rendering; hidden feedback clears target/green/pending preview. First-visible normal-Game pause/resume, HUD hide/show and mounted leap regressions now require fresh blocked/out-of-range results. Both hidden levels and fast/fallback adapters are covered in unit tests.
+- Geometry certificates retain coarse 4 cm cells and refine ambiguous near-contact domains to 1 cm using the same enclosing analytic proof, within the same shared 16,384 FIFO. Original candidate/contact/lattice/radius/bisection/exhaustion contracts remain unchanged. Added cold/hot/reversed/interrupted fine-seam contact parity.
+- Native RAF proof uses alternating 0.22 standard-pad axes with measured yaw/steering/fall spans; the previous 0.08 axes were below deadzone and did not demonstrate native stick motion. Raw complete query rows and RAF frames, including misses/first queries/render mode, will be committed in docs/qa with clean tested identity. Exact-head CI still must pass; local improvements do not supersede the real CI failure.
+- Editor runtime stays unchanged. Harness failure diagnostics now print sandbox state/boot text. No physical device/controller/GPU, subjective listening, live served-byte, ship/model or new art certification claim. Keep draft and report actual evidence/blockers to parent.
+
 ## Latest: approved deeper reticle candidate — 2026-10-11 UTC
 
 - Robert approved another focused performance pass on draft PR #5, retaining truthful current-pose eligibility, centred physical casting/range/collision and CPU budgets. No PR #5 merge or deployment authority. Updated character and ship gameplay remain excluded; static dock and isolated prototypes remain preserved.

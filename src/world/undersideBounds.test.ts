@@ -71,6 +71,18 @@ describe('immutable analytic underside empty-space certificates',()=>{
     expect(s.undersideContactFloor(50,50.01,0,.01,.09)).toBeNull();
     s.def.y-=1;
   });
+  it('matches cold and retained proofs at fine-cell seams near real contact',()=>{
+    const t=new Terrain({...LAYOUT,islands:LAYOUT.islands.slice(0,3),spires:[],arches:[]}),fast=new TraversalWorld(t,undefined,true),reference=new TraversalWorld(t,undefined,false);
+    for(const s of t.islands)for(const radius of [.02,.08])for(const shift of [-1e-8,0,1e-8]){
+      const x=Math.round((s.def.x+s.def.radius*.35)*100)/100+shift,z=Math.round(s.def.z*100)/100+shift,y=s.bottomHeight(x,z);
+      const a=new Vector3(x-.021,y-2,z-.011),b=new Vector3(x+.021,y+.1,z+.011);
+      const expected=reference.sweep(a,b,radius,'line');expect(expected?.exhausted).not.toBe(true);
+      fast.clearGeometryCertificates();expect(fast.sweep(a,b,radius,'line')).toEqual(expected);
+      expect(fast.sweep(a,b,radius,'line')).toEqual(expected);
+      // Reverse and interrupt the crossing, preserving original sample/contact order.
+      for(const [from,to] of [[b,a],[a,a.clone().lerp(b,.94)]])expect(fast.sweep(from,to,radius,'line')).toEqual(reference.sweep(from,to,radius,'line'));
+    }
+  });
   it('preserves thin primitive ordering, initial overlap, revisions and length exhaustion',()=>{
     const t=new Terrain({...LAYOUT,islands:[{...LAYOUT.islands[0]}],spires:[],arches:[]}),s=t.islands[0];
     const fast=new TraversalWorld(t,new AnchorRegistry([],true),true),reference=new TraversalWorld(t,new AnchorRegistry([],true),false);
