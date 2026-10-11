@@ -7,10 +7,18 @@ import {browserEvidence} from './browser-evidence.mjs';
 const url=new URL(process.argv[2]??'http://127.0.0.1:5175/');url.search='?manual=1&quality=low';
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--enable-webgl']});
 const page=await browser.newPage({viewport:{width:1280,height:720}}),errors=[],evidence={captures:[]};let metadata=null;
+const pendingRequests=new Set();page.on('request',r=>pendingRequests.add(r.url()));page.on('requestfinished',r=>pendingRequests.delete(r.url()));page.on('requestfailed',r=>pendingRequests.delete(r.url()));
 page.on('pageerror',e=>errors.push(e.message));fs.mkdirSync('shots/windline-reticle',{recursive:true});
 const cue=()=>page.locator('#sky-lance-reticle').evaluate(el=>{const r=el.getBoundingClientRect();return {state:el.dataset.target,color:getComputedStyle(el).color.replaceAll(' ',''),valid:el.classList.contains('is-valid'),ring:!!el.querySelector('[data-valid-ring]'),centre:[r.left+r.width/2,r.top+r.height/2],size:[r.width,r.height],viewport:[innerWidth,innerHeight]};});
 const neutral=c=>{assert.equal(c.state,'aiming');assert.equal(c.color,'rgb(168,221,236)');assert.equal(c.valid,false);assert.equal(c.ring,false);assert.deepEqual(c.size,[20,20]);assert.ok(Math.abs(c.centre[0]-c.viewport[0]/2)<.25&&Math.abs(c.centre[1]-c.viewport[1]/2)<.25);};
-async function capture(name,clip){const path=`shots/windline-reticle/${name}.png`;await page.screenshot({path,timeout:120000,...(clip?{clip}:{})});evidence.captures.push({path,sha256:createHash('sha256').update(fs.readFileSync(path)).digest('hex')});}
+const captureReadiness=()=>page.evaluate(()=>{const g=window.__dw?.game,gl=g?.renderer?.gl,canvas=gl?.domElement,rect=canvas?.getBoundingClientRect();return {ready:window.__dw?.ready,screen:g?.screen,device:g?.input.device,viewport:[innerWidth,innerHeight],documentReady:document.readyState,fonts:document.fonts.status,canvas:canvas?{width:canvas.width,height:canvas.height,css:[rect.width,rect.height],contextLost:gl.getContext().isContextLost(),renderFrame:gl.info.render.frame,drawCalls:gl.info.render.calls}:null,errors:window.__dw?.errors};});
+async function capture(name,clip){
+ const path=`shots/windline-reticle/${name}.png`,started=Date.now();
+ evidence.capturePhase={name,path,clip:clip??null,requestedViewport:page.viewportSize(),startedAt:new Date(started).toISOString(),before:await captureReadiness()};
+ console.log('Rendered capture readiness:',JSON.stringify(evidence.capturePhase));
+ try{await page.screenshot({path,timeout:120000,...(clip?{clip}:{})});evidence.captures.push({path,sha256:createHash('sha256').update(fs.readFileSync(path)).digest('hex'),elapsedMs:Date.now()-started});}
+ catch(error){evidence.captureFailure={...evidence.capturePhase,elapsedMs:Date.now()-started,message:error.message,pendingRequests:[...pendingRequests],pageErrors:[...errors],after:await Promise.race([captureReadiness().catch(e=>({error:e.message})),new Promise(resolve=>setTimeout(()=>resolve({error:'Readiness query did not respond within2s'}),2000))])};console.error('Rendered capture failure:',JSON.stringify(evidence.captureFailure));throw error;}
+}
 async function readyPose(depth=18){await page.evaluate(depth=>{
  const g=__dw.game,p=g.player,s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
  __reticlePad.buttons[7]={pressed:false,touched:false,value:0};__reticlePad.axes.fill(0);g.placeAtSpawn();p.foot.position.set(x,s.bottomHeight(x,z)-depth,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);g.frame(1/120,false);g.cameraRig.snap(p);
