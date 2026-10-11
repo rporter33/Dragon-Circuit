@@ -98,8 +98,12 @@ try {
     await live.keyboard.press('f');
     await live.waitForFunction(() => window.__dw.game.player.mode === 'onFoot');
     await live.getByRole('button', { name: 'Ride / take off', exact: true }).click();
-    await live.keyboard.press('Space');
-    await live.waitForFunction(() => window.__dw.game.player.mode === 'flying' && window.__dw.game.player.position.y > 657);
+    // Flapping is held input: a down/up pair inside a render frame with no fixed step
+    // can disappear before gameplay consumes it. Hold through the real launch/climb.
+    await live.keyboard.down('Space');
+    try {
+      await live.waitForFunction(() => window.__dw.game.player.mode === 'flying' && window.__dw.game.player.position.y > 657);
+    } finally { await live.keyboard.up('Space'); }
     await live.keyboard.press('Escape');
     await live.waitForFunction(() => window.__dw.game.screen === 'pause');
     // Review reset must restore play even if Escape or a browser focus change paused it.

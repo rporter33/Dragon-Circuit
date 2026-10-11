@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { chromium } from 'playwright';
 const base = process.argv[2] ?? 'http://localhost:5175/';
+// Verified against the 75 m/s launcher: release after the low point, not the stale
+// 140-tick fixture. Keep the real unpowered landing and camera assertions unchanged.
+const PRACTICE_RELEASE_STEP = 180;
 async function inputChecks(page,errors){
   await page.evaluate(() => {document.querySelector('#sky-lance-controls button').click();__dw.game.frame(1/120,false);});
   console.log('DOM reset complete');await page.keyboard.down('q');console.log('DOM Q down');
@@ -360,17 +363,18 @@ try {
   assert.ok(results.maxError <= .020001, 'rope bound'); assert.ok(results.releasePhysicsError < 1e-8, 'release preserves momentum before the next gravity/drag step');
   assert.deepEqual(errors, []); assert.deepEqual(results.errors, []);
   if(process.argv.includes('--route-only')){
-    const practice=await page.evaluate(()=>{
+    const practice=await page.evaluate(releaseStep=>{
       const g=__dw.game,p=g.player,l=p.skyLance;document.querySelector('#sky-lance-controls button').click();
       let maxCameraStep=0,maxCameraRoll=0,pillarSpeed=0;const previous=g.camera.quaternion.clone();
       const tick=(pressed={},foot={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim});g.frame(1/120,false);g.input.setScripted(null);
         if(p.mode==='traversing'){maxCameraStep=Math.max(maxCameraStep,previous.angleTo(g.camera.quaternion));maxCameraRoll=Math.max(maxCameraRoll,Math.abs(p.foot.position.clone().set(1,0,0).applyQuaternion(g.camera.quaternion).y));if(Math.abs(p.foot.position.z+64)<.2)pillarSpeed=Math.max(pillarSpeed,p.foot.velocity.length());}previous.copy(g.camera.quaternion);};
       tick();for(let i=0;i<120;i++)tick({},{moveY:1,sprint:true});tick({jump:true},{moveY:1,sprint:true});tick({lance:true});
       for(let i=0;i<180&&!l.rope;i++)tick();if(!l.rope)throw Error('No practice attachment');
-      for(let i=0;i<140;i++)tick();tick({lanceRelease:true});let landed=false;
+      for(let i=0;i<releaseStep;i++)tick();
+      if(!l.rope)throw Error('Practice tether lost before release');tick({lanceRelease:true});let landed=false;
       for(let i=0;i<360;i++){tick();if(p.foot.grounded&&p.foot.position.z>-55&&p.foot.position.z<-37&&Math.abs(p.foot.position.y-400)<.02){landed=true;break;}}
       return {landed,position:p.foot.position.toArray(),maxCameraStep,maxCameraRoll,pillarSpeed};
-    });
+    }, PRACTICE_RELEASE_STEP);
     assert.equal(practice.landed,true);assert.ok(practice.pillarSpeed>15);assert.ok(practice.maxCameraRoll<.001);assert.ok(practice.maxCameraStep<.2);assert.deepEqual(errors,[]);
     fs.writeFileSync('/tmp/driftwing-fidelity-route-browser-check.json',JSON.stringify({fidelity,...results,practice},null,2));console.log('Isolated route passed:',JSON.stringify(practice));
   }else{
@@ -430,7 +434,7 @@ try {
   assert.equal(slowFall.mode,'traversing');assert.ok(Math.abs(slowFall.vy+13)<.001,'neutral controlled fall reaches 13 m/s');
   assert.equal(slowFall.equipment,'bracer');assert.equal(slowFall.tilt,0);assert.equal(slowFall.seedVisible,false);
   console.log('Slow fall:',JSON.stringify(slowFall));
-  const practice = await page.evaluate(() => {
+  const practice = await page.evaluate(lastReleaseStep => {
     const g=__dw.game,p=g.player,l=p.skyLance, attempts=[];
     let maxCameraStep=0,maxCameraRoll=0,pillarSpeed=0; const previousCamera=g.camera.quaternion.clone();
     const frame=(pressed={},foot={})=>{const aim=p.foot.position.clone().set(0,430,-66).sub(p.foot.position.clone().add({x:0,y:1,z:0})).normalize();g.input.setScripted({pressed,foot,aim});g.frame(1/120,false);g.input.setScripted(null);
@@ -441,13 +445,14 @@ try {
       }
       previousCamera.copy(g.camera.quaternion);
     };
-    for (const releaseStep of [20,40,60,80,100,120,140,160]) {
+    for (const releaseStep of [20,40,60,80,100,120,140,160,lastReleaseStep]) {
       document.querySelector('#sky-lance-controls button').click();
       frame(); for(let i=0;i<120;i++)frame({},{moveY:1,sprint:true});
       frame({jump:true},{moveY:1,sprint:true});frame({lance:true});
       for(let i=0;i<180&&!l.rope;i++)frame();
       if(!l.rope)throw Error('Practice attachment failed');
       for(let i=0;i<releaseStep;i++)frame();
+      if(!l.rope)throw Error('Practice tether lost before release');
       frame({lanceRelease:true});
       let landed=false;const releasePosition=p.foot.position.toArray();const velocity=p.foot.velocity.toArray();
       for(let i=0;i<360;i++){frame();if(p.foot.grounded&&p.foot.position.z>-55&&p.foot.position.z<-37&&Math.abs(p.foot.position.y-400)<.02){landed=true;break;}}
@@ -455,7 +460,7 @@ try {
       if(landed)break;
     }
     return {attempts,maxCameraStep,maxCameraRoll,pillarSpeed};
-  });
+  }, PRACTICE_RELEASE_STEP);
   console.log('Practice route:',JSON.stringify(practice));
   assert.ok(practice.attempts.some(a=>a.landed),'unpowered route can land on the far platform');
   const toggleCheck=await toggleChecks(page);
