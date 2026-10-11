@@ -235,6 +235,20 @@ describe('Races: a full run of the Roost Loop', () => {
     expect(races.activeId).toBe('roost-loop');
   });
 
+  it.each(['countdown', 'running'] as const)('a leap during %s wins over a riderless dragon crossing on the same step', state => {
+    const { log, player, races, approach, flyTo, save } = setup();
+    approach(gatePoint(-150));
+    if (state === 'running') flyTo(gatePoint(10));
+    const starts = log.filter(e => e.type === 'raceStart').length;
+    player.prevPosition.copy(state === 'countdown' ? gatePoint(-10) : ringPoint(0, -10));
+    player.position.copy(state === 'countdown' ? gatePoint(10) : ringPoint(0, 10));
+    player.mode = 'traversing'; races.fixedUpdate(DT, player as unknown as PlayerSystem);
+    expect(races.state).toBe('idle');
+    expect(log.filter(e => e.type === 'raceStart')).toHaveLength(starts);
+    expect(log.some(e => e.type === 'ringPassed')).toBe(false);
+    expect(save.data.races).toEqual({});
+  });
+
   it('points the HUD at the gate, then each ring, and knows which start is nearby', () => {
     const { player, races, flyTo, approach } = setup();
     const out = new Vector3();

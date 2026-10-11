@@ -39,6 +39,7 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:5174/ > /dev/null
+          node scripts/windline-gameplay-check.mjs http://127.0.0.1:5174
           node scripts/windhaven-smoke.mjs http://127.0.0.1:5174
           node scripts/sky-lance-check.mjs http://127.0.0.1:5174
           node scripts/sky-lance-check.mjs http://127.0.0.1:5174 --motion-only

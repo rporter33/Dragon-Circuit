@@ -294,7 +294,7 @@ export class Game implements GameActions {
 
     if (this.screen === 'play' && !this.ui.capturesInput) this.handlePlayInput();
 
-    const focus = this.player.riderMounted ? this.player.wyvernPose.position : this.player.riderPosition;
+    const focus = this.player.riderPose.mounted ? this.player.wyvernPose.position : this.player.riderPosition;
     globalUniforms.uPlayerPos.value.copy(this.player.riderPosition);
     // Paused (photo mode included) the world holds still: no time of day, weather or sky motion.
     const worldDt = this.screen === 'pause' ? 0 : dt;

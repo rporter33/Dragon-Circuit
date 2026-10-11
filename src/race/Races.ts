@@ -272,6 +272,11 @@ export class Races implements RaceSystem {
       }
       return;
     }
+    // A deliberate leap leaves the mounted race before a riderless dragon can cross a gate.
+    if (player.mode === 'traversing' && (this.state === 'countdown' || this.state === 'running')) {
+      if (this.state === 'running') this.abort('dismount'); else this.disarm('landed');
+      return;
+    }
     const def = this.active!;
     const idx = this.defs.indexOf(def);
 
@@ -320,7 +325,7 @@ export class Races implements RaceSystem {
     this.record(player);
 
     // Off: dismounted, changed breed, or far from the next ring for a while.
-    if (player.mode === 'onFoot' || player.mode === 'dismounting' || player.mode === 'traversing') {
+    if (player.mode === 'onFoot' || player.mode === 'dismounting') {
       this.abort('dismount');
       return;
     }
