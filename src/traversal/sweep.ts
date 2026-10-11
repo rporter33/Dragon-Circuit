@@ -37,7 +37,9 @@ export function sweepShape(from: Vector3, to: Vector3, radius: number, shape: Co
 export class TraversalWorld implements SweepWorld {
   get revision(): number { return this.terrain.colliders.revision; }
   private readonly rockAnchors = new Map<string,{solid:TerrainSolid; definition:string}>();
-  constructor(readonly terrain: Terrain, readonly anchors = new AnchorRegistry([],true)) {}
+  // Draft optimization spike only. Full fresh preflight still exceeds the 2.5 ms gate;
+  // normal gameplay retains the reviewed complete sweep until separately accepted.
+  constructor(readonly terrain: Terrain, readonly anchors = new AnchorRegistry([],true), readonly localUndersideBounds = false) {}
   private rockId(solid: TerrainSolid): string | null {
     if (!this.anchors.allSolids) return null;
     const id = `rock-${solid.type}-${solid.shape.def.id}`;
@@ -115,10 +117,26 @@ export class TraversalWorld implements SweepWorld {
       if (lo<=hi) ranges.push([Math.max(0,Math.floor(end>0?lo/end*count:0)),Math.min(count,Math.ceil(end>0?hi/end*count:0))]);
     }
     ranges.sort((a,b)=>a[0]-b[0]);
+    // Reference mode retains the complete original path. Bounds only reject proven empty
+    // samples; lattice order, candidate resolution, bisection and logical budgets stay intact.
+    const slices=Math.max(1,Math.ceil(Math.hypot(delta.x,delta.z)*end/.05));
+    const floors:number[]=[];
+    if(this.localUndersideBounds&&!columns&&slices<=256)for(let j=0;j<slices;j++){
+      const a=end*j/slices,b=end*(j+1)/slices;
+      const ax=from.x+delta.x*a,bx=from.x+delta.x*b,az=from.z+delta.z*a,bz=from.z+delta.z*b;
+      let floor=Infinity;
+      for(const solid of rocks){
+        const original=(solid.type==='island'?solid.shape.minY:solid.type==='spire'?solid.shape.def.tipY:solid.shape.center.y-solid.shape.boundRadius)-rockRadius;
+        const local=solid.type==='island'?solid.shape.undersideContactFloor(Math.min(ax,bx),Math.max(ax,bx),Math.min(az,bz),Math.max(az,bz),rockRadius,Math.max(from.y+delta.y*a,from.y+delta.y*b)):null;
+        floor=Math.min(floor,local===null?original:Math.max(original,local));
+      }
+      floors.push(floor);
+    }
     let checked=-1,queries=0;
     for (const [first,last] of ranges) for (let i=Math.max(first,checked+1);i<=last;i++) {
       checked=i;point.lerpVectors(from,to,end*i/count);
       if (++queries>16384) return {fraction:end*i/count,point,normal:from.clone().sub(to).normalize(),anchorId:null,exhausted:true};
+      if(floors.length&&point.y<floors[Math.min(slices-1,Math.floor(i/count*slices))])continue;
       if (!this.terrain.rockContact(point,rockRadius,push,normal,undefined,columns,rocks)) continue;
       const fraction = end * i / count;
       if (i === 0 && push.lengthSq() < 1e-8 && to.clone().sub(from).dot(normal) >= 0) continue;

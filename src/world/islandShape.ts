@@ -16,6 +16,7 @@ import type { SurfaceKind } from '../core/types';
 import { smoothstep } from '../core/math';
 import { fbm2, noise2, periodicNoise, ridged2, type Noise2 } from '../core/noise';
 import type { ArchDef, IslandDef, SpireDef } from './layout';
+import {authoredBottomBounds} from './undersideBounds';
 
 /** Height the top surface rolls off by at the very rim (m). */
 export const RIM_DROP = 3;
@@ -75,9 +76,11 @@ export class IslandShape {
   private pavedN: (theta: number) => number;
   private toothScale = 1;
   private toothChance = 0.6;
+  private readonly boundsDefinition: string;
 
   constructor(def: IslandDef) {
     this.def = def;
+    this.boundsDefinition = JSON.stringify(def);
     this.outlineN = periodicNoise(def.seed, 6);
     this.hillN = noise2(def.seed + 1);
     this.rockN = noise2(def.seed + 2);
@@ -269,6 +272,26 @@ export class IslandShape {
     stal = Math.min(1.3, stal);
     const lip = this.lipAt(theta);
     return d.y - lip - (d.depth - lip) * profile * stal + this.leanAt(dx, dz);
+  }
+
+  /** Conservative lower contact-plane envelope for a query-local XZ box. */
+  undersideContactFloor(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY=Infinity):number|null {
+    if(this.skew!==0||this.twin!==0||this.tiltX!==0||this.tiltZ!==0||this.lipVar!==0||this.rag!==0||this.toothScale!==1||this.coneExp!==.6||JSON.stringify(this.def)!==this.boundsDefinition)return null;
+    const args={...this.def,ridgeFreq:this.ridgeFreq,lumpFreq:this.lumpFreq,toothCell:this.toothCell,outlineRadius:(a:number)=>this.outlineRadius(a),noise:this.underN,tooth:(x:number,z:number)=>this.toothAt(x,z)};
+    const height=(x:number,z:number)=>authoredBottomBounds(args,minX+x,maxX+x,minZ+z,maxZ+z);
+    const b=height(0,0);
+    if(!b)return null;
+    // collideIsland already rejects below this global normal envelope. Distant slices
+    // need no additional stencil bounds; near slices still get the tight envelope.
+    const span=this.maxY-this.minY+4;
+    const farFloor=Math.min(b[0]-radius*Math.sqrt(2*span*span+9)/3,(this.minTopY+b[0])*.5)-1e-7;
+    if(queryMaxY<farFloor)return farFloor;
+    const xp=height(1.5,0),xm=height(-1.5,0),zp=height(0,1.5),zm=height(0,-1.5);
+    if(!xp||!xm||!zp||!zm)return null;
+    const hx=Math.max(Math.abs(xp[0]-xm[1]),Math.abs(xp[1]-xm[0]));
+    const hz=Math.max(Math.abs(zp[0]-zm[1]),Math.abs(zp[1]-zm[0]));
+    const floor=Math.min(b[0]-radius*Math.hypot(hx,hz,3)/3,(this.minTopY+b[0])*.5);
+    return Number.isFinite(floor)?floor-1e-9*(1+Math.abs(floor)):null;
   }
 
   /** 0..1 hanging-tooth field: sparse cones on a jittered grid (Worley), local (dx, dz). */

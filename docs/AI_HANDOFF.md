@@ -1,5 +1,13 @@
 # Driftwing — AI Development Handoff
 
+## Latest: bounded underside sweep spike — 2026-10-11 07:43 UTC
+
+- Parent authorized a bounded query-local analytic empty-space optimization experiment on draft PR #5. Main remains repair release `bc86843a494c64bed347ca6cdca7c52e3ef1ee66`; no merge/deploy authority. Audio PR #7, character work and separate editor foundations remain isolated.
+- Authored underside intervals enclose height plus the original finite-difference contact-plane envelope and inflated probe. Original lattice/order/candidates/bisection/radii/logical fail-closed budget remain intact. Unsupported geometry uses the complete reference path. Candidate is disabled by default; no per-render changed-pose forecasting or relaxed green semantics.
+- Preliminary paired moving-pose complete queries: candidate means 2.583 / 2.627 / 2.466 ms at 18 / 45 / 55 m; the <=2.5 ms gate fails. No caching/checking calls averaged. Target states, anchor, distance and impact matched on all 240 pairs. This dirty-build exploration is superseded by exact-head CI artifacts and PR metadata, not claimed as final certification.
+- See `docs/WINDLINE_SWEEP_SPIKE_2026-10-11.md` for mathematical justification, fallback scope, regression coverage, full mean/p95/max/query counts and limitations. New parity/plane tests and all existing CPU/collision/HUD/prototype assertions are retained. Exact-head CI runs the full paired profile and uploads raw JSON.
+- Next authorized action: finish exact-head CI/evidence and report the bounded failure. Further significant optimization or a new representation needs a new decision. High-refresh cue pulsing remains an unresolved release blocker. No physical GPU/controller/iPhone claim.
+
 ## Latest: draft enhancement underside-cue follow-up — 2026-10-11 06:44 UTC
 
 - Released repair main is `bc86843`; PR #5 remains draft, with no merge/deploy authorized. PR #7 audio, ship gameplay, updated character and RPG/editor implementation remain excluded. `git diff origin/main...HEAD` contains the enhancement changes only; the reviewed repair is already a common ancestor.
