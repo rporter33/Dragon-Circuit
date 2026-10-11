@@ -72,6 +72,7 @@ try{
    return {samples:n,elapsedMs:elapsed,meanMs:sorted.reduce((a,b)=>a+b,0)/n,p95Ms:sorted[Math.floor(n*.95)],maxMs:sorted[n-1],reticlePerStepMs:d.reticleMs/n,forecasts:d.forecasts};
   };
   try{
+   v.nextPreview=0; // Include a real forecast even on a fast runner inside the cooldown.
    const ready=sample(120,false),s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
    __reticlePad.buttons[7]={pressed:false,touched:false,value:0};g.placeAtSpawn();p.foot.position.set(x,s.bottomHeight(x,z)-45,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);tick();g.cameraRig.snap(p);
    tick({lookActive:true,lookIsRate:false,lookX:g.cameraRig.yaw+Math.PI/2,lookY:-10});for(let i=0;i<60;i++)tick();v.nextPreview=0;g.frame(0,false);
@@ -88,6 +89,7 @@ try{
  console.log('Ready-preview and moving-swing CPU diagnostics:',JSON.stringify(moving));
  assert.equal(moving.cue,'reachable');assert.equal(moving.candidate,moving.anchor);assert.ok(moving.length>45&&moving.length<=65);
  assert.equal(moving.retained,true);assert.equal(moving.releasedRope,false);
+ assert.ok(moving.ready.forecasts>0,'ready CPU sample includes actual target forecasting');
  assert.ok(moving.ready.forecasts<=Math.ceil(moving.ready.elapsedMs/50)+2,'moving-camera ready forecast budget');
  assert.ok(moving.ready.reticlePerStepMs<2.5,'bounded ready preview average CPU cost');
  assert.equal(moving.swinging.forecasts,0,'attached line never runs a ready-target forecast');
