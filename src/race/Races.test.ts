@@ -211,7 +211,7 @@ describe('Races: a full run of the Roost Loop', () => {
     expect(races.activeId).toBeNull();
   });
 
-  it('dismounting mid-race abandons it as a dismount; flying away from an armed gate disarms quietly', () => {
+  it.each(['onFoot', 'traversing'] as const)('%s mid-race abandons it as a dismount; flying away from an armed gate disarms quietly', mode => {
     const { log, player, races, flyTo, approach } = setup();
     approach(gatePoint(-150));
     expect(races.state).toBe('countdown');
@@ -224,7 +224,7 @@ describe('Races: a full run of the Roost Loop', () => {
     approach(gatePoint(-150));
     flyTo(gatePoint(10));
     expect(races.state).toBe('running');
-    player.mode = 'onFoot';
+    player.mode = mode;
     races.fixedUpdate(DT, player as unknown as PlayerSystem);
     expect(log.find((e) => e.type === 'raceAbort')?.payload.reason).toBe('dismount');
     // Restart tries the same race again for a while.

@@ -2,7 +2,8 @@
 // 120 Hz (flight physics, ring checks); everything visual runs once per rendered frame and
 // interpolates between the last two physics steps.
 
-import type { SkyLanceVisuals } from '../traversal/SkyLanceVisuals';
+import { SkyLanceVisuals } from '../traversal/SkyLanceVisuals';
+import { TraversalWorld } from '../traversal/sweep';
 import { PerspectiveCamera, Scene, Vector3 } from 'three';
 import { EventBus } from '../core/events';
 import type { BoxCollider, GameEvents, RiderLook, Settings, WyvernLook } from '../core/types';
@@ -79,8 +80,9 @@ export class Game implements GameActions {
   private running = false;
   private view: GameView;
   private showcase: Showcase | null = null;
-  /** Presentation only, populated by the opt-in experimental showcase. */
+  /** Presentation only; movement remains owned by Player and RiderFoot. */
   skyLanceVisuals: SkyLanceVisuals | null = null;
+  private windlineEnabled = false;
   /** Neutral input fed to the simulation when the player has no control (title, menus). */
   private idleInput = emptyFrame();
   private readonly lanceAim = new Vector3();
@@ -211,7 +213,8 @@ export class Game implements GameActions {
     this.applyDebug();
     this.wireEvents();
     this.showcase = findShowcase(this.debug.view);
-    this.showcase?.setup(this, new URLSearchParams(typeof location !== 'undefined' ? location.search : ''));
+    if (this.showcase) this.showcase.setup(this, new URLSearchParams(typeof location !== 'undefined' ? location.search : ''));
+    else this.enableWindline();
   }
 
   get settings(): Settings {
@@ -239,6 +242,18 @@ export class Game implements GameActions {
   /** Stop the loop and release opt-in scene resources. Other systems retain their existing lifecycle. */
   stop(): void {
     this.running = false; this.showcase?.dispose?.(this); this.showcase = null;
+    if (this.windlineEnabled) {
+      this.skyLanceVisuals?.dispose(); this.skyLanceVisuals = null;
+      this.player.disableSkyLance(); this.ui.disableWindline(); this.windlineEnabled = false;
+    }
+  }
+
+  /** Standard rider equipment uses the live world's shared static solids, without practice props. */
+  private enableWindline(): void {
+    this.player.enableSkyLance(new TraversalWorld(this.world.terrain));
+    this.player.setLanceInteraction(this.settings.windlineToggle ? 'toggle' : 'hold');
+    this.skyLanceVisuals = new SkyLanceVisuals(); this.scene.add(this.skyLanceVisuals.group);
+    this.ui.enableWindline(); this.windlineEnabled = true;
   }
 
   /**
@@ -279,7 +294,7 @@ export class Game implements GameActions {
 
     if (this.screen === 'play' && !this.ui.capturesInput) this.handlePlayInput();
 
-    const focus = this.player.wyvernPose.position;
+    const focus = this.player.riderMounted ? this.player.wyvernPose.position : this.player.riderPosition;
     globalUniforms.uPlayerPos.value.copy(this.player.riderPosition);
     // Paused (photo mode included) the world holds still: no time of day, weather or sky motion.
     const worldDt = this.screen === 'pause' ? 0 : dt;
@@ -386,6 +401,9 @@ export class Game implements GameActions {
   applySettings(s: Settings): void {
     const prev = this.settings;
     this.save.data.settings = { ...s };
+    if (this.windlineEnabled && s.windlineToggle !== prev.windlineToggle) {
+      this.player.setLanceInteraction(s.windlineToggle ? 'toggle' : 'hold');
+    }
     if (s.quality !== prev.quality || s.resolutionScale !== prev.resolutionScale) {
       this.renderer.setQuality(s.quality, s.resolutionScale);
       const q = QUALITY[s.quality];

@@ -108,7 +108,7 @@ export class Input implements InputSystem, RumbleSink {
    * takes the mouse in flight; on the ground it still looks around.
    */
   flying = false;
-  /** Explicit opt-in; RT retains its flight/menu roles outside independent traversal. */
+  /** Independent rider context; RT retains its flight/menu roles outside traversal. */
   traversal = false;
   private previousTraversal = false;
   private lanceArmed = true;

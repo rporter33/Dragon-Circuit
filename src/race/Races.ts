@@ -85,7 +85,7 @@ const _v = new Vector3();
 
 /** Where the player is: the rider on foot (the wyvern may be waiting far off), else the wyvern. */
 function focusOf(player: PlayerSystem): Vector3 {
-  return player.mode === 'onFoot' || player.mode === 'falling' ? player.riderPosition : player.position;
+  return player.mode === 'onFoot' || player.mode === 'falling' || player.mode === 'traversing' ? player.riderPosition : player.position;
 }
 
 export class Races implements RaceSystem {
@@ -320,7 +320,7 @@ export class Races implements RaceSystem {
     this.record(player);
 
     // Off: dismounted, changed breed, or far from the next ring for a while.
-    if (player.mode === 'onFoot' || player.mode === 'dismounting') {
+    if (player.mode === 'onFoot' || player.mode === 'dismounting' || player.mode === 'traversing') {
       this.abort('dismount');
       return;
     }

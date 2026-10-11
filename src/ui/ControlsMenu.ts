@@ -17,6 +17,7 @@ const DEVICES: { id: Exclude<GlyphDevice, 'generic'>; label: string }[] = [
 const GROUPS: { context: Binding['context']; title: string }[] = [
   { context: 'flight', title: 'In the air' },
   { context: 'ground', title: 'On the ground' },
+  { context: 'traversal', title: 'Windline · on foot & freefall' },
   { context: 'general', title: 'Anywhere' },
   { context: 'menu', title: 'Menus & the Stable' },
 ];
