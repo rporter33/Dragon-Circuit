@@ -113,7 +113,14 @@ describe('immutable analytic underside empty-space certificates',()=>{
     const fast=new TraversalWorld(t,new AnchorRegistry([],true),true),reference=new TraversalWorld(t,new AnchorRegistry([],true),false);
     const path=(i:number)=>{const x=s.def.x+30+i*.037,z=s.def.z-.025+i*.0001,b=s.bottomHeight(x,z);return [new Vector3(x,b-20,z),new Vector3(x+.03,b+1,z+.02)] as const;};
     const first=path(0),expected=reference.sweep(...first,.02,'line');expect(fast.sweep(...first,.02,'line')).toEqual(expected);
-    for(let i=1;i<14000;i++){const p=path(i%2000),radius=.02+Math.floor(i/2000)*.01;expect(fast.sweep(...p,radius,'line'),`cell parity ${i}`).toEqual(reference.sweep(...p,radius,'line'));}
+    // Check contact ordering across cells, then cross the real production FIFO limit
+    // with short empty sweeps. Long contact sweeps add no eviction coverage but can
+    // exceed CI's timeout while duplicating the 320-path contact suite above.
+    for(let i=1;i<96;i++){const p=path(i);expect(fast.sweep(...p,.02,'line'),`contact parity ${i}`).toEqual(reference.sweep(...p,.02,'line'));}
+    for(let i=0;i<16500;i++){
+      const from=new Vector3(64.01+(i%160)*.04,s.minY+1,-2.39+Math.floor(i/160)*.04),to=from.clone().add(new Vector3(.001,0,.001));
+      const original=reference.sweep(from,to,.02,'line');expect(original).toBeNull();expect(fast.sweep(from,to,.02,'line'),`empty cell ${i}`).toEqual(original);
+    }
     expect(fast.certificateStats.misses).toBeGreaterThan(16384);
     const before=fast.certificateStats.misses;expect(fast.sweep(...first,.02,'line')).toEqual(expected);expect(fast.certificateStats.misses).toBeGreaterThan(before);
   });
