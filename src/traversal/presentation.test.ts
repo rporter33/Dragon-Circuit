@@ -5,6 +5,10 @@ import { Rider } from '../creatures/rider/Rider';
 import { createRiderPose } from '../player/poses';
 import { SkyLance } from './SkyLance';
 import { SkyLanceVisuals } from './SkyLanceVisuals';
+import { Terrain } from '../world/terrain';
+import { LAYOUT } from '../world/layout';
+import { TraversalWorld } from './sweep';
+import { predictCenteredTarget } from './target';
 afterEach(() => vi.unstubAllGlobals());
 describe('render-only Windline equipment', () => {
   it.each(['slight', 'medium', 'broad'] as const)('%s follows rebuilt rigs and produces finite geometry without moving gameplay anchors', build => {
@@ -80,6 +84,52 @@ describe('render-only Windline equipment', () => {
 
 
 describe('responsive aiming feedback',()=>{
+  it('retains green for an unchanged proven pose, then clears a removed anchor without forecasting',()=>{
+    vi.stubGlobal('window',{innerHeight:720});
+    const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
+    vi.stubGlobal('document',{getElementById:()=>el});let now=1000;
+    const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
+    const terrain=new Terrain({...LAYOUT,islands:[],spires:[],arches:[]});
+    terrain.colliders.add({kind:'box',x:0,y:1000,z:26,hx:2,hy:5,hz:.001,yaw:0});
+    const world=new TraversalWorld(terrain),lance=new SkyLance(world),camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,999,0),velocity=new Vector3();
+    camera.position.set(0,1000,0);camera.lookAt(0,1000,1);camera.updateMatrixWorld();
+    const visuals=new SkyLanceVisuals(),sweeps=vi.spyOn(world,'sweep');
+    try{
+      visuals.updateReticle(camera,feet,velocity,lance);const queries=sweeps.mock.calls.length;
+      for(let i=0;i<30;i++){now+=1;visuals.updateReticle(camera,feet,velocity,lance);expect(el.style.color).toBe('#94d6a2');}
+      expect(sweeps.mock.calls.length).toBe(queries);
+      terrain.colliders.clear();now+=1;visuals.updateReticle(camera,feet,velocity,lance);
+      expect(el.dataset.target).toBe('checking');expect(el.style.color).toBe('#a8ddec');expect(sweeps.mock.calls.length).toBe(queries);
+    }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
+  });
+  it.each(['thin-target edge','range boundary','camera translation','harness obstruction','inherited velocity'] as const)('never reuses green for an unproven %s change during cooldown',change=>{
+    vi.stubGlobal('window',{innerHeight:720});
+    const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
+    vi.stubGlobal('document',{getElementById:()=>el});let now=1000;
+    const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
+    const terrain=new Terrain({...LAYOUT,islands:[],spires:[],arches:[]});
+    terrain.colliders.add({kind:'box',x:0,y:1000,z:change==='range boundary'?65.06:26,hx:change==='thin-target edge'||change==='camera translation'?.005:2,hy:5,hz:.001,yaw:0});
+    if(change==='harness obstruction')terrain.colliders.add({kind:'box',x:.2,y:1000,z:.2,hx:.04,hy:2,hz:.04,yaw:0});
+    const world=new TraversalWorld(terrain),lance=new SkyLance(world),camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,999,0),velocity=new Vector3();
+    camera.position.set(0,1000,0);camera.lookAt(0,1000,1);camera.updateMatrixWorld();
+    const visuals=new SkyLanceVisuals(),sweeps=vi.spyOn(world,'sweep');
+    try{
+      visuals.updateReticle(camera,feet,velocity,lance);expect(el.dataset.target).toBe('reachable');expect(el.style.color).toBe('#94d6a2');
+      if(change==='thin-target edge')camera.lookAt(Math.sin(.007),1000,Math.cos(.007));
+      if(change==='range boundary')feet.z=-.03;
+      if(change==='camera translation')camera.position.x=.12;
+      if(change==='harness obstruction')feet.x=.14;
+      if(change==='inherited velocity')velocity.x=.49;
+      camera.updateMatrixWorld();
+      const reference=predictCenteredTarget(world,camera.position,camera.getWorldDirection(new Vector3()),feet.clone().add(new Vector3(0,1,0)),velocity);
+      if(change!=='inherited velocity')expect(reference.state).not.toBe('reachable');
+      const queries=sweeps.mock.calls.length;now+=1;visuals.updateReticle(camera,feet,velocity,lance);
+      expect(sweeps.mock.calls.length).toBe(queries); // Preserve the bounded forecast cadence.
+      expect(el.dataset.target).toBe('checking');expect(el.style.color).toBe('#a8ddec');expect(el.classList.toggle).toHaveBeenLastCalledWith('is-valid',false);
+      now+=300;visuals.updateReticle(camera,feet,velocity,lance);
+      expect(el.dataset.target).toBe(reference.state); // Fresh proof restores green where still valid.
+    }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
+  });
   it('yields gameplay time after a slow forecast and refreshes on equipment state changes',()=>{
     vi.stubGlobal('window',{innerHeight:720});
     const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};

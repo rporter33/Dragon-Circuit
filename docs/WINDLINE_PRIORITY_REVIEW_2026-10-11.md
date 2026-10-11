@@ -58,3 +58,32 @@ clears immediately and a physical cast still solves afresh. The 2.5 ms average
 cost assertion and all collision/behaviour assertions remain unchanged. A slow
 query regression verifies that the next gameplay frames do not repeat it
 immediately. New exact-head CI remains required before release.
+
+Independent review found that the former 0.008 rad / 15 cm / 0.5 m/s pose
+tolerances could keep green after crossing a thin target, range limit or
+intervening obstruction. Freshness now requires identical camera position,
+camera-centre direction, harness position and inherited velocity, plus a still
+valid static anchor. No nonzero pose tolerance is claimed as a clearance proof.
+Deterministic real-collision regressions cover a 0.007 rad thin-target turn,
+3 cm range crossing, 12 cm camera shift, 14 cm harness obstruction shift and
+0.49 m/s velocity change. Unchanged proven poses retain green; removed anchors
+clear it immediately; a subsequent fresh forecast restores valid feedback.
+
+Responsiveness remains a review consideration: a changed pose is neutral/checking
+until the next bounded forecast. During continuous motion, green can appear on
+fresh forecast frames and clear on intervening frames. The moving-camera browser
+evidence now records valid/checking frame counts so this tradeoff is visible.
+Continuous green through changed poses would require an actual conservative
+clearance certificate or current-query validation, rather than another tolerance.
+The strict patch is not presented as solving that interaction/performance tradeoff.
+
+The local strict-pose moving-camera sample recorded 3 valid frames and 117 checking
+frames out of 120, at 0.289 ms reticle CPU per step. This is an accelerated manual
+CPU sample, not a real-time frame-rate or usability result.
+
+CI `38114322480` on the prior `d3e36b2` head passed the retained reticle CPU
+assertion at 1.005 ms per step (three real forecasts), with 17.5 ms swing p95.
+It later failed `617×380 freefall critical status visible` in the keyboard HUD
+matrix. The matching local Chromium 154 eight-case 617×380 check passed; the CI
+Chromium 141 failure is unresolved. Critical-visibility assertions stay intact,
+and the harness now prints full placement/blocker diagnostics on failure.

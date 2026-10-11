@@ -66,10 +66,10 @@ try{
   v.updateReticle=function(...args){const start=performance.now(),before=this.nextPreview;try{return original.apply(this,args);}finally{if(active){active.reticleMs+=performance.now()-start;if(p.skyLance.state==='ready'&&this.nextPreview!==before)active.forecasts++;}}};
   const tick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};
   const sample=(n,held)=>{
-   active={frames:[],reticleMs:0,forecasts:0};const start=performance.now();
-   for(let i=0;i<n;i++){const step=performance.now();tick({lanceHeld:held,lookActive:true,lookIsRate:true,lookX:.35*Math.sin(i/30),lookY:.08*Math.sin(i/45),...(held?{foot:{moveX:.25,moveY:0,sprint:false}}:{})});active.frames.push(performance.now()-step);}
+   active={frames:[],reticleMs:0,forecasts:0,validFrames:0,checkingFrames:0};const start=performance.now(),reticle=document.querySelector('#sky-lance-reticle');
+   for(let i=0;i<n;i++){const step=performance.now();tick({lanceHeld:held,lookActive:true,lookIsRate:true,lookX:.35*Math.sin(i/30),lookY:.08*Math.sin(i/45),...(held?{foot:{moveX:.25,moveY:0,sprint:false}}:{})});active.frames.push(performance.now()-step);if(reticle.classList.contains('is-valid'))active.validFrames++;if(reticle.dataset.target==='checking')active.checkingFrames++;}
    const d=active;active=null;const elapsed=performance.now()-start,sorted=d.frames.sort((a,b)=>a-b);
-   return {samples:n,elapsedMs:elapsed,meanMs:sorted.reduce((a,b)=>a+b,0)/n,p95Ms:sorted[Math.floor(n*.95)],maxMs:sorted[n-1],reticlePerStepMs:d.reticleMs/n,forecasts:d.forecasts};
+   return {samples:n,elapsedMs:elapsed,meanMs:sorted.reduce((a,b)=>a+b,0)/n,p95Ms:sorted[Math.floor(n*.95)],maxMs:sorted[n-1],reticlePerStepMs:d.reticleMs/n,forecasts:d.forecasts,validFrames:d.validFrames,checkingFrames:d.checkingFrames};
   };
   try{
    v.nextPreview=0; // Include a real forecast even on a fast runner inside the cooldown.

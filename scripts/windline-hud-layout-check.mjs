@@ -79,6 +79,7 @@ try {
     return {panel:plain(a),visible,essential:panel.dataset.essential==='true',viewport:[innerWidth,innerHeight],layout:panel.dataset.layout,device:__dw.game.input.device,glyphDevice:document.querySelector('.dw-ui').dataset.device,blockers,overlaps,centralOverlap:visible&&a.left<centre.right&&a.right>centre.left&&a.top<centre.bottom&&a.bottom>centre.top,mode:__dw.game.player.mode,ship:!!__dw.game.scene.getObjectByName('Windhaven')};
    });
    const entry={width,height,scenario,...result};evidence.push(entry);
+   if(result.essential&&!result.visible)console.error('Critical HUD placement diagnostics:',JSON.stringify({metadata,entry}));
    if(result.essential)assert.equal(result.visible,true,`${width}×${height} ${scenario} critical status visible`);
    else if(!result.visible)assert.equal(result.layout,'suppressed');
    assert.deepEqual(result.overlaps,[],`${width}×${height} ${scenario} overlap`);
