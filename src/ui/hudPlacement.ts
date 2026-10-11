@@ -37,14 +37,14 @@ export function placeWindlinePanel(panel: HTMLElement): void {
   if (panel.hidden || panel.closest('[hidden]')) return;
   const width = innerWidth, height = innerHeight;
   const elements = [...document.querySelectorAll<HTMLElement>(BLOCKERS)];
-  const signature = `${width}/${height}/${panel.dataset.context}/${panel.closest<HTMLElement>('.dw-ui')?.dataset.device}/${elements.map(el => `${el.className}:${el.hidden}:${el.getAttribute('style')}:${el.textContent}`).join(';')}`;
+  const signature = `${width}/${height}/${panel.dataset.context}/${panel.textContent}/${panel.closest<HTMLElement>('.dw-ui')?.dataset.device}/${elements.map(el => `${el.className}:${el.hidden}:${el.getAttribute('style')}:${el.textContent}`).join(';')}`;
   const now = performance.now(), previous = checks.get(panel);
   // Visibility/content changes reserve their slot immediately. Stable frames need no
   // forced layout; a bounded check follows CSS fades and notices during transitions.
   if (previous?.signature === signature && now < previous.next) return;
   checks.set(panel, { signature, next: now + 50 });
   const occupied = elements.filter(painted).map(el => el.getBoundingClientRect());
-  const key = `${width}/${height}/${panel.dataset.context}/${occupied.map(r => [r.left,r.top,r.right,r.bottom].join(',')).join(';')}`;
+  const key = `${width}/${height}/${panel.dataset.context}/${panel.textContent}/${occupied.map(r => [r.left,r.top,r.right,r.bottom].join(',')).join(';')}`;
   if (layouts.get(panel) === key) return;
   layouts.set(panel, key);
   const fullWidth = Math.min(290, Math.max(160, width * .32));
