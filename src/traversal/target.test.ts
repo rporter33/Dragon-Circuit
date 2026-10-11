@@ -82,4 +82,16 @@ describe('fixed centre targeting',()=>{
       expect(cue.state).toBe(z===66?'out-of-range':'blocked');
     }
   });
+  it('rejects an earlier island ledge off the centre ray even when its anchor is the same island',()=>{
+    const world=new TraversalWorld(new Terrain(LAYOUT));
+    const camera=new V(58.95,89.437,-5.1626),origin=new V(59.5,89.6075,0);
+    const direction=new V(0,Math.cos(Math.PI/180),Math.sin(Math.PI/180)),velocity=new V(0,-.3,0);
+    const selected=centeredCast(world,camera,direction,origin,velocity);
+    const physical=predictTarget(world,origin,selected.aim,velocity);
+    const cue=predictCenteredTarget(world,camera,direction,origin,velocity);
+    expect(physical.state).toBe('reachable');expect(physical.anchorId).toBe(selected.hit?.anchorId);
+    const relative=physical.point.clone().sub(camera);
+    expect(relative.addScaledVector(direction,-relative.dot(direction)).length()).toBeGreaterThan(.16);
+    expect(cue.state).toBe('blocked');
+  });
 });

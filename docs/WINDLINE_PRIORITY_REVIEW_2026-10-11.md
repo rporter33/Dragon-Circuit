@@ -98,3 +98,25 @@ held-action progress and active rescue feedback. Full/compact guidance remains
 available when it fits. This keeps the documented minimal fallback focused on
 critical status/resources. The existing critical visibility/overlap gates remain
 unchanged; exact-head CI must verify the reported 617×380 failure after this fix.
+
+## Underside prototype CI follow-up
+
+CI `38115478811` passed 1,171 tests, normal/controller flow, fixed-dot/fresh RT
+casts, the unchanged reticle CPU guard and both HUD matrices (40 keyboard / 24
+simulated Xbox). It then failed the isolated control prototype's underside cue.
+The failure reproduces: the compensated projectile contacts an earlier ledge on
+the same island 1.542 m off the camera-centre ray. A green cue would violate the
+first-solid/centre-ray contract. Settling interpolation does not change that result.
+
+The control regression now retains this obstructed view as a required blue case,
+then deliberately turns to a clear face for the original green-and-attachment
+checks. The actual cast exactly matches the clear-face forecast point at 23.22 m
+and retains its line. Air steering, bounded boost, solid wall and no-surface
+assertions remain intact. A deterministic real-island unit test also rejects the
+earlier ledge even though its physical anchor ID matches the selected island.
+No runtime targeting, collision, range, input or forecasting budget was relaxed.
+
+The focused run passed 42 presentation/target/collider tests, typecheck and the
+complete isolated control check against the unchanged `3ec59eed` runtime. New
+exact-head CI and actual rendered movement-cue evidence remain required. Main
+is the independently released repair `bc86843`; this follow-up remains draft.

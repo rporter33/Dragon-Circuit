@@ -102,16 +102,33 @@ async function controlChecks(page,errors) {
   assert.ok(air.turn.velocity[0]<-15,'responsive camera-relative turn');assert.ok(Math.abs(air.turn.velocity[2])<3,'turn arrests old direction');
   assert.ok(air.turn.cameraDrift<1e-8,'no automatic camera steering feedback');assert.ok(air.manualOrbit>.8,'deliberate manual orbit');
   assert.ok(air.launch[1]>11.8,'falling dash launches upwards immediately');assert.ok(air.gain>3.5&&air.gain<4.1,'bounded repeatable upward jump');assert.equal(air.secondBoost,0);assert.equal(air.paused,true);assert.equal(air.recharged.cooldown,1.75);assert.ok(air.recharged.vertical>11.8);assert.ok(air.recharged.remaining>0);
+  // The former harness-directed cue accepted this view even though the
+  // compensated projectile meets an earlier ledge away from the centre ray.
+  // Preserve that obstruction case, then explicitly look toward a clear face.
+  const obstructedUnderside=await page.evaluate(()=>{
+    const g=__dw.game,p=g.player,s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
+    document.querySelector('#sky-lance-controls button').click();p.foot.position.set(x,s.bottomHeight(x,z)-18,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);
+    const tick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};
+    tick();tick();g.cameraRig.snap(p);tick({lookActive:true,lookIsRate:false,lookY:-10});
+    g.skyLanceVisuals.nextPreview=0;g.frame(0,false);
+    const el=document.querySelector('#sky-lance-reticle'),target=g.skyLanceVisuals.target,direction=g.camera.getWorldDirection(p.foot.position.clone()),relative=target.point.clone().sub(g.camera.position);
+    const offRay=relative.addScaledVector(direction,-relative.dot(direction)).length();
+    return {state:el.dataset.target,valid:el.classList.contains('is-valid'),target,offRay,camera:g.camera.position.toArray(),position:p.foot.position.toArray(),direction:direction.toArray()};
+  });
+  console.log('Obstructed underside diagnostics:',JSON.stringify(obstructedUnderside));
+  assert.equal(obstructedUnderside.state,'blocked','earlier ledge cannot inherit centre-ray green');
+  assert.equal(obstructedUnderside.valid,false);assert.ok(obstructedUnderside.offRay>.16);
   // Use an actual camera aim toward the real analytic island underside.
   const undersideAim=await page.evaluate(()=>{
     const g=__dw.game,p=g.player,s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
     const y=s.bottomHeight(x,z);document.querySelector('#sky-lance-controls button').click();p.foot.position.set(x,y-18,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);
     const tick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};
-    tick();g.cameraRig.snap(p);tick({lookActive:true,lookIsRate:false,lookY:-10});
-    return {island:s.def.id,position:p.foot.position.toArray(),direction:g.camera.getWorldDirection(p.foot.position.clone()).toArray()};
+    tick();tick();g.cameraRig.snap(p);tick({lookActive:true,lookIsRate:false,lookX:g.cameraRig.yaw+Math.PI/2,lookY:-10});
+    return {island:s.def.id,position:p.foot.position.toArray(),camera:g.camera.position.toArray(),direction:g.camera.getWorldDirection(p.foot.position.clone()).toArray()};
   });
   await page.waitForTimeout(150);
   const range=await page.evaluate(()=>{const g=__dw.game;g.frame(0,false);const el=document.querySelector('#sky-lance-reticle'),times=[];for(let i=0;i<10;i++){g.skyLanceVisuals.nextPreview=0;const start=performance.now();g.skyLanceVisuals.updateReticle(g.camera,g.player.foot.position,g.player.foot.velocity,g.player.skyLance);times.push(performance.now()-start);}return {state:el.dataset.target,label:el.querySelector('[data-aim-status]').textContent,target:g.skyLanceVisuals.target,previewCPU:{meanMs:times.reduce((a,b)=>a+b,0)/times.length,maxMs:Math.max(...times),samples:times.length}};});
+  console.log('Clear underside diagnostics:',JSON.stringify({undersideAim,range}));
   assert.equal(range.state,'reachable','actual-trajectory underside range indicator');assert.match(range.label,/READY/);
   const attachment=await page.evaluate(()=>{
     const g=__dw.game,p=g.player,tick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};
@@ -133,7 +150,7 @@ async function controlChecks(page,errors) {
   await page.waitForTimeout(150);
   const emptyRange=await page.evaluate(()=>{__dw.game.frame(0,false);const el=document.querySelector('#sky-lance-reticle');return {state:el.dataset.target,label:el.querySelector('[data-aim-status]').textContent};});
   assert.equal(emptyRange.state,'out-of-range');assert.match(emptyRange.label,/NO SURFACE/);assert.deepEqual(errors,[]);
-  const result={air,undersideAim,range,attachment,wall,emptyRange};
+  const result={air,obstructedUnderside,undersideAim,range,attachment,wall,emptyRange};
   fs.writeFileSync('/tmp/driftwing-motion-control-browser-check.json',JSON.stringify(result,null,2));console.log('Air control / upward boost / solid-surface range:',JSON.stringify(result));
 }
 async function motionChecks(page,errors) {

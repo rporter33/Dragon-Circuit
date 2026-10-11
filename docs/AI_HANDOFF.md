@@ -1,5 +1,12 @@
 # Driftwing — AI Development Handoff
 
+## Latest: draft enhancement underside-cue follow-up — 2026-10-11 06:44 UTC
+
+- Released repair main is `bc86843`; PR #5 remains draft, with no merge/deploy authorized. PR #7 audio, ship gameplay, updated character and RPG/editor implementation remain excluded. `git diff origin/main...HEAD` contains the enhancement changes only; the reviewed repair is already a common ancestor.
+- PR #5 CI `38115478811` passed correctness/CPU/HUD gates then failed the prototype underside range cue. Reproduction proves its original view hits an earlier ledge 1.542 m off the centre ray on the same island. Blue is truthful; another interpolation step does not fix that obstruction.
+- The prototype regression now requires that original obstructed case to stay blue, then deliberately faces a clear surface for the original green, exact physical attachment and retention checks. A real-island unit regression rejects same-anchor/off-ray eligibility. No runtime contract/budget changes. Focused 42 tests, typecheck and control browser checks passed before commit.
+- Next: build the committed head, capture actual rendered moving-cue cadence/usability evidence, and complete full exact-head CI. Continuous-motion green pulses remain an explicit interaction concern. Preserve conservative freshness; do not infer release approval from green CI.
+
 ## Latest: reviewed cloud consolidation — 2026-10-11 UTC
 
 - Owner authorized backups, coherent commits, pushes, routine conflict resolution, reviewed PR merge and cloud handoff. Integration branch `integ/cloud-20261011` began at verified GitHub main `844e5c25860aab4c596116df4ffb19fa4e98fd1e`. Original Windows source/worktrees were not edited. No reset, clean, stash, force-push or branch deletion.
