@@ -171,7 +171,7 @@ async function motionChecks(page,errors) {
   assert.ok(results.upward[1]>Math.sin(88*Math.PI/180));assert.ok(results.upward[2]>0,'no pole reversal');
   assert.ok(results.pull.length<results.start.length-1,'actual inward reeling');assert.ok(results.pull.velocity[1]>5,'upward momentum');assert.equal(results.pull.boostCooldown,0);assert.equal(results.momentumPreserved,true);
   assert.equal(results.groundedMode,'onFoot');assert.equal(results.recalling.state,'hop');assert.equal(results.recalling.airborne,true);assert.equal(results.recalling.mounted,false);assert.ok(results.recalling.travel<18);assert.equal(results.arrived.canMount,true);
-  assert.ok(results.poses[0].headFromHips[1]<-.4);assert.ok(Math.abs(results.poses[0].velocity[2])<.1);assert.ok(Math.abs(results.poses[1].headFromHips[1])<.25);assert.ok(results.poses[1].handSpan>1.3);
+  assert.ok(results.poses[0].headFromHips[1]<-.4);assert.ok(results.poses[0].velocity[2]>10,'a full dive retains forward motion');assert.ok(Math.abs(results.poses[1].velocity[2])<.1,'back brakes');assert.ok(Math.abs(results.poses[1].headFromHips[1])<.25);assert.ok(results.poses[1].handSpan>1.3);
   assert.deepEqual(errors,[]);fs.writeFileSync('/tmp/driftwing-motion-browser-check.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));
 }
 async function spinChecks(page,errors) {

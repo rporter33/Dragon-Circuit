@@ -266,6 +266,7 @@ export class Game implements GameActions {
     this.input.flying = this.player.mode === 'flying';
     this.input.traversal = !!this.player.skyLance && this.screen === 'play' && !this.ui.capturesInput &&
       (this.player.mode === 'onFoot' || this.player.mode === 'falling' || this.player.mode === 'traversing');
+    this.input.airborneTraversal = this.input.traversal && this.player.mode === 'traversing';
     const input = this.input.poll(dt);
     this.haptics.update(dt);
     const simulate = (this.screen === 'play' || this.screen === 'title') && !this.debug.freeze;
