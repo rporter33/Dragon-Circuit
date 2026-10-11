@@ -87,3 +87,14 @@ It later failed `617×380 freefall critical status visible` in the keyboard HUD
 matrix. The matching local Chromium 154 eight-case 617×380 check passed; the CI
 Chromium 141 failure is unresolved. Critical-visibility assertions stay intact,
 and the harness now prints full placement/blocker diagnostics on failure.
+
+The follow-up additionally records the collider index's geometry revision as
+part of the snapshot, so adding a new first-solid obstruction invalidates green
+even with an unchanged pose and a still-valid old anchor. This metadata changes
+no geometry, candidate queries or collision/physics decisions.
+
+The resource-only HUD fallback now omits passive recall guidance while retaining
+held-action progress and active rescue feedback. Full/compact guidance remains
+available when it fits. This keeps the documented minimal fallback focused on
+critical status/resources. The existing critical visibility/overlap gates remain
+unchanged; exact-head CI must verify the reported 617×380 failure after this fix.

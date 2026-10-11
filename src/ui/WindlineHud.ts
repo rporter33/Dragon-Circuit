@@ -75,6 +75,7 @@ export class WindlineHud {
     }
     // Rescue feedback remains when optional hints are off. A valid rope blocks airborne recall.
     this.call.hidden = !airborne && !recovering && !holding && !(hints && p.mode === 'flying');
+    this.call.classList.toggle('is-critical',holding || recovering);
     this.callGlyph.hidden = recovering || !!lance?.rope;
     const action = p.mode === 'flying' ? 'leap' : 'recall';
     this.callText.set(recovering ? 'Returning to the saddle' : lance?.rope ? 'Release line to recall'

@@ -2,6 +2,7 @@ import { BufferAttribute, BufferGeometry, BoxGeometry, CylinderGeometry, ConeGeo
 import type { Camera } from 'three';
 import { LANCE } from './tuning';
 import type { SkyLance } from './SkyLance';
+import type { SweepWorld } from './sweep';
 import { predictCenteredTarget, type TargetPreview } from './target';
 import type { Rider } from '../creatures/rider/Rider';
 import type { RiderPose } from '../core/types';
@@ -42,6 +43,8 @@ export class SkyLanceVisuals {
   private readonly forecastVelocity = new Vector3();
   private readonly forecastCamera = new Vector3();
   private previewState = '';
+  private forecastWorld: SweepWorld | null = null;
+  private forecastRevision: number | undefined;
   target: TargetPreview | null = null;
   private readonly previewOrigin = new Vector3();
   constructor() {
@@ -126,6 +129,7 @@ export class SkyLanceVisuals {
       this.forecastAim.copy(this.aimDirection); this.forecastOrigin.copy(this.previewOrigin); this.forecastVelocity.copy(velocity);
       this.forecastCamera.copy(camera.position);
       this.target=lance.state==='ready' ? predictCenteredTarget(lance.world,camera.position,this.aimDirection,this.previewOrigin,velocity) : null;
+      this.forecastWorld=lance.world;this.forecastRevision=lance.world.revision;
       // Start the breathing interval after completion. A slow query must not
       // consume its own cooldown and run again immediately on the next frame.
       // Under load, reserve eight times its CPU cost (up to 250 ms) for gameplay.
@@ -140,6 +144,7 @@ export class SkyLanceVisuals {
       && this.forecastOrigin.equals(this.previewOrigin)
       && this.forecastVelocity.equals(velocity)
       && this.forecastCamera.equals(camera.position)
+      && this.forecastWorld===lance.world && this.forecastRevision===lance.world.revision
       && (this.target?.state !== 'reachable' || !!this.target.anchorId && lance.world.anchorValid(this.target.anchorId));
     const target = fresh ? this.target : null;
     const reachable=lance.state==='ready' && target?.state==='reachable';

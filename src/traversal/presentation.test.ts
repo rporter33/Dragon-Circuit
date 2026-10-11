@@ -84,6 +84,25 @@ describe('render-only Windline equipment', () => {
 
 
 describe('responsive aiming feedback',()=>{
+  it('clears green when a new first solid blocks an unchanged pose and the cached anchor remains valid',()=>{
+    vi.stubGlobal('window',{innerHeight:720});
+    const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
+    vi.stubGlobal('document',{getElementById:()=>el});let now=1000;
+    const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
+    const terrain=new Terrain({...LAYOUT,islands:[],spires:[],arches:[]});
+    terrain.colliders.add({kind:'box',x:0,y:1000,z:26,hx:2,hy:5,hz:.001,yaw:0});
+    const world=new TraversalWorld(terrain),lance=new SkyLance(world),camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,999,0),velocity=new Vector3();
+    camera.position.set(0,1000,0);camera.lookAt(0,1000,1);camera.updateMatrixWorld();
+    const visuals=new SkyLanceVisuals(),sweeps=vi.spyOn(world,'sweep');
+    try{
+      visuals.updateReticle(camera,feet,velocity,lance);expect(el.style.color).toBe('#94d6a2');const cachedAnchor=visuals.target!.anchorId!;
+      terrain.colliders.add({kind:'box',x:0,y:1000,z:1,hx:.05,hy:3,hz:.005,yaw:0});
+      expect(world.anchorValid(cachedAnchor)).toBe(true);
+      expect(predictCenteredTarget(world,camera.position,camera.getWorldDirection(new Vector3()),feet.clone().add(new Vector3(0,1,0)),velocity).state).toBe('blocked');
+      const queries=sweeps.mock.calls.length;now+=1;visuals.updateReticle(camera,feet,velocity,lance);
+      expect(el.dataset.target).toBe('checking');expect(el.style.color).toBe('#a8ddec');expect(sweeps.mock.calls.length).toBe(queries);
+    }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
+  });
   it('retains green for an unchanged proven pose, then clears a removed anchor without forecasting',()=>{
     vi.stubGlobal('window',{innerHeight:720});
     const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
