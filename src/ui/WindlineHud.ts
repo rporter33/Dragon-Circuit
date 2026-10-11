@@ -20,7 +20,7 @@ export class WindlineHud {
   private readonly callFill = h('div', { attrs: { 'data-call-fill': '' } });
   private readonly callTrack = h('div', { class: 'dw-windline-meter', attrs: { role: 'progressbar', 'aria-label': 'Held action progress', 'aria-valuemin': '0', 'aria-valuemax': '100' } }, this.callFill);
   private readonly call = div('dw-windline-call', div('dw-windline-call-label', this.callGlyph, this.callText.el), this.callTrack);
-  private readonly cast = h('p', {}, this.glyph('lance'), ' Aim at solid surfaces within 65 m.');
+  private readonly cast = h('p', {}, this.glyph('lance'), ' Cast at the centre dot · 65 m.');
   private readonly retain = new LiveText(h('p'));
   private readonly linked = h('p', {}, this.glyph('airSteer'), ' guides the swing. ', this.glyph('tetherPull'), ' pulls inward.');
   private readonly free = h('p', {}, this.glyph('airSteer'), ' steers; forward dives, back brakes. ', this.glyph('airBoost'), ' boosts.');
@@ -57,7 +57,7 @@ export class WindlineHud {
       : recovering ? 'Wyvern approaching' : airborne ? 'Freefall' : p.mode === 'flying' ? 'Mounted flight' : 'On foot';
     this.status.set(lineState); this.panel.dataset.traversalState = lineState;
     this.compact.hidden = !hints;
-    this.compactCast.hidden = !riderFree || airborne;
+    this.compactCast.hidden = !riderFree || !!lance?.rope;
     this.compactPull.hidden = !lance?.rope;
     this.compactFree.hidden = !airborne || !!lance?.rope;
     this.boost.hidden = !airborne || !boost;

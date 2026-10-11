@@ -25,7 +25,7 @@ export function centeredCast(world: SweepWorld, camera: Vector3, direction: Vect
     displaced.y += .5*T.projectileGravity*time*(time+1/120);
     return displaced.lengthSq()-T.throwSpeed*T.throwSpeed*time*time;
   };
-  if (delta.lengthSq()<1e-10 || residual(T.maxFlight)>=0) return {aim:ray,hit};
+  if (hit && (hit.exhausted || hit.fraction <= 1e-6) || delta.lengthSq()<1e-10 || residual(T.maxFlight)>=0) return {aim:ray,hit};
   let lo=0,hi: number=T.maxFlight;
   for(let i=0;i<28;i++){const mid=(lo+hi)*.5;if(residual(mid)>0)lo=mid;else hi=mid;}
   residual((lo+hi)*.5);
@@ -38,11 +38,11 @@ export function predictCenteredTarget(world: SweepWorld, camera: Vector3, direct
   const {aim,hit}=centeredCast(world,camera,direction,origin,velocity);
   const distance=hit?.point.distanceTo(origin) ?? T.maxLength;
   if(!hit || distance>T.maxLength) return {state:'out-of-range',point:hit?.point.clone()??origin.clone(),distance,anchorId:null};
-  if(!hit.anchorId || distance<T.minLength) return {state:'blocked',point:hit.point.clone(),distance,anchorId:null};
+  if(hit.exhausted || hit.fraction <= 1e-6 || !hit.anchorId || distance<T.minLength) return {state:'blocked',point:hit.point.clone(),distance,anchorId:null};
   const target=predictTarget(world,origin,aim,velocity);
-  const relative=target.point.clone().sub(camera),along=relative.dot(direction);
-  const offRay=relative.addScaledVector(direction,-along).length();
-  if(target.state==='reachable'&&(target.anchorId!==hit.anchorId || offRay>T.tipRadius*2))target.state='blocked';
+  const ray=direction.clone().normalize(),relative=target.point.clone().sub(camera),along=relative.dot(ray);
+  const offRay=relative.addScaledVector(ray,-along).length();
+  if(target.state==='reachable'&&(target.anchorId!==hit.anchorId || along<=0 || offRay>T.tipRadius*2))target.state='blocked';
   return target;
 }
 /** Presentation-only forecast, using the real fixed-step projectile and first-solid validation.

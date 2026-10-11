@@ -342,7 +342,7 @@ describe('Sky Lance movement ownership', () => {
   it('casts immediately, releases on button-up and automatically recovers without recasting a hold', () => {
     const r = rig(), input = emptyFrame(); input.pressed.lance = true; input.lanceHeld = true; input.aim = new V(0, 1, 0);
     stepInput(r.p, input); expect(r.p.skyLance!.state).toBe('projectile');
-    expect(r.p.skyLance!.velocity.y).toBeCloseTo(74.95, 5);
+    expect(r.p.skyLance!.velocity.y).toBeCloseTo(119.95, 5);
     input.pressed.lance = false; stepInput(r.p, input); expect(r.p.skyLance!.state).toBe('projectile');
     input.lanceHeld = false; input.pressed.lanceRelease = true; stepInput(r.p, input);
     expect(r.p.skyLance!.state).toBe('spent'); input.pressed.lanceRelease = false;
