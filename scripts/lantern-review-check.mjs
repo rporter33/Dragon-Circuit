@@ -265,6 +265,31 @@ try {
       return { off, hudOff, restored: !document.querySelector('.dw-lantern-coach').hidden };
     });
     assert.deepEqual(evidence.optional, { off: true, hudOff: true, restored: true });
+    evidence.interruptedGuidance = [];
+    for (const toggle of ['tips', 'hud']) {
+      const interrupted = await page.evaluate(toggle => {
+        const g = __dw.game; g.races.abort('quit'); g.resume(); __lanternNeutral();
+        const stage = (x, y) => { g.player.teleport(g.player.position.clone().set(x, y, 480), 0, 'flying', 26); g.frame(0, false); };
+        const visible = on => {
+          if (toggle === 'tips') g.applySettings({ ...g.settings, showControlHints: on });
+          else g.ui.hudHidden = !on;
+          g.frame(0, false);
+        };
+        stage(-1300, 600); g.races.debugStage('lantern-dash', 0, 30000); g.frame(0, false);
+        const title = () => document.querySelector('.dw-lantern-coach b').textContent;
+        const entry = title(); visible(false);
+        stage(-1100, 610); stage(-1300, 620);
+        const hidden = document.querySelector('.dw-lantern-coach').hidden;
+        visible(true); const reentry = title();
+        stage(-1300, 650); const climbed = title();
+        g.pause(); g.frame(1, false); g.resume(); g.frame(0, false);
+        return { toggle, hidden, entry, reentry, climbed, afterPause: title() };
+      }, toggle);
+      evidence.interruptedGuidance.push(interrupted);
+      assert.equal(interrupted.hidden, true);
+      assert.ok(interrupted.entry.includes('+0 m') && interrupted.reentry.includes('+0 m') && interrupted.climbed.includes('+30 m'));
+      assert.equal(interrupted.afterPause, interrupted.climbed);
+    }
   }
   // Same warmed RaceHud update on a static fixture. This isolates CPU presentation cost,
   // excludes render/GPU and does not claim delivered FPS on hardware.

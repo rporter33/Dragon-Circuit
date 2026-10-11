@@ -84,6 +84,8 @@ ordered medals and the original 4 m body/wingtip clearance checks. The 15-check 
 smoke passed. The final-head reports are authoritative over these initial results. No existing
 assertion or threshold was reduced. New tests cover factual descent, real thermal membership,
 re-entry, stall/overshoot priority, optional route choice, hysteresis and reset.
+The browser regression also hides tips and the HUD separately, leaves and re-enters lift while
+hidden, then verifies a new-entry +0 m and subsequent +30 m. Pause preserves the current gain.
 
 Measured build cost initially: main Game JS +3.64 kB uncompressed / +1.28 kB gzip and CSS
 +0.64 kB / +0.13 kB gzip. Final package reports retain exact final sizes and matched draw calls/
@@ -98,6 +100,8 @@ Ironback 180° reversal left the column, so the exercise now starts tangentially
 direction; the first stall fixture recovered before sampling, so recovery is sampled at a real
 stall in open air; the short-height label overlap was fixed, and the coach is placed before
 the split delta so a prior record's transient line cannot push it into the world view.
+Independent review caught stale entry state across hidden movement; state observation now
+continues independently of visibility, with interrupted-flow regressions for tips/HUD and pause.
 Original course/physics thresholds
 remain unchanged. Raw final failures, if any, stay in the evidence file and block package CI.
 

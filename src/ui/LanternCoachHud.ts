@@ -47,11 +47,14 @@ export class LanternCoachHud {
     const show = active && hudVisible && view.screen === 'play' && view.save.data.settings.showControlHints;
     this.line.hidden = !show;
     this.marker.hidden = true;
-    if (!show) { this.layoutPhase = ''; return; }
+    // Visibility is independent of observation. Leaving/re-entering while tips or the HUD are
+    // hidden must establish a fresh entry height. Pause holds both position and observation.
+    if (!active || view.screen !== 'play') { this.layoutPhase = ''; return; }
     const f = view.player.flight;
     const finishY = r.defs.find(d => d.id === r.activeId)!.rings[0].position[1];
     view.weather.windAt(f.position, this.wind);
     const advice = this.coach.update({ x: f.position.x, y: f.position.y, z: f.position.z, lift: this.wind.y, vy: f.velocity.y, stall: f.stall, missedFinish: this.missed, finishY }, this.thermal);
+    if (!show) { this.layoutPhase = ''; return; }
     this.line.dataset.phase = advice.phase;
     this.title.set(advice.title); this.body.set(advice.body);
     if (!advice.suggestLift) return;
