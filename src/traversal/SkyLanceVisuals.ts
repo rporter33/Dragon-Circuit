@@ -115,8 +115,9 @@ export class SkyLanceVisuals {
     for (const material of materials) material.dispose();
     this.group.clear(); this.reticle = null;
   }
-  /** Fixed centre feedback; forecasts run at most 20 Hz and yield after expensive
-   * queries. Changed pose clears stale eligibility; physical casts solve afresh. */
+  /** Fixed centre feedback. The certified analytic adapter validates the complete
+   * current query every visible ready render. Unknown/slower adapters retain their
+   * bounded fallback; changed pose never inherits eligibility there either. */
   updateReticle(camera: Camera, feet: Vector3, velocity: Vector3, lance: SkyLance): void {
     this.reticle ??= document.getElementById('sky-lance-reticle');
     this.updateLineWidth(camera);
@@ -124,7 +125,7 @@ export class SkyLanceVisuals {
     camera.getWorldDirection(this.aimDirection);
     this.previewOrigin.copy(feet).addScaledVector(UP,LANCE.harnessHeight);
     const now=performance.now();
-    if (now >= this.nextPreview || this.previewState !== lance.state) {
+    if (lance.state==='ready'&&lance.world.renderTargetQueries || now >= this.nextPreview || this.previewState !== lance.state) {
       this.previewState=lance.state;
       this.forecastAim.copy(this.aimDirection); this.forecastOrigin.copy(this.previewOrigin); this.forecastVelocity.copy(velocity);
       this.forecastCamera.copy(camera.position);
@@ -136,10 +137,9 @@ export class SkyLanceVisuals {
       const completed=performance.now();
       this.nextPreview=completed+Math.max(50,Math.min(250,(completed-now)*8));
     }
-    // Bound expensive forecasts at 20 Hz even while falling. A changed aim/pose
-    // clears green until the next forecast; physical casts solve afresh on press.
-    // Even tiny changes can cross a thin solid or range/path boundary. There is
-    // no clearance certificate for a changed query, so it cannot inherit green.
+    // Even tiny changes can cross a thin solid or range/path boundary. Every ready
+    // render on the analytic adapter has a fresh proof. A changed query on a slower
+    // fallback clears eligibility until its next complete forecast.
     const fresh = this.forecastAim.equals(this.aimDirection)
       && this.forecastOrigin.equals(this.previewOrigin)
       && this.forecastVelocity.equals(velocity)

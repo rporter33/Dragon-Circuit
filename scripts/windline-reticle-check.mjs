@@ -39,16 +39,21 @@ try{
  await capture('blue-1280');await capture('blue-dot-zoom-source',{x:626,y:346,width:28,height:28});
  await readyPose();
  evidence.budget=await page.evaluate(()=>{
-  const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,original=w.sweep,position=p.foot.position.clone();let queried=false,forecasts=0;
+  const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,original=w.sweep,position=p.foot.position.clone();let queried=false,forecasts=0,validFrames=0,checkingFrames=0;
   w.sweep=function(...args){queried=true;return original.apply(this,args);};const start=performance.now();
-  try{for(let i=0;i<100;i++){queried=false;p.foot.position.x+=.001;v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);if(queried)forecasts++;}}
+  const el=document.querySelector('#sky-lance-reticle');
+  try{for(let i=0;i<100;i++){queried=false;p.foot.position.x+=.001;v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);if(queried)forecasts++;if(el.classList.contains('is-valid'))validFrames++;if(el.dataset.target==='checking')checkingFrames++;}}
   finally{w.sweep=original;p.foot.position.copy(position);}
-  const elapsed=performance.now()-start;v.nextPreview=performance.now()+500;p.foot.position.x+=1;v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);
-  const el=document.querySelector('#sky-lance-reticle'),invalidated={target:el.dataset.target,valid:el.classList.contains('is-valid'),color:getComputedStyle(el).color};p.foot.position.copy(position);
-  return {calls:100,forecasts,elapsed,invalidated};
+  const elapsed=performance.now()-start;v.nextPreview=performance.now()+500;
+  const at=g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(position.clone()),.5),blocker={kind:'box',x:at.x,y:at.y,z:at.z,hx:.1,hy:.1,hz:.1,yaw:0};
+  w.terrain.colliders.addSource('reticle-boundary-qa',()=>[blocker]);v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);
+  const invalidated={target:el.dataset.target,valid:el.classList.contains('is-valid'),color:getComputedStyle(el).color};w.terrain.colliders.removeSource('reticle-boundary-qa');
+  return {calls:100,forecasts,elapsed,validFrames,checkingFrames,invalidated};
  });
- assert.ok(evidence.budget.forecasts<=Math.ceil(evidence.budget.elapsed/50)+2,'20 Hz forecast budget despite changing poses');
- assert.equal(evidence.budget.invalidated.target,'checking');assert.equal(evidence.budget.invalidated.valid,false);
+ assert.equal(evidence.budget.forecasts,100,'every changed-pose render executes a full query');
+ assert.equal(evidence.budget.validFrames,100,'continuously eligible movement remains green');assert.equal(evidence.budget.checkingFrames,0);
+ assert.ok(evidence.budget.elapsed/100<2.5,'complete moving-pose preview mean CPU cost');
+ assert.equal(evidence.budget.invalidated.target,'blocked');assert.equal(evidence.budget.invalidated.valid,false);
  await readyPose();
  evidence.cast=await page.evaluate(()=>{
   const g=__dw.game,p=g.player,target=g.skyLanceVisuals.target,point=target.point.clone(),anchor=target.anchorId;
@@ -90,7 +95,7 @@ try{
  assert.equal(moving.cue,'reachable');assert.equal(moving.candidate,moving.anchor);assert.ok(moving.length>45&&moving.length<=65);
  assert.equal(moving.retained,true);assert.equal(moving.releasedRope,false);
  assert.ok(moving.ready.forecasts>0,'ready CPU sample includes actual target forecasting');
- assert.ok(moving.ready.forecasts<=Math.ceil(moving.ready.elapsedMs/50)+2,'moving-camera ready forecast budget');
+ assert.equal(moving.ready.forecasts,moving.ready.samples,'every moving ready render is freshly validated');assert.equal(moving.ready.checkingFrames,0);
  assert.ok(moving.ready.reticlePerStepMs<2.5,'bounded ready preview average CPU cost');
  assert.equal(moving.swinging.forecasts,0,'attached line never runs a ready-target forecast');
  assert.ok(moving.swinging.p95Ms<20,'sustained moving-camera swing CPU budget');

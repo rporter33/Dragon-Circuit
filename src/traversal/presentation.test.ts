@@ -100,10 +100,10 @@ describe('responsive aiming feedback',()=>{
       expect(world.anchorValid(cachedAnchor)).toBe(true);
       expect(predictCenteredTarget(world,camera.position,camera.getWorldDirection(new Vector3()),feet.clone().add(new Vector3(0,1,0)),velocity).state).toBe('blocked');
       const queries=sweeps.mock.calls.length;now+=1;visuals.updateReticle(camera,feet,velocity,lance);
-      expect(el.dataset.target).toBe('checking');expect(el.style.color).toBe('#a8ddec');expect(sweeps.mock.calls.length).toBe(queries);
+      expect(el.dataset.target).toBe('blocked');expect(el.style.color).toBe('#a8ddec');expect(sweeps.mock.calls.length).toBeGreaterThan(queries);
     }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
   });
-  it('retains green for an unchanged proven pose, then clears a removed anchor without forecasting',()=>{
+  it('validates each ready render and clears a removed anchor immediately',()=>{
     vi.stubGlobal('window',{innerHeight:720});
     const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
     vi.stubGlobal('document',{getElementById:()=>el});let now=1000;
@@ -116,12 +116,12 @@ describe('responsive aiming feedback',()=>{
     try{
       visuals.updateReticle(camera,feet,velocity,lance);const queries=sweeps.mock.calls.length;
       for(let i=0;i<30;i++){now+=1;visuals.updateReticle(camera,feet,velocity,lance);expect(el.style.color).toBe('#94d6a2');}
-      expect(sweeps.mock.calls.length).toBe(queries);
+      expect(sweeps.mock.calls.length).toBeGreaterThan(queries);
       terrain.colliders.clear();now+=1;visuals.updateReticle(camera,feet,velocity,lance);
-      expect(el.dataset.target).toBe('checking');expect(el.style.color).toBe('#a8ddec');expect(sweeps.mock.calls.length).toBe(queries);
+      expect(el.dataset.target).toBe('out-of-range');expect(el.style.color).toBe('#a8ddec');expect(sweeps.mock.calls.length).toBeGreaterThan(queries);
     }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
   });
-  it.each(['thin-target edge','range boundary','camera translation','harness obstruction','inherited velocity'] as const)('never reuses green for an unproven %s change during cooldown',change=>{
+  it.each(['thin-target edge','range boundary','camera translation','harness obstruction','inherited velocity'] as const)('validates the complete current query on the same %s render',change=>{
     vi.stubGlobal('window',{innerHeight:720});
     const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
     vi.stubGlobal('document',{getElementById:()=>el});let now=1000;
@@ -143,10 +143,9 @@ describe('responsive aiming feedback',()=>{
       const reference=predictCenteredTarget(world,camera.position,camera.getWorldDirection(new Vector3()),feet.clone().add(new Vector3(0,1,0)),velocity);
       if(change!=='inherited velocity')expect(reference.state).not.toBe('reachable');
       const queries=sweeps.mock.calls.length;now+=1;visuals.updateReticle(camera,feet,velocity,lance);
-      expect(sweeps.mock.calls.length).toBe(queries); // Preserve the bounded forecast cadence.
-      expect(el.dataset.target).toBe('checking');expect(el.style.color).toBe('#a8ddec');expect(el.classList.toggle).toHaveBeenLastCalledWith('is-valid',false);
-      now+=300;visuals.updateReticle(camera,feet,velocity,lance);
-      expect(el.dataset.target).toBe(reference.state); // Fresh proof restores green where still valid.
+      expect(sweeps.mock.calls.length).toBeGreaterThan(queries);
+      expect(visuals.target).toEqual(reference);expect(el.dataset.target).toBe(reference.state);
+      expect(el.style.color).toBe(reference.state==='reachable'?'#94d6a2':'#a8ddec');expect(el.classList.toggle).toHaveBeenLastCalledWith('is-valid',reference.state==='reachable');
     }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
   });
   it('yields gameplay time after a slow forecast and refreshes on equipment state changes',()=>{

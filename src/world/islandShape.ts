@@ -16,7 +16,8 @@ import type { SurfaceKind } from '../core/types';
 import { smoothstep } from '../core/math';
 import { fbm2, noise2, periodicNoise, ridged2, type Noise2 } from '../core/noise';
 import type { ArchDef, IslandDef, SpireDef } from './layout';
-import {authoredBottomBounds} from './undersideBounds';
+import {analyticBottomBounds, type AnalyticUnderside} from './undersideBounds';
+export type UndersideFloorSolver=(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY?:number)=>number|null;
 
 /** Height the top surface rolls off by at the very rim (m). */
 export const RIM_DROP = 3;
@@ -77,6 +78,9 @@ export class IslandShape {
   private toothScale = 1;
   private toothChance = 0.6;
   private readonly boundsDefinition: string;
+  private readonly boundsParameters:AnalyticUnderside;
+  private readonly floorSolver:UndersideFloorSolver;
+  private readonly boundsScratch:[number,number][]=Array.from({length:5},()=>[0,0]);
 
   constructor(def: IslandDef) {
     this.def = def;
@@ -126,6 +130,8 @@ export class IslandShape {
     this.minTopY = def.y - RIM_DROP - lean;
     this.minY = def.y - def.depth * 1.3 - def.lip * this.lipVar * 1.6 - lean - 6;
     this.track = def.kind === 'roost' ? this.buildTrack() : null;
+    this.boundsParameters={...def,ridgeFreq:this.ridgeFreq,lumpFreq:this.lumpFreq,toothCell:this.toothCell,outlineRadius:(a:number)=>this.outlineRadius(a),noise:this.underN,tooth:(x:number,z:number)=>this.toothAt(x,z),coneExp:this.coneExp,skew:this.skew,skewDir:this.skewDir,twin:this.twin,twinDir:this.twinDir,tiltX:this.tiltX,tiltZ:this.tiltZ,rag:this.rag,lipVar:this.lipVar,toothScale:this.toothScale,lipAt:(a:number)=>this.lipAt(a)};
+    this.floorSolver=(minX,maxX,minZ,maxZ,radius,queryMaxY)=>this.immutableUndersideFloor(minX,maxX,minZ,maxZ,radius,queryMaxY);
   }
 
   /** Height of the island's list (tilt) at local offset (dx, dz) from its center. */
@@ -276,9 +282,20 @@ export class IslandShape {
 
   /** Conservative lower contact-plane envelope for a query-local XZ box. */
   undersideContactFloor(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY=Infinity):number|null {
-    if(this.skew!==0||this.twin!==0||this.tiltX!==0||this.tiltZ!==0||this.lipVar!==0||this.rag!==0||this.toothScale!==1||this.coneExp!==.6||JSON.stringify(this.def)!==this.boundsDefinition)return null;
-    const args={...this.def,ridgeFreq:this.ridgeFreq,lumpFreq:this.lumpFreq,toothCell:this.toothCell,outlineRadius:(a:number)=>this.outlineRadius(a),noise:this.underN,tooth:(x:number,z:number)=>this.toothAt(x,z)};
-    const height=(x:number,z:number)=>authoredBottomBounds(args,minX+x,maxX+x,minZ+z,maxZ+z);
+    const solver=this.undersideCertificateSolver(JSON.stringify(this.def));
+    return solver?solver(minX,maxX,minZ,maxZ,radius,queryMaxY):null;
+  }
+  /** A validated immutable definition can reuse this solver throughout one synchronous sweep. */
+  undersideCertificateSolver(definition:string):UndersideFloorSolver|null {
+    if(definition!==this.boundsDefinition)return null;
+    const s=this.boundsParameters;
+    if(![s.x,s.y,s.z,s.radius,s.depth,s.lip,s.outline,s.coneExp,s.skew,s.twin,s.tiltX,s.tiltZ,s.rag,s.lipVar,s.toothScale,s.ridgeFreq,s.lumpFreq,s.toothCell].every(Number.isFinite)||s.radius<=0||s.toothCell<=0||s.depth<s.lip||s.coneExp<=0||s.outline<0||s.outline+s.rag>=1)return null;
+    return this.floorSolver;
+  }
+  private immutableUndersideFloor(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY=Infinity):number|null {
+    const args=this.boundsParameters;
+    let stencil=0;
+    const height=(x:number,z:number)=>analyticBottomBounds(args,minX+x,maxX+x,minZ+z,maxZ+z,this.boundsScratch[stencil++]);
     const b=height(0,0);
     if(!b)return null;
     // collideIsland already rejects below this global normal envelope. Distant slices
