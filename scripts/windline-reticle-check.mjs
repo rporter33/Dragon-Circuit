@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {chromium} from 'playwright';
 import {browserEvidence} from './browser-evidence.mjs';
+import {diagnoseReticle100} from './windline-reticle-diagnostic.mjs';
 const url=new URL(process.argv[2]??'http://127.0.0.1:5175/');url.search='?manual=1&quality=low';
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--enable-webgl']});
 const page=await browser.newPage({viewport:{width:1280,height:720}}),errors=[],evidence={captures:[]};let metadata=null;
@@ -40,6 +41,7 @@ try{
  await readyPose();
  evidence.budget=await page.evaluate(()=>{
   const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,original=w.sweep,position=p.foot.position.clone(),rows=[];let queried=false,forecasts=0,validFrames=0,checkingFrames=0;
+  const diagnosticPose={feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),revision:w.revision};
   w.clearGeometryCertificates(); // Include first-query construction and every miss.
   w.sweep=function(...args){queried=true;return original.apply(this,args);};const start=performance.now();
   const el=document.querySelector('#sky-lance-reticle');
@@ -49,11 +51,18 @@ try{
   const at=g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(position.clone()),.5),blocker={kind:'box',x:at.x,y:at.y,z:at.z,hx:.1,hy:.1,hz:.1,yaw:0};
   w.terrain.colliders.addSource('reticle-boundary-qa',()=>[blocker]);v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);
   const invalidated={target:el.dataset.target,valid:el.classList.contains('is-valid'),color:getComputedStyle(el).color};w.terrain.colliders.removeSource('reticle-boundary-qa');
-  return {calls:100,forecasts,elapsed,firstCompleteMs:rows[0].ms,coldStart:true,rows,validFrames,checkingFrames,invalidated};
+  return {calls:100,forecasts,elapsed,firstCompleteMs:rows[0].ms,coldStart:true,rows,validFrames,checkingFrames,invalidated,diagnosticPose};
  });
  console.log('Complete 100-pose CPU diagnostics:',JSON.stringify(evidence.budget));
  assert.equal(evidence.budget.forecasts,100,'every changed-pose render executes a full query');
  assert.equal(evidence.budget.validFrames,100,'continuously eligible movement remains green');assert.equal(evidence.budget.checkingFrames,0);
+ // Run after the unchanged baseline is complete, before its retained assertion,
+ // so failing CI still exports the diagnostic without prewarming that baseline.
+ evidence.diagnostic=await diagnoseReticle100(page,evidence.budget.diagnosticPose);
+ console.log('Instrumented 100-pose stage diagnostics:',JSON.stringify({summary:evidence.diagnostic.summary,zeroMissSummary:evidence.diagnostic.zeroMissSummary,parityMismatches:evidence.diagnostic.mismatches.length,interpretation:evidence.diagnostic.interpretation}));
+ assert.equal(evidence.diagnostic.rows.length,100);assert.equal(evidence.diagnostic.referenceQueries,100);
+ assert.equal(evidence.diagnostic.geometryStableDuringReplay,true);assert.deepEqual(evidence.diagnostic.mismatches,[]);
+ assert.deepEqual(evidence.diagnostic.rows.map(({misses,hits,tightened})=>({misses,hits,tightened})),evidence.budget.rows.map(({misses,hits,tightened})=>({misses,hits,tightened})),'diagnostic replays the exact cold/miss/hit sequence');
  assert.ok(evidence.budget.elapsed/100<2.5,'complete moving-pose preview mean CPU cost');
  assert.equal(evidence.budget.invalidated.target,'blocked');assert.equal(evidence.budget.invalidated.valid,false);
  // Capture the first renderer submission after actual Game/UI visibility changes.
