@@ -22,17 +22,17 @@ visual updates were small by comparison. Release removes that workload.
 
 | Normal-world case | Baseline mean / p95 ms | Repair mean / p95 ms | Rock queries per step, before → after |
 | --- | --- | --- | --- |
-| 18 m stationary hang | 2.03 / 2.50 | 0.75 / 1.10 | 1,776 → 0 |
-| 18 m moving swing | 3.60 / 5.80 | 1.29 / 1.80 | 1,776 → 481 |
-| 55 m stationary hang | 5.57 / 8.60 | 0.63 / 1.00 | 5,855 → 0 |
-| 55 m moving swing | 8.80 / 13.80 | 2.62 / 3.40 | 5,855 → 1,501 |
-| 55 m faster swing | 8.74 / 9.80 | 2.80 / 4.60 | 5,870 → 1,516 |
-| Released, after 55 m swing | 0.53 / 0.70 | 0.73 / 1.30 | 77 → 105 |
+| 18 m stationary hang | 3.17 / 6.50 | 0.88 / 1.30 | 1,776 → 0 |
+| 18 m moving swing | 4.32 / 8.90 | 2.03 / 5.30 | 1,776 → 481 |
+| 55 m stationary hang | 6.34 / 19.00 | 1.24 / 3.60 | 5,855 → 0 |
+| 55 m moving swing | 10.05 / 25.60 | 3.68 / 11.00 | 5,855 → 1,501 |
+| 55 m faster swing | 9.95 / 26.00 | 2.70 / 3.10 | 5,870 → 1,516 |
+| Released, after 55 m swing | 0.76 / 2.10 | 0.53 / 0.90 | 105 → 77 |
 
 Raw captures: [baseline](qa/windline-performance-before.json) and
 [repair](qa/windline-performance-after.json). Timings vary with JIT/GC and the
-shared environment. The repair still recorded isolated maxima of 21.4 ms during
-moving swing and 24.4 ms during faster swing; this is a sustained cost improvement,
+shared environment. The repair still recorded isolated maxima of 44.3 ms during
+moving swing and 25.0 ms during faster swing; this is a sustained cost improvement,
 not a promise that every frame has zero hitch. `softwareRenderedMs` records CPU
 renderer submission separately; it does not measure physical GPU presentation.
 
@@ -84,17 +84,23 @@ An additional forced no-slot test verifies optional guidance is hidden and retur
 when space becomes available. These bounds do not claim to measure every possible
 decorative effect painted outside every pre-existing sibling box.
 
-The Windline panel passes these checks. Existing tutorial cards and the long
+The Windline panel passes these checks. In the crowded 617×380 mounted case,
+[optional guidance is suppressed](qa/windline-hud-crowded-617.png) while primary
+instruments remain clear. Existing tutorial cards and the long
 interaction prompt still crowd one another in the extreme portrait stress case;
 this repair does not claim to redesign the entire pre-existing mobile HUD.
 
 ## Verification and release boundaries
 
-- Local full unit suite: 1,142 tests in 109 files passed.
+- On the reviewed prior head `17df8a1`: CI full unit suite (1,142 tests / 109 files),
+  typecheck/build, smoke and all browser integration stages passed.
+- Review follow-up: 102 focused tests in four files passed. Final-head full CI is
+  recorded in PR #6 before release.
 - Typecheck and production build passed.
 - Normal-game traversal, pause/interruption, repeated leap/boost/recall,
   simulated controller transitions and save/reload browser regression passed.
-- Responsive HUD matrix passed; actual captures inspected.
+- Responsive HUD matrix, optional no-slot suppression/recovery and menu/photo
+  checks passed; actual committed-build captures inspected.
 - Sustained normal-world query-cost regression passed; five repeated attachments
   passed and both lines remained retained through extended swing/grazing.
 - PR CI and deployment must run against the final committed repair before release.
@@ -102,8 +108,15 @@ this repair does not claim to redesign the entire pre-existing mobile HUD.
 New browser evidence carries the full tested commit/tree, runner commit and dirty
 state, runtime build stamp, loaded script URLs, browser identity and capture time.
 The runner rejects a runtime build stamp that differs from its explicitly tested
-commit. The original measurements above were exploratory working-tree captures;
-they must not be attributed retrospectively to an exact committed head.
+commit. The table and raw files above now come from clean source commit
+`c1b8e37b0e6fb6b4d09ea8da2bda9a74ece2fc87` (runtime `Build c1b8e37`)
+and baseline `a475c40cae0bfe6f806978d1e0b031e7744af2a4`
+(runtime `Build a475c40`). The baseline tree is exactly the deployed main
+`193e56f` tree; this is not a claim that the loaded baseline stamp was `193e56f`.
+The subsequent evidence commit changes documentation/captures only.
+[Before capture manifest](qa/windline-hud-before-manifest.json) and
+[after matrix/manifest](qa/windline-hud-after-manifest.json) include capture
+paths and SHA-256 hashes. Historical exploratory data is retained in Git history.
 
 Both verification and Pages workflows now include the normal-world HUD and cost
 checks. PR verification checks out the actual PR head and supplies that same SHA
