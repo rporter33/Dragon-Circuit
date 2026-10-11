@@ -48,3 +48,13 @@ recorded explicitly alongside the production script hash. The subsequent
 
 Full enhancement CI and user/parent release review remain the merge gates.
 Windhaven gameplay, character model updates and separate audio PR #7 are excluded.
+
+Source CI `38113451419` subsequently failed the ready-preview average CPU cost
+assertion in `windline-reticle-check.mjs`, after normal gameplay/save/reload and
+controller flow passed. It did not reach the prototype practice reload. The
+follow-up schedules each forecast cooldown from completion and yields additional
+time after an expensive query, capped at 250 ms. Changed-pose eligibility still
+clears immediately and a physical cast still solves afresh. The 2.5 ms average
+cost assertion and all collision/behaviour assertions remain unchanged. A slow
+query regression verifies that the next gameplay frames do not repeat it
+immediately. New exact-head CI remains required before release.

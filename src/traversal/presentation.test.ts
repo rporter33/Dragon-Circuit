@@ -80,6 +80,23 @@ describe('render-only Windline equipment', () => {
 
 
 describe('responsive aiming feedback',()=>{
+  it('yields gameplay time after a slow forecast and refreshes on equipment state changes',()=>{
+    vi.stubGlobal('window',{innerHeight:720});
+    const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
+    vi.stubGlobal('document',{getElementById:()=>el});let now=1000,queries=0;
+    const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
+    const lance=new SkyLance({anchorValid:()=>true,sweep:()=>{queries++;now+=100;return null;}});
+    const camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,1000,0),v=new Vector3();
+    camera.position.set(0,1002,-6);camera.lookAt(0,1002,20);camera.updateMatrixWorld();
+    const visuals=new SkyLanceVisuals();
+    try{
+      visuals.updateReticle(camera,feet,v,lance);expect(queries).toBe(1);
+      for(let i=0;i<20;i++){now+=1;feet.x+=.01;visuals.updateReticle(camera,feet,v,lance);}
+      expect(queries).toBe(1);expect(el.dataset.target).toBe('checking');
+      lance.state='spent';visuals.updateReticle(camera,feet,v,lance);expect(queries).toBe(1);
+      lance.state='ready';visuals.updateReticle(camera,feet,v,lance);expect(queries).toBe(2);
+    }finally{clock.mockRestore();visuals.dispose();}
+  });
   it('keeps the dot centred, bounds forecasts and clears stale eligibility',()=>{
     vi.stubGlobal('window',{innerHeight:720});
     const label={textContent:''},impact={style:{} as Record<string,string>};

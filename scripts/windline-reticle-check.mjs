@@ -85,6 +85,7 @@ try{
   }finally{v.updateReticle=original;}
  });
  const moving=evidence.movingCamera;
+ console.log('Ready-preview and moving-swing CPU diagnostics:',JSON.stringify(moving));
  assert.equal(moving.cue,'reachable');assert.equal(moving.candidate,moving.anchor);assert.ok(moving.length>45&&moving.length<=65);
  assert.equal(moving.retained,true);assert.equal(moving.releasedRope,false);
  assert.ok(moving.ready.forecasts<=Math.ceil(moving.ready.elapsedMs/50)+2,'moving-camera ready forecast budget');

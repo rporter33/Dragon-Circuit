@@ -112,8 +112,8 @@ export class SkyLanceVisuals {
     for (const material of materials) material.dispose();
     this.group.clear(); this.reticle = null;
   }
-  /** A fixed centre dot. Changed aim/motion gets one fresh forecast, avoiding stale
-   * green feedback and checking-state flicker. Stable geometry is rechecked at 20 Hz. */
+  /** Fixed centre feedback; forecasts run at most 20 Hz and yield after expensive
+   * queries. Changed pose clears stale eligibility; physical casts solve afresh. */
   updateReticle(camera: Camera, feet: Vector3, velocity: Vector3, lance: SkyLance): void {
     this.reticle ??= document.getElementById('sky-lance-reticle');
     this.updateLineWidth(camera);
@@ -122,10 +122,15 @@ export class SkyLanceVisuals {
     this.previewOrigin.copy(feet).addScaledVector(UP,LANCE.harnessHeight);
     const now=performance.now();
     if (now >= this.nextPreview || this.previewState !== lance.state) {
-      this.nextPreview=now+50;this.previewState=lance.state;
+      this.previewState=lance.state;
       this.forecastAim.copy(this.aimDirection); this.forecastOrigin.copy(this.previewOrigin); this.forecastVelocity.copy(velocity);
       this.forecastCamera.copy(camera.position);
       this.target=lance.state==='ready' ? predictCenteredTarget(lance.world,camera.position,this.aimDirection,this.previewOrigin,velocity) : null;
+      // Start the breathing interval after completion. A slow query must not
+      // consume its own cooldown and run again immediately on the next frame.
+      // Under load, reserve eight times its CPU cost (up to 250 ms) for gameplay.
+      const completed=performance.now();
+      this.nextPreview=completed+Math.max(50,Math.min(250,(completed-now)*8));
     }
     // Bound expensive forecasts at 20 Hz even while falling. A changed aim/pose
     // clears green until the next forecast; physical casts solve afresh on press.
