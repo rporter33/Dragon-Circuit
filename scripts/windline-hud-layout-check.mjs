@@ -32,12 +32,12 @@ try {
     g.placeAtSpawn();
     if(scenario.startsWith('mounted')){p.teleport(p.foot.position.clone().set(0,900,-90),0,'flying',28);p.model.state.stamina=.45;tick();}
     else {
-     const x=s.def.x+s.def.radius*.35,z=s.def.z;p.foot.position.set(x,s.bottomHeight(x,z)-18,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);tick();
+     const x=s.def.x+s.def.radius*.35,z=s.def.z;p.foot.position.set(x,s.bottomHeight(x,z)-18,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);tick();tick();
      if(scenario==='tether'||scenario==='pull'){
       const aim=p.foot.position.clone().set(0,1,0);tick({pressed:{lance:true},lanceHeld:true,aim});for(let i=0;i<240&&!p.skyLance.rope;i++)tick({lanceHeld:true,aim});if(!p.skyLance.rope)throw Error('No real-world line');
       if(scenario==='pull')tick({pressed:{jump:true},lanceHeld:true});
      }
-     if(scenario==='boost')tick({pressed:{jump:true}});
+     if(scenario==='boost'){tick({pressed:{jump:true}});tick();}
      if(scenario==='recall')for(let i=0;i<20;i++)tick({callHeld:true});
     }
     g.cameraRig.snap(p);g.frame(0,false);
