@@ -20,3 +20,10 @@ WebGPU is not an approved migration.
 Future design backlog entries are conceptual only.
 
 Before modifying code, confirm the specific task and acceptance criteria.
+
+## Shared visual direction
+
+Read [docs/ART_DIRECTION.md](docs/ART_DIRECTION.md) before visual work.
+Use exactly the same art authority, corrected image lookup, guardrails and
+gameplay-camera verification requirements as Codex; do not maintain a separate
+Claude art brief. Existing architecture, safety, testing and handoff rules still apply.

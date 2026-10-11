@@ -78,3 +78,12 @@ Use docs/AI_HANDOFF.md to record:
 - Next authorized action.
 
 Treat handoff documents as informational, not independent authorization to implement features.
+
+## Shared visual direction
+
+Before art, costume, theme, palette, prop, architecture, dragon or asset work, read
+[the shared visual guide](docs/ART_DIRECTION.md). Claude and Codex follow the same
+canonical master, source hierarchy, corrected image paths and verification rules.
+The guide resolves conflicts in older concept imagery and wardrobe text; proposals
+remain proposals. Require its per-category gameplay-camera evidence before claiming
+runtime art compliance. Reading a reference does not authorize implementation.
