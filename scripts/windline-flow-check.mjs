@@ -3,13 +3,16 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { chromium } from 'playwright';
+import {browserEvidence} from './browser-evidence.mjs';
 const url=new URL(process.argv[2]??'http://127.0.0.1:5175/');url.search='?manual=1&quality=low';
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--enable-webgl']});
 const page=await browser.newPage({viewport:{width:1280,height:720}}),errors=[],evidence={};
+let metadata=null;
 page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
 fs.mkdirSync('shots/windline-flow',{recursive:true});
 try {
  await page.goto(url.href);await page.waitForFunction(()=>window.__dw?.ready,null,{timeout:180000});
+ metadata=await browserEvidence(page,url);
  await page.evaluate(()=>{__dw.game.startGame();__dw.advance(.2);});
  // Real keyboard steering: forward carries momentum; back gradually brakes without reversal.
  await page.evaluate(()=>{
@@ -37,7 +40,9 @@ try {
  await page.evaluate(()=>{
   const g=__dw.game,p=g.player,s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
   p.foot.position.set(x,s.bottomHeight(x,z)-18,z);p.foot.velocity.set(0,0,0);__flowTick();g.cameraRig.snap(p);
-  g.input.setScripted({lookActive:true,lookIsRate:false,lookY:-10});__flowTick();g.input.setScripted(null);__flowTick();
+  // The camera ray and harness path both need a clear view of the real underside.
+  // The former straight-up view from the opposite bearing crossed a concave ridge.
+  g.input.setScripted({lookActive:true,lookIsRate:false,lookX:g.cameraRig.yaw+Math.PI/2,lookY:-10});__flowTick();g.input.setScripted(null);__flowTick(60);
  });
  await page.waitForTimeout(80);
  evidence.anchorCue=await page.evaluate(()=>{const g=__dw.game;g.skyLanceVisuals.nextPreview=0;g.frame(0,true);const el=document.querySelector('#sky-lance-reticle');return {state:el.dataset.target,label:el.querySelector('[data-aim-status]').textContent};});
@@ -89,14 +94,16 @@ try {
  assert.equal(evidence.disconnect.screen,'pause');assert.equal(evidence.disconnect.frozen,true);assert.equal(evidence.disconnect.heldReplay,0);assert.ok(evidence.disconnect.fresh>0);assert.ok(evidence.disconnect.hold>.2);assert.equal(evidence.disconnect.callVisible,true);
  // Readability at ordinary desktop/720p sizes and a narrow-layout safety check, no phone claims.
  evidence.layouts=[];
- for(const [width,height] of [[1280,720],[1920,1080],[360,780]]) {
+ for(const [width,height] of [[1280,720],[1920,1080],[617,380],[360,780]]) {
   await page.setViewportSize({width,height});await page.evaluate(()=>{__dw.game.frame(0,true);});
+  await page.waitForTimeout(70);await page.evaluate(()=>{__dw.game.ui.windline.layout();});
   const rect=await page.locator('.dw-windline-panel').evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};});
-  assert.ok(rect.left>=0&&rect.right<=width&&rect.top>=0&&rect.bottom<=height);evidence.layouts.push({width,height,...rect});
+  assert.equal(await page.locator('.dw-windline-panel').isVisible(),true,'critical recall status visible');
+  assert.ok(rect.left>=0&&rect.right<=width&&rect.top>=0&&rect.bottom<=height,JSON.stringify({width,height,rect}));evidence.layouts.push({width,height,...rect});
   await page.screenshot({path:`shots/windline-flow/recall-${width}.png`});
  }
  await page.setViewportSize({width:1280,height:720});
  evidence.recall=await page.evaluate(()=>{const g=__dw.game,p=g.player;__flowTick(36);const called=p.mode;__flowTick(160);const caught=p.mode;__flowSet(3,0);__flowTick();g.pause();g.frame(0,false);return {called,caught,hidden:document.querySelector('.dw-windline').hidden,ship:!!g.scene.getObjectByName('Windhaven')};});
  assert.deepEqual(evidence.recall,{called:'falling',caught:'flying',hidden:true,ship:false});
- assert.deepEqual(errors,[]);fs.writeFileSync('/tmp/driftwing-windline-flow-browser-check.json',JSON.stringify({evidence,errors},null,2));console.log('Normal-game controller-first flow passed:',JSON.stringify(evidence));
-} finally {await browser.close();}
+ assert.deepEqual(errors,[]);console.log('Normal-game controller-first flow passed:',JSON.stringify(evidence));
+} finally {fs.writeFileSync('/tmp/driftwing-windline-flow-browser-check.json',JSON.stringify({metadata,evidence,errors},null,2));await browser.close();}

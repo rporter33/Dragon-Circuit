@@ -5,16 +5,23 @@ import {createHash} from 'node:crypto';
 import {chromium} from 'playwright';
 import {browserEvidence} from './browser-evidence.mjs';
 const url=new URL(process.argv[2]??'http://127.0.0.1:5176/');url.search='?manual=1&quality=low';
+const gamepad=process.argv.includes('--device=gamepad'),review=process.argv.includes('--review-viewports');
+const captureDir=`shots/hud-layout-after${gamepad?'-gamepad':''}`;
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--enable-webgl']});
 const page=await browser.newPage({viewport:{width:1280,height:720}}),errors=[],evidence=[];
 let metadata=null;
 page.on('pageerror',e=>errors.push(e.message));
-fs.mkdirSync('shots/hud-layout-after',{recursive:true});
+fs.mkdirSync(captureDir,{recursive:true});
 try {
  await page.goto(url.href);await page.waitForFunction(()=>window.__dw?.ready,null,{timeout:180000});
  metadata=await browserEvidence(page,url);
  await page.evaluate(()=>{const g=__dw.game;g.save.data.firstLeadGuide='skipped';g.startGame();__dw.advance(.1);g.applySettings({...g.settings,reducedMotion:true});});
- for(const [width,height] of [[1920,1080],[1280,720],[960,540],[617,380],[360,780]]) {
+ if(gamepad)await page.evaluate(()=>{
+  const pad={id:'Xbox standard controller visual QA',mapping:'standard',connected:true,index:0,timestamp:0,axes:[.3,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,touched:false,value:0}))};
+  Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[pad]});__dw.game.frame(1/120,false);pad.axes[0]=0;__dw.game.frame(1/120,false);
+ });
+ const viewports=review?[[1280,720],[1920,1080],[617,380]]:[[1920,1080],[1280,720],[960,540],[617,380],[360,780]];
+ for(const [width,height] of viewports) {
   await page.setViewportSize({width,height});
   for(const scenario of ['mounted','mounted-crowded','freefall','tether','pull','boost','recall','hints-off']) {
    await page.evaluate(scenario=>{
@@ -77,9 +84,9 @@ try {
    assert.equal(result.centralOverlap,false,`${width}×${height} ${scenario} central view`);
    if(result.visible)assert.ok(result.panel.left>=0&&result.panel.right<=width&&result.panel.top>=0&&result.panel.bottom<=height);
    assert.equal(result.ship,false);
-   if(['mounted','mounted-crowded','tether','recall'].includes(scenario)){
+   if(review||['mounted','mounted-crowded','tether','recall'].includes(scenario)){
     await page.evaluate(()=>{const g=__dw.game;g.renderer.render(g.scene,g.camera,0);});
-    const path=`shots/hud-layout-after/${scenario}-${width}.png`;await page.screenshot({path});
+    const path=`${captureDir}/${scenario}-${width}.png`;await page.screenshot({path});
     entry.capture={path,sha256:createHash('sha256').update(fs.readFileSync(path)).digest('hex')};
    }
   }
@@ -99,4 +106,4 @@ try {
  await page.evaluate(()=>{const g=__dw.game;g.ui.hudHidden=false;g.pause();g.ui.debugOpen('photo');g.frame(0,true);});assert.equal(await page.locator('.dw-windline').isVisible(),false);
  assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>__dw.errors),[]);
  console.log(`HUD layout checks passed: ${evidence.length} combinations, menus and hidden HUD`);
-} finally {fs.writeFileSync('/tmp/driftwing-windline-hud-layout-browser-check.json',JSON.stringify({metadata,evidence,errors},null,2));await browser.close();}
+} finally {fs.writeFileSync(`/tmp/driftwing-windline-hud-layout${gamepad?'-gamepad':''}-browser-check.json`,JSON.stringify({metadata,evidence,errors},null,2));await browser.close();}

@@ -121,18 +121,18 @@ export class SkyLanceVisuals {
     camera.getWorldDirection(this.aimDirection);
     this.previewOrigin.copy(feet).addScaledVector(UP,LANCE.harnessHeight);
     const now=performance.now();
-    if (now >= this.nextPreview || this.previewState !== lance.state ||
-        !this.forecastAim.equals(this.aimDirection) || !this.forecastOrigin.equals(this.previewOrigin) ||
-        !this.forecastVelocity.equals(velocity) || !this.forecastCamera.equals(camera.position)) {
+    if (now >= this.nextPreview || this.previewState !== lance.state) {
       this.nextPreview=now+50;this.previewState=lance.state;
       this.forecastAim.copy(this.aimDirection); this.forecastOrigin.copy(this.previewOrigin); this.forecastVelocity.copy(velocity);
       this.forecastCamera.copy(camera.position);
       this.target=lance.state==='ready' ? predictCenteredTarget(lance.world,camera.position,this.aimDirection,this.previewOrigin,velocity) : null;
     }
-    // Never keep a blue READY cue for a different aim while waiting for the next bounded query.
+    // Bound expensive forecasts at 20 Hz even while falling. A changed aim/pose
+    // clears green until the next forecast; physical casts solve afresh on press.
     const fresh = this.forecastAim.dot(this.aimDirection) >= Math.cos(.008)
       && this.forecastOrigin.distanceToSquared(this.previewOrigin) <= .15*.15
-      && this.forecastVelocity.distanceToSquared(velocity) <= .5*.5;
+      && this.forecastVelocity.distanceToSquared(velocity) <= .5*.5
+      && this.forecastCamera.distanceToSquared(camera.position) <= .15*.15;
     const target = fresh ? this.target : null;
     const reachable=lance.state==='ready' && target?.state==='reachable';
     this.reticle.dataset.target = lance.rope ? 'attached' : target?.state ?? (lance.state === 'ready' ? 'checking' : lance.state);
