@@ -83,10 +83,22 @@ try {
     await page.locator('#redo').click(); assert.deepEqual(await document(), saved);
     const beforePlay = await document();
     const undoAvailable = await page.locator('#undo').isEnabled();
+    // Delay the sandbox response to exercise native repeated activation during boot.
+    const delayedSandbox = '**/editor-playtest.html*';
+    if (cycle < 2) await page.route(delayedSandbox, async route => {
+      await new Promise(resolve => setTimeout(resolve, 750)); await route.continue();
+    });
     const navigation = page.waitForEvent('framenavigated', { predicate: f => f.url().includes('editor-playtest.html') });
-    await page.locator('#playtest').click();
+    if (cycle === 0) {
+      await page.locator('#playtest').focus();
+      await page.keyboard.down('Enter'); await page.keyboard.down('Enter'); await page.keyboard.down('Enter'); await page.keyboard.up('Enter');
+    } else if (cycle === 1) await page.locator('#playtest').dblclick({ delay: 30 });
+    else await page.locator('#playtest').click();
     await page.waitForSelector('#playtest-frame');
+    assert.equal(await page.locator('#playtest-frame').count(), 1, 'repeated activation creates exactly one sandbox');
+    assert.equal(await page.locator('#playtest').isDisabled(), true);
     const sandbox = await navigation;
+    if (cycle < 2) await page.unroute(delayedSandbox);
     await sandbox.waitForFunction(() => window.__editorPlaytest?.ready, null, { timeout: 180_000 });
     const result = await sandbox.evaluate(async () => {
       const { game: g, region, assets } = __editorPlaytest;
@@ -125,10 +137,12 @@ try {
     }
     await sandbox.locator('#return').click();
     await page.waitForSelector('#playtest-frame', { state: 'detached' });
+    assert.equal(await page.locator('iframe').count(), 0, 'Return destroys the only sandbox');
+    assert.equal(await page.locator('#playtest').isEnabled(), true, 'Return permits another playtest');
     assert.deepEqual(await document(), beforePlay);
     assert.equal(await page.locator('#undo').isEnabled(), undoAvailable);
     assert.equal(await page.evaluate(() => __regionEditor.preview.active), true);
-    report.cycles.push({ cycle, ...result });
+    report.cycles.push({ cycle, activation: cycle === 0 ? 'repeated-enter' : cycle === 1 ? 'pointer-double-click' : 'single-click', singleSandbox: true, ...result });
   }
   // Translate an island through the actual gizmo, then undo/redo the committed move.
   await page.locator('#hierarchy [data-kind="island"]').first().click();

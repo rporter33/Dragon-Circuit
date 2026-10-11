@@ -69,7 +69,7 @@ function refresh(): void {
   element<HTMLButtonElement>('redo').disabled = !history.canRedo;
   element<HTMLButtonElement>('add-island').disabled = history.current.islands.length >= LIMITS.islands;
   element<HTMLButtonElement>('add-checkpoint').disabled = history.current.checkpoints.length >= LIMITS.checkpoints;
-  element<HTMLButtonElement>('playtest').disabled = issues.some(i => i.severity === 'error');
+  element<HTMLButtonElement>('playtest').disabled = !!frame || issues.some(i => i.severity === 'error');
   renderHierarchy(); renderInspector(); renderValidation(); renderPlacement();
   try { storeSession(history.current, sessionStorage); }
   catch { status('Draft is held in memory only. Export JSON before closing this tab.'); }
@@ -260,6 +260,7 @@ element<HTMLInputElement>('file-input').onchange = async e => {
   finally { input.value = ''; }
 };
 element('playtest').onclick = () => {
+  if (frame) return;
   try {
     const blockers = validateRegion(history.current).filter(i => i.severity === 'error');
     if (blockers.length) return status('Resolve validation blockers before playtesting.');
@@ -267,12 +268,20 @@ element('playtest').onclick = () => {
     frame = document.createElement('iframe'); frame.id = 'playtest-frame'; frame.title = 'Region playtest sandbox';
     frame.src = './editor-playtest.html' + (new URLSearchParams(location.search).has('debug') ? '?debug=1' : '');
     frame.addEventListener('load', () => frame?.contentWindow?.focus());
-    preview.active = false; document.body.appendChild(frame); status('Sandbox open. Return to continue editing.');
-  } catch { status('The sandbox snapshot could not be stored. Export your region and enable session storage to playtest.'); }
+    preview.active = false; document.body.appendChild(frame);
+    element<HTMLButtonElement>('playtest').disabled = true;
+    status('Sandbox open. Return to continue editing.');
+  } catch {
+    frame?.remove(); frame = null; preview.active = true;
+    element<HTMLButtonElement>('playtest').disabled = issues.some(i => i.severity === 'error');
+    status('The sandbox snapshot could not be stored. Export your region and enable session storage to playtest.');
+  }
 };
 window.addEventListener('message', e => {
   if (e.origin === location.origin && frame && e.source === frame.contentWindow && e.data?.type === 'driftwing-editor-return') {
-    frame.remove(); frame = null; preview.active = true; status('Back in the workshop. Your draft and undo history are intact.');
+    frame.remove(); frame = null; preview.active = true;
+    element<HTMLButtonElement>('playtest').disabled = issues.some(i => i.severity === 'error');
+    status('Back in the workshop. Your draft and undo history are intact.');
   }
 });
 window.addEventListener('keydown', e => {
