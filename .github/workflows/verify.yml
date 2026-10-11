@@ -48,6 +48,19 @@ jobs:
           node scripts/windline-preflight-profile.mjs http://127.0.0.1:5174 --traversal-motion --assert-budget --output=/tmp/driftwing-moving-preflight-browser-check.json
           node scripts/windline-preflight-profile.mjs http://127.0.0.1:5174 --cold-certificates --output=/tmp/driftwing-cold-preflight-browser-check.json
           node scripts/windline-reticle-motion-check.mjs http://127.0.0.1:5174
+          node scripts/editor-check.mjs http://127.0.0.1:5174
+          # The approved audio harness imports its offline QA helper from /src/;
+          # run it against this same exact checkout through Vite's source server.
+          npm run dev -- --host 127.0.0.1 --port 5411 --strictPort > /tmp/audio-dev.log 2>&1 &
+          audio_dev_pid=$!
+          trap 'kill "$preview_pid" "$audio_dev_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:5411/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:5411/ > /dev/null
+          node scripts/audio-qa.mjs http://127.0.0.1:5411 /tmp/driftwing-reticle-audio-qa
+          kill "$audio_dev_pid" 2>/dev/null || true
           node scripts/windline-hud-layout-check.mjs http://127.0.0.1:5174
           node scripts/windline-hud-layout-check.mjs http://127.0.0.1:5174 --device=gamepad --review-viewports
           node scripts/windline-performance-check.mjs http://127.0.0.1:5174 --assert-cost --evidence=ci
@@ -68,4 +81,7 @@ jobs:
             /tmp/driftwing-*-browser-check.json
             /tmp/driftwing-spin-integration.json
             /tmp/driftwing-windline-performance-ci.json
+            /tmp/driftwing-reticle-audio-qa/
+            /tmp/driftwing-editor-evidence/
+            /tmp/audio-dev.log
           retention-days: 30

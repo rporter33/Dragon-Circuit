@@ -1,5 +1,7 @@
 # Bounded underside sweep spike
 
+Historical report for failed head `6d5d8d1`. Robert subsequently authorized a deeper performance pass; see [current-render validation](WINDLINE_RETICLE_PERFORMANCE_2026-10-11.md) for its different implementation and evidence. The original failure below remains preserved.
+
 The candidate does **not** meet the complete fresh-query CPU acceptance gate. It is disabled by default; normal gameplay retains the reviewed complete sweep and truthful changed-pose invalidation. Per-render changed-pose forecasting was not enabled. PR #5 remains draft, with no merge/deploy authority. Main remains the PR #6 repair release `bc86843a494c64bed347ca6cdca7c52e3ef1ee66`.
 
 ## Scope and preserved behavior
