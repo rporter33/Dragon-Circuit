@@ -31,9 +31,14 @@ await context.addInitScript(() => {
 });
 const page = await context.newPage();
 const errors = [];
+const pendingRequests = new Set();
+let phase = 'initial boot';
+page.on('request', r => { if (r.url().startsWith(base.origin)) pendingRequests.add(r.url()); });
+page.on('requestfinished', r => pendingRequests.delete(r.url()));
 page.on('pageerror', e => errors.push(e.message));
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0, 300)); });
 page.on('requestfailed', r => {
+  pendingRequests.delete(r.url());
   if (r.url().startsWith(base.origin)) errors.push(r.url() + ': ' + r.failure()?.errorText);
 });
 page.on('response', r => {
@@ -63,6 +68,7 @@ try {
   assert.equal(await page.locator('#playtest').isEnabled(), true);
   await capture('editor-overview');
   for (let cycle = 0; cycle < 3; cycle++) {
+    phase = 'edit/playtest/return cycle ' + (cycle + 1);
     await page.locator('#hierarchy [data-kind="island"]').first().click();
     const before = await document();
     await field('Radius (m)', before.islands[0].radius + 5);
@@ -144,6 +150,7 @@ try {
     assert.equal(await page.evaluate(() => __regionEditor.preview.active), true);
     report.cycles.push({ cycle, activation: cycle === 0 ? 'repeated-enter' : cycle === 1 ? 'pointer-double-click' : 'single-click', singleSandbox: true, ...result });
   }
+  phase = 'gizmo/checkpoint/placement';
   // Translate an island through the actual gizmo, then undo/redo the committed move.
   await page.locator('#hierarchy [data-kind="island"]').first().click();
   await page.locator('#focus').click();
@@ -200,6 +207,7 @@ try {
   await page.locator('#redo').click(); assert.equal((await document()).assets.at(-1).scale, 1.2);
   await page.locator('#focus').click(); await capture('editor-column');
   // Validation must block unsafe playtests, while export/import remains an undoable operation.
+  phase = 'validation/export/import';
   await page.locator('#hierarchy [data-kind="checkpoint"]').first().click();
   const good = await document();
   await field('Height (m)', 480);
@@ -226,7 +234,21 @@ try {
   assert.deepEqual(await document(), prior);
   assert.match(await page.locator('#status').textContent(), /Import rejected/);
   await page.locator('#save').click();
-  await page.reload(); await page.waitForFunction(() => window.__regionEditor, null, { timeout: 120_000 });
+  phase = 'reload and persisted-region recovery';
+  const reloadStarted = Date.now();
+  // Wait for the document and functioning editor explicitly. Playwright's implicit
+  // 30 s load timeout previously hid the existing 120 s application-ready allowance.
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+  const documentReadyMs = Date.now() - reloadStarted;
+  await page.waitForFunction(() => window.__regionEditor?.preview.renderer.gl.info.render.frame >= 2, null, { timeout: 120_000 });
+  report.reload = {
+    documentReadyMs, editorReadyMs: Date.now() - reloadStarted,
+    state: await page.evaluate(() => ({
+      readyState: document.readyState,
+      renderFrame: __regionEditor.preview.renderer.gl.info.render.frame,
+      navigation: performance.getEntriesByType('navigation')[0]?.toJSON(),
+    })),
+  };
   assert.deepEqual(await document(), prior);
   assert.equal(await page.evaluate(() => localStorage['driftwing.save.v1']), '{"sentinel":"player progress untouched"}');
   assert.deepEqual(await page.evaluate(() => __editorStorageTrace), []);
@@ -234,6 +256,13 @@ try {
   assert.deepEqual(errors, []);
   report.passed = true;
   console.log('Editor browser workflow passed: 3 edit/undo/redo/save/load/playtest/return cycles; manual placement; collision-backed validation; export/import; save/ghost isolation.');
+} catch (error) {
+  report.failure = { phase, message: error.message, pendingRequests: [...pendingRequests] };
+  report.failure.pageState = await Promise.race([
+    page.evaluate(() => ({ readyState: document.readyState, editorReady: !!window.__regionEditor })),
+    new Promise(resolve => setTimeout(() => resolve('Renderer did not answer within 3 seconds'), 3000)),
+  ]).catch(() => 'Page state unavailable');
+  throw error;
 } finally {
   fs.writeFileSync(path.join(evidenceDir, 'browser-report.json'), JSON.stringify(report, null, 2));
   await browser.close();
