@@ -26,6 +26,8 @@ The original [bounded report](WINDLINE_SWEEP_SPIKE_2026-10-11.md) describes the 
 
 ## Exploratory checkpoint and final evidence location
 
+The clean source-head [raw evidence bundle](qa/WINDLINE_RETICLE_0FCC709.md) now contains complete per-query profiles, RAF frames/replay results, first-unhide captures, editor report and SHA-256 manifest from `0fcc709`. Its evidence-only publication preserves source/tests; exact final-head CI is separately reported in PR #5.
+
 Two pre-integration dirty source runs passed the stronger complete-query profile, including the first query and every certificate miss:
 
 | Depth | Run A mean / p95 / max ms | Run B mean / p95 / max ms |
