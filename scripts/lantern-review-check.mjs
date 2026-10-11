@@ -243,7 +243,10 @@ try {
     for (const [width, height] of [[1280, 720], [1920, 1080], [617, 463], [720, 1280]]) {
       await page.setViewportSize({ width, height });
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      await page.waitForFunction(() => Math.abs(parseFloat(getComputedStyle(document.querySelector('.dw-ui')).fontSize) - Math.max(14, Math.min(40, innerHeight * 0.01667))) < 0.1, null, { polling: 50 });
+      await page.waitForFunction(({ width, height }) => innerWidth === width && innerHeight === height &&
+        Math.abs(parseFloat(getComputedStyle(document.querySelector('.dw-ui')).fontSize) - Math.max(14, Math.min(40, height * 0.01667))) < 0.1 &&
+        Math.abs(parseFloat(getComputedStyle(document.querySelector('.dw-lantern-coach')).fontSize) - Math.max(12, Math.min(34, height * 0.0141695))) < 0.1,
+        { width, height }, { polling: 50 });
       const layout = await page.evaluate(() => {
         const g = __dw.game; __lanternNeutral(); g.races.abort('quit');
         g.player.teleport(g.player.position.clone().set(-900, 560, 500), -Math.PI / 2, 'flying', 30); g.cameraRig.snap(g.player);
