@@ -19,8 +19,8 @@ try{
   const update=v.updateReticle.bind(v);v.updateReticle=(...args)=>{const phase=window.__motionPhase;if(phase)phase.inReticle=true;const start=performance.now();try{return update(...args);}finally{if(phase)phase.inReticle=false;if(phase){phase.lastQueryMs=performance.now()-start;phase.reticleMs+=phase.lastQueryMs;phase.updates++;}}};
   const sweep=p.skyLance.world.sweep;p.skyLance.world.sweep=function(...args){const phase=window.__motionPhase;if(phase){if(phase.inReticle)phase.forecasts++;else phase.physicsSweeps++;}return sweep.apply(this,args);};
   const render=g.renderer.render.bind(g.renderer);g.renderer.render=(...args)=>{
-   const phase=window.__motionPhase;if(!phase?.uiOnly)render(...args);
-   if(phase){const now=performance.now(),el=document.querySelector('#sky-lance-reticle'),t=v.target,r=el.getBoundingClientRect();phase.frames.push({color:getComputedStyle(el).color,centre:[r.left+r.width/2,r.top+r.height/2],ms:now,queryMs:phase.lastQueryMs,state:el.dataset.target,valid:el.classList.contains('is-valid'),target:t?{state:t.state,anchor:t.anchorId,distance:t.distance,point:t.point.toArray()}:null,feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),yaw:g.cameraRig.yaw,revision:p.skyLance.world.revision});
+   const phase=window.__motionPhase,renderStart=performance.now();if(!phase?.uiOnly)render(...args);
+   if(phase){const now=performance.now(),el=document.querySelector('#sky-lance-reticle'),t=v.target,r=el.getBoundingClientRect();phase.frames.push({renderMs:now-renderStart,renderFrame:g.renderer.gl.info.render.frame,visibility:document.visibilityState,color:getComputedStyle(el).color,centre:[r.left+r.width/2,r.top+r.height/2],ms:now,queryMs:phase.lastQueryMs,state:el.dataset.target,valid:el.classList.contains('is-valid'),target:t?{state:t.state,anchor:t.anchorId,distance:t.distance,point:t.point.toArray()}:null,feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),yaw:g.cameraRig.yaw,revision:p.skyLance.world.revision});
     // Exercise the native standard-pad path above its deadzones. Alternate small
     // real look/steer inputs while the fixed neutral dot remains centred.
     if(phase.uiOnly){const sign=Math.floor((now-phase.start)/120)%2?1:-1;__motionPad.axes[2]=sign*.22;__motionPad.axes[0]=sign*.22;}
@@ -37,10 +37,18 @@ try{
    if(scenario.includes('painted-ui')){pad.axes[2]=.22;pad.axes[0]=.22;}
    g.frame(0,true);
    window.__motionPhase={scenario,uiOnly:scenario.includes('painted-ui'),frames:[],reticleMs:0,updates:0,forecasts:0,physicsSweeps:0,start:performance.now()};
-   return {cue:document.querySelector('#sky-lance-reticle').dataset.target,ship:!!g.scene.getObjectByName('Windhaven')};
+   return {cue:document.querySelector('#sky-lance-reticle').dataset.target,ship:!!g.scene.getObjectByName('Windhaven'),renderFrame:g.renderer.gl.info.render.frame};
   },scenario);
-  // Let already submitted software-3D work drain before the UI-only measurement.
-  if(scenario.includes('painted-ui')){await page.waitForTimeout(500);await page.evaluate(()=>{const p=window.__motionPhase;p.frames=[];p.reticleMs=0;p.updates=0;p.forecasts=0;p.physicsSweeps=0;p.start=performance.now();p.settlingMs=500;});}
+  // A fixed pause does not establish GPU completion: CI can take seconds to
+  // finish the last full3D submission. Explicitly finish that existing work
+  // outside the UI timing window. Full3D phases above remain fully submitted.
+  if(scenario.includes('painted-ui')){
+   let drainTimer;
+   try{evidence.uiDrain=await Promise.race([page.evaluate(()=>{const renderer=__dw.game.renderer.gl,gl=renderer.getContext(),start=performance.now(),before={renderFrame:renderer.info.render.frame,contextLost:gl.isContextLost(),visibility:document.visibilityState};gl.finish();return {method:'WebGL finish before timed UI',elapsedMs:performance.now()-start,before,after:{renderFrame:renderer.info.render.frame,contextLost:gl.isContextLost()}};}),new Promise((_,reject)=>{drainTimer=setTimeout(()=>reject(new Error('Prior full3D GPU drain exceeded 120s')),120000);})]);}
+   finally{clearTimeout(drainTimer);}
+   console.log('Prior full3D drain:',JSON.stringify(evidence.uiDrain));assert.equal(evidence.uiDrain.before.contextLost,false);assert.equal(evidence.uiDrain.after.contextLost,false);
+   await page.waitForTimeout(500);await page.evaluate(()=>{const p=window.__motionPhase;p.frames=[];p.reticleMs=0;p.updates=0;p.forecasts=0;p.physicsSweeps=0;p.start=performance.now();p.settlingMs=500;});
+  }
   if(scenario.includes('painted-ui'))await page.waitForTimeout(2000);
   else{
    // Full SwiftShader submission can yield fewer than eleven RAF frames in 4s
@@ -54,10 +62,10 @@ try{
   const frames=data.frames,span=data.end-data.start,green=frames.filter(f=>f.valid).length,checking=frames.filter(f=>f.state==='checking').length,intervals=frames.slice(1).map((f,i)=>f.ms-frames[i].ms).sort((a,b)=>a-b);
   let transitions=0;for(let i=1;i<frames.length;i++)if(frames[i].valid!==frames[i-1].valid)transitions++;
   const extent=values=>Math.max(...values)-Math.min(...values),yawSpan=extent(frames.map(f=>f.yaw)),horizontalSpan=Math.hypot(extent(frames.map(f=>f.feet[0])),extent(frames.map(f=>f.feet[2]))),verticalSpan=extent(frames.map(f=>f.feet[1]));
-  const summary={scenario,uiOnly:data.uiOnly,settlingMs:data.settlingMs??0,elapsedMs:span,frames:frames.length,callbacksPerSecond:frames.length/span*1000,green,checking,validityTransitions:transitions,reticleMsPerUpdate:data.reticleMs/data.updates,forecasts:data.forecasts,physicsSweeps:data.physicsSweeps,yawSpan,horizontalSpan,verticalSpan,p50CallbackMs:intervals[Math.floor(intervals.length*.5)],p95CallbackMs:intervals[Math.floor(intervals.length*.95)]};
+  const summary={scenario,uiOnly:data.uiOnly,settlingMs:data.settlingMs??0,elapsedMs:span,frames:frames.length,callbacksPerSecond:frames.length/span*1000,green,checking,validityTransitions:transitions,reticleMsPerUpdate:data.reticleMs/data.updates,forecasts:data.forecasts,physicsSweeps:data.physicsSweeps,renderMsPerCallback:frames.reduce((n,f)=>n+f.renderMs,0)/frames.length,submittedRenderFrames:extent([initial.renderFrame,...frames.map(f=>f.renderFrame)]),visibility:[...new Set(frames.map(f=>f.visibility))],yawSpan,horizontalSpan,verticalSpan,p50CallbackMs:intervals[Math.floor(intervals.length*.5)],p95CallbackMs:intervals[Math.floor(intervals.length*.95)]};
   evidence.phases.push({initial,summary,frames});console.log('Movement cue:',JSON.stringify(summary));
   assert.equal(initial.ship,false);assert.equal(initial.cue,'aiming');assert.ok(frames.length>10);assert.equal(checking,0);assert.equal(data.forecasts,0,'zero reticle prediction queries in every ready RAF phase');assert.equal(green,0);assert.ok(frames.every(f=>f.target===null&&f.state==='aiming'&&f.color==='rgb(168, 221, 236)'&&Math.abs(f.centre[0]-320)<.25&&Math.abs(f.centre[1]-180)<.25));
-  if(data.uiOnly){assert.ok(summary.callbacksPerSecond>=45,'high-refresh painted UI callback rate');assert.equal(green,0,'neutral dot never presents hit validity');assert.equal(transitions,0);assert.ok(summary.reticleMsPerUpdate<=2.5,'neutral dot mean CPU budget');assert.ok(yawSpan>.005,'native right stick produces real camera yaw');assert.ok(horizontalSpan>.01,'native left stick produces real steering');assert.ok(verticalSpan>.1,'actual falling poses move');}
+  if(data.uiOnly){assert.equal(summary.submittedRenderFrames,0,'no full3D submission in the timed UI phase');assert.deepEqual(summary.visibility,['visible']);assert.ok(summary.callbacksPerSecond>=45,'high-refresh painted UI callback rate');assert.equal(green,0,'neutral dot never presents hit validity');assert.equal(transitions,0);assert.ok(summary.reticleMsPerUpdate<=2.5,'neutral dot mean CPU budget');assert.ok(yawSpan>.005,'native right stick produces real camera yaw');assert.ok(horizontalSpan>.01,'native left stick produces real steering');assert.ok(verticalSpan>.1,'actual falling poses move');}
  }
  evidence.errors=errors;assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>__dw.errors),[]);
 }finally{fs.writeFileSync(out,JSON.stringify(evidence,null,2));await browser.close();}
