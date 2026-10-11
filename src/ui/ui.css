@@ -3348,7 +3348,12 @@
 
 /* Rider traversal feedback shares the normal HUD's visibility and device glyphs. */
 .dw-windline [hidden], .dw-windline[hidden] { display: none !important; }
-.dw-windline-panel { position: absolute; right: 1.5em; bottom: 1.5em; max-width: min(19em, 45vw); padding: .65em .9em; border: 1px solid #7fa8c466; border-radius: .5em; background: #182631e8; color: #f2eada; font-size: .85em; }
+.dw-windline-panel { position: absolute; box-sizing: border-box; padding: .65em .9em; border: 1px solid #7fa8c466; border-radius: .5em; background: #182631e8; color: #f2eada; font-size: max(14px, .85em); }
+.dw-windline-panel, .dw-windline-panel * { transition-property: none !important; }
+.dw-windline-compact { display: none; }
+.dw-windline-panel.is-compact .dw-windline-hints, .dw-windline-panel.is-compact .dw-windline-title { display: none; }
+.dw-windline-panel.is-compact .dw-windline-compact { display: block; }
+.dw-windline-panel.is-status-only .dw-windline-hints, .dw-windline-panel.is-status-only .dw-windline-title, .dw-windline-panel.is-status-only .dw-windline-compact { display: none; }
 .dw-windline-hints p { margin: .35em 0 0; }
 .dw-windline-boost { color: #a8e5ff; margin-top: .35em; }
 .dw-windline-meter { height: 4px; background: #315e9c66; margin-top: .3em; border-radius: 2px; overflow: hidden; }
