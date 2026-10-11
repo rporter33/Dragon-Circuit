@@ -27,7 +27,7 @@ visual updates were small by comparison. Release removes that workload.
 | 55 m stationary hang | 5.57 / 8.60 | 0.63 / 1.00 | 5,855 → 0 |
 | 55 m moving swing | 8.80 / 13.80 | 2.62 / 3.40 | 5,855 → 1,501 |
 | 55 m faster swing | 8.74 / 9.80 | 2.80 / 4.60 | 5,870 → 1,516 |
-| Released, after 55 m swing | 0.53 / 0.70 | 0.73 / 1.30 | 77 → 121 |
+| Released, after 55 m swing | 0.53 / 0.70 | 0.73 / 1.30 | 77 → 105 |
 
 Raw captures: [baseline](qa/windline-performance-before.json) and
 [repair](qa/windline-performance-after.json). Timings vary with JIT/GC and the
@@ -44,8 +44,11 @@ near rock. The whole line, its anchor solid and static identity are still checke
 Body and projectile sampling, exact primitive sweeps, collision budgets, and
 fail-closed behavior remain unchanged. No collision checks are disabled or
 deferred across physics steps. Seeded fine-lattice regression coverage remains;
-additional grazing paths verify that the conservative envelope misses no retained
-reference contact. Actual normal-world faster swinging catches at an edge twice
+those sampled paths retain their reference contacts, rather than proving all
+possible collision paths safe. Deterministic tests additionally cover exact
+underside contact/clearance boundaries, both sides of the angular seam, and a
+spire tangent between coarse lattice endpoints. They distinguish the former
+2.5 cm envelope from the new 4 cm envelope. Actual normal-world faster swinging catches at an edge twice
 in the short-line case and retains the tether safely.
 
 ## HUD evidence
@@ -57,10 +60,15 @@ stress size, not an assumed user display resolution.
 - 1280×720: [before](qa/windline-hud-before-1280.png) / [after](qa/windline-hud-after-1280.png).
 - 617×380: [before](qa/windline-hud-before-617.png) / [after](qa/windline-hud-after-617.png).
 
-The new secondary-panel placement reserves painted instruments, their absolute
-notes, compass, race feedback, tutorials, notices and prompts, and protects the
+The new secondary-panel placement reserves instrument boxes, their absolute
+notes, compass, race feedback, tutorials, notices and prompts. It includes the
+discovery banner's declared pseudo-element overflow, clipped to the viewport, and protects the
 central gameplay view. Optional guidance becomes a compact control row where a
-full card cannot fit. Core traversal status remains available with hints disabled.
+full card cannot fit. Airborne traversal status gets a resource-only fallback.
+If no safe edge slot exists even then, the secondary panel is suppressed rather
+than placed over a primary instrument. The ordinary critical-state matrix requires
+that status remains visible; optional mounted guidance may be suppressed in a
+crowded viewport. Core traversal status remains available with hints disabled.
 Content/visibility changes update placement immediately; stable frames avoid
 forced layout with a bounded 20 Hz check. Placement itself makes no world queries.
 Panel geometry does not animate through occupied space when reduced motion is on.
@@ -68,10 +76,13 @@ Panel geometry does not animate through occupied space when reduced motion is on
 `scripts/windline-hud-layout-check.mjs` verifies 40 combinations: mounted,
 mounted with controlled long prompts/tutorials, freefall, tether, pull, boost,
 recall hold and hints disabled, at 1920×1080, 1280×720, 960×540, 617×380 and
-360×780. It asserts actual painted sibling non-overlap, viewport containment and
+360×780. It asserts sibling box and discovery-band non-overlap, viewport containment and
 central-view clearance, and captures 20 screenshots for inspection. It also
 checks pause, hidden HUD and actual PhotoMode. The crowded presentation uses
 existing components and restores their DOM state; progression is not altered.
+An additional forced no-slot test verifies optional guidance is hidden and returns
+when space becomes available. These bounds do not claim to measure every possible
+decorative effect painted outside every pre-existing sibling box.
 
 The Windline panel passes these checks. Existing tutorial cards and the long
 interaction prompt still crowd one another in the extreme portrait stress case;
@@ -87,6 +98,12 @@ this repair does not claim to redesign the entire pre-existing mobile HUD.
 - Sustained normal-world query-cost regression passed; five repeated attachments
   passed and both lines remained retained through extended swing/grazing.
 - PR CI and deployment must run against the final committed repair before release.
+
+New browser evidence carries the full tested commit/tree, runner commit and dirty
+state, runtime build stamp, loaded script URLs, browser identity and capture time.
+The runner rejects a runtime build stamp that differs from its explicitly tested
+commit. The original measurements above were exploratory working-tree captures;
+they must not be attributed retrospectively to an exact committed head.
 
 Both verification and Pages workflows now include the normal-world HUD and cost
 checks. PR verification checks out the actual PR head and supplies that same SHA

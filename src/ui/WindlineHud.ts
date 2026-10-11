@@ -43,6 +43,7 @@ export class WindlineHud {
     const airborne = p.mode === 'traversing';
     const hints = view.save.data.settings.showControlHints && (riderFree || p.mode === 'flying');
     this.panel.dataset.context = `${p.mode}/${hints}/${!!lance?.rope}`;
+    this.panel.dataset.essential = String(airborne && !!boost);
     this.root.hidden = !visible || !lance || (!riderFree && !hints);
     this.reticle.hidden = !riderFree;
     this.panel.hidden = !hints && !airborne;

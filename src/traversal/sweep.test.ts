@@ -59,4 +59,46 @@ describe('accelerated analytic rock sweeps',()=>{
       if(dense(t,from,to,.02)!==null)expect(w.sweep(from,to,.02,'line'),`grazing tether ${i}`).not.toBeNull();
     }
   });
+  it('bounds the additional underside clearance at an exact vertical column',()=>{
+    const t=new Terrain({...LAYOUT,islands:[LAYOUT.islands[0]],spires:[],arches:[]}),s=t.islands[0],w=new TraversalWorld(t);
+    const x=s.def.x+s.def.radius*.35,z=s.def.z,bottom=s.bottomHeight(x,z),ny=-s.bottomNormal(x,z,new V()).y;
+    const point=(gap:number)=>new V(x,bottom-gap/ny,z);
+    // Distances are measured perpendicular to the shared contact plane, not vertically.
+    for(const gap of [.02499,.02501,.03999,.04001]){
+      const p=point(gap),old=dense(t,p,p,.02),hit=w.sweep(p,p,.02,'line');
+      expect(old!==null,`old clearance ${gap}`).toBe(gap<.025);
+      expect(!!hit,`new clearance ${gap}`).toBe(gap<.04);
+      if(hit){expect(hit.point).toEqual(p);expect(hit.exhausted).not.toBe(true);}
+    }
+  });
+  it('keeps contact and just-clear boundaries on both sides of the island angular seam',()=>{
+    const t=new Terrain({...LAYOUT,islands:[LAYOUT.islands[0]],spires:[],arches:[]}),s=t.islands[0],w=new TraversalWorld(t);
+    const results=[];
+    for(const angle of [-Math.PI+1e-7,Math.PI-1e-7]){
+      const r=s.outlineRadius(angle),x=s.def.x+Math.cos(angle)*r,z=s.def.z+Math.sin(angle)*r;
+      const y=(s.bottomHeight(x,z)+s.topHeight(x,z))*.5;
+      const point=(gap:number)=>new V(s.def.x+Math.cos(angle)*(r+gap),y,s.def.z+Math.sin(angle)*(r+gap));
+      const result=[.02499,.02501,.03999,.04001].map(gap=>{
+        const p=point(gap),old=dense(t,p,p,.02),hit=w.sweep(p,p,.02,'line');
+        expect(old!==null,`seam old ${angle}/${gap}`).toBe(gap<.025);
+        expect(!!hit,`seam new ${angle}/${gap}`).toBe(gap<.04);
+        if(hit)expect(hit.exhausted).not.toBe(true);
+        return !!hit;
+      });
+      results.push(result);
+    }
+    expect(results[0]).toEqual(results[1]);
+  });
+  it('covers a spire tangent between lattice samples and keeps a just-clear tangent open',()=>{
+    const t=new Terrain({...LAYOUT,islands:[],arches:[],spires:[{id:912,x:0,z:0,tipY:100,bellyY:140,topY:180,bellyRadius:12,topRadius:3,seed:27}]}),s=t.spires[0],w=new TraversalWorld(t);
+    const y=135,r=s.baseRadiusAt(y)*.97;
+    for(const gap of [.01999,.02501,.0399,.0401]){
+      // The closest point at z=0 falls between the two coarse sample endpoints.
+      const from=new V(r+gap,y,-.017),to=new V(r+gap,y,.023);
+      const old=dense(t,from,to,.02),hit=w.sweep(from,to,.02,'line');
+      if(gap<.025)expect(old).not.toBeNull();
+      expect(!!hit,`tangent ${gap}`).toBe(gap<.04);
+      if(hit){expect(hit.exhausted).not.toBe(true);expect(hit.fraction).toBeGreaterThanOrEqual(0);expect(hit.fraction).toBeLessThanOrEqual(1);}
+    }
+  });
 });

@@ -18,4 +18,7 @@ describe('secondary HUD placement', () => {
     expect(edgeSlot(360, 640, 160, 330, [])).toBeNull();
     expect(edgeSlot(360, 640, 160, 70, [])).not.toBeNull();
   });
+  it('returns no placement when reserved content fills the viewport',()=>{
+    expect(edgeSlot(617,380,160,40,[{left:0,top:0,right:617,bottom:380}])).toBeNull();
+  });
 });

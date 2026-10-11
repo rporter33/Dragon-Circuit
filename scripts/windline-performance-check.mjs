@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { chromium } from 'playwright';
+import {browserEvidence} from './browser-evidence.mjs';
 const url = new URL(process.argv[2] ?? 'http://127.0.0.1:5174/');
 url.search = '?manual=1&quality=low';
 const label = process.argv.find(a => a.startsWith('--evidence='))?.slice(11) ?? 'profile';
@@ -12,6 +13,7 @@ const page = await browser.newPage({viewport:{width:1280,height:720}}), errors=[
 page.on('pageerror', e => errors.push(e.message));
 try {
   await page.goto(url.href); await page.waitForFunction(() => window.__dw?.ready, null, {timeout:180000});
+  const metadata=await browserEvidence(page,url);
   const result = await page.evaluate(() => {
     const g=__dw.game,p=g.player,t=g.world.terrain;
     g.startGame();__dw.advance(.1);g.applySettings({...g.settings,reducedMotion:true});
@@ -51,6 +53,8 @@ try {
     for(let run=0;run<5;run++){setup(18);const start=performance.now();tick({pressed:{lance:true},lanceHeld:true,aim});for(let i=0;i<240&&!p.skyLance.rope&&p.skyLance.state==='projectile';i++)tick({lanceHeld:true,aim});repeats.push({attached:!!p.skyLance.rope,ms:performance.now()-start});tick({pressed:{lanceRelease:true}});}
     return {cases,repeats,errors:__dw.errors,ship:!!g.scene.getObjectByName('Windhaven'),practice:!!document.querySelector('#sky-lance-controls')};
   });
+  result.metadata=metadata;
+  fs.writeFileSync(`/tmp/driftwing-windline-performance-${label}.json`,JSON.stringify(result,null,2));
   assert.equal(result.ship,false);assert.equal(result.practice,false);assert.ok(result.cases.every(c=>c.retained));assert.ok(result.repeats.every(c=>c.attached));assert.deepEqual(errors,[]);assert.deepEqual(result.errors,[]);
   for(const c of result.cases)assert.deepEqual(c.recalled,{called:'falling',caught:'flying',rope:false});
   if(process.argv.includes('--assert-cost'))for(const c of result.cases){
@@ -58,5 +62,5 @@ try {
     assert.ok(c.hanging.queriesPerStep<100,'exact vertical hanging query budget');
     assert.ok(c.swinging.p95Ms<20,'sustained CPU step budget (software-browser test, not a GPU claim)');
   }
-  fs.writeFileSync(`/tmp/driftwing-windline-performance-${label}.json`,JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
+  console.log(JSON.stringify(result,null,2));
 } finally {await browser.close();}
