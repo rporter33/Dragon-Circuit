@@ -17,9 +17,10 @@ try {
  metadata=await browserEvidence(page,url);
  await page.evaluate(()=>{const g=__dw.game;g.save.data.firstLeadGuide='skipped';g.startGame();__dw.advance(.1);g.applySettings({...g.settings,reducedMotion:true});});
  if(gamepad)await page.evaluate(()=>{
-  const pad={id:'Xbox standard controller visual QA',mapping:'standard',connected:true,index:0,timestamp:0,axes:[.3,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,touched:false,value:0}))};
+  const pad={id:'Xbox standard controller visual QA',mapping:'standard',connected:true,index:0,timestamp:0,axes:[.9,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,touched:false,value:0}))};
   Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[pad]});__dw.game.frame(1/120,false);pad.axes[0]=0;__dw.game.frame(1/120,false);
  });
+ if(gamepad){assert.equal(await page.evaluate(()=>__dw.game.input.device),'gamepad');assert.notEqual(await page.locator('.dw-ui').getAttribute('data-device'),'keyboard');}
  const viewports=review?[[1280,720],[1920,1080],[617,380]]:[[1920,1080],[1280,720],[960,540],[617,380],[360,780]];
  for(const [width,height] of viewports) {
   await page.setViewportSize({width,height});
@@ -75,7 +76,7 @@ try {
     const a=panel.getBoundingClientRect();
     const visible=painted(panel),overlaps=visible?blockers.filter(b=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top):[];
     const centre={left:innerWidth*.35,right:innerWidth*.65,top:innerHeight*.25,bottom:innerHeight*.75};
-    return {panel:plain(a),visible,essential:panel.dataset.essential==='true',viewport:[innerWidth,innerHeight],layout:panel.dataset.layout,blockers,overlaps,centralOverlap:visible&&a.left<centre.right&&a.right>centre.left&&a.top<centre.bottom&&a.bottom>centre.top,mode:__dw.game.player.mode,ship:!!__dw.game.scene.getObjectByName('Windhaven')};
+    return {panel:plain(a),visible,essential:panel.dataset.essential==='true',viewport:[innerWidth,innerHeight],layout:panel.dataset.layout,device:__dw.game.input.device,glyphDevice:document.querySelector('.dw-ui').dataset.device,blockers,overlaps,centralOverlap:visible&&a.left<centre.right&&a.right>centre.left&&a.top<centre.bottom&&a.bottom>centre.top,mode:__dw.game.player.mode,ship:!!__dw.game.scene.getObjectByName('Windhaven')};
    });
    const entry={width,height,scenario,...result};evidence.push(entry);
    if(result.essential)assert.equal(result.visible,true,`${width}×${height} ${scenario} critical status visible`);

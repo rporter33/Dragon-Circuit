@@ -445,7 +445,9 @@ try {
       }
       previousCamera.copy(g.camera.quaternion);
     };
-    for (const releaseStep of [20,40,60,80,100,120,140,160,lastReleaseStep]) {
+    // Faster casting attaches earlier in the same unpowered swing. Sample the
+    // rising arc too; landing remains a physical result, without pull or boost.
+    for (const releaseStep of [20,40,60,80,100,120,140,160,lastReleaseStep,200,220,240]) {
       document.querySelector('#sky-lance-controls button').click();
       frame(); for(let i=0;i<120;i++)frame({},{moveY:1,sprint:true});
       frame({jump:true},{moveY:1,sprint:true});frame({lance:true});

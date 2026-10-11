@@ -21,9 +21,11 @@ try{
  await page.goto(url.href);await page.waitForFunction(()=>window.__dw?.ready,null,{timeout:180000});metadata=await browserEvidence(page,url);
  await page.evaluate(()=>{
   const g=__dw.game;g.save.data.firstLeadGuide='skipped';g.startGame();__dw.advance(.1);g.applySettings({...g.settings,reducedMotion:true});
-  const pad=window.__reticlePad={id:'Xbox standard controller reticle QA',mapping:'standard',connected:true,index:0,timestamp:0,axes:[.3,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,touched:false,value:0}))};
+  const pad=window.__reticlePad={id:'Xbox standard controller reticle QA',mapping:'standard',connected:true,index:0,timestamp:0,axes:[.9,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,touched:false,value:0}))};
   Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[pad]});g.frame(1/120,false);pad.axes[0]=0;g.frame(1/120,false);
  });
+ assert.equal(await page.evaluate(()=>__dw.game.input.device),'gamepad');
+ evidence.glyphDevice=await page.locator('.dw-ui').getAttribute('data-device');assert.notEqual(evidence.glyphDevice,'keyboard');
  evidence.green=[];
  for(const [width,height] of [[1280,720],[1920,1080],[617,380]]){
   await page.setViewportSize({width,height});await readyPose();const c=await cue();evidence.green.push(c);
