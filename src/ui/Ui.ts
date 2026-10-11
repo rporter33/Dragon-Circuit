@@ -439,6 +439,7 @@ export class Ui implements UiSystem {
     this.tips.update(dt, view, hudVisible);
     this.windline?.update(view, hudVisible && !this.capturesInput);
     this.gaugeTip.set(this.tips.gaugeOn);
+    this.windline?.layout();
     if (hudVisible && view.tutorialShrine && view.save.data.settings.showControlHints &&
         view.races.state === 'idle' && readyForShrine(view.save.data)) {
       // Remember the offer immediately so backing out does not reopen it every frame.
