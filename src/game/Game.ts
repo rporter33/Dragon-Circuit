@@ -2,6 +2,7 @@
 // 120 Hz (flight physics, ring checks); everything visual runs once per rendered frame and
 // interpolates between the last two physics steps.
 
+import type { SkyLanceVisuals } from '../traversal/SkyLanceVisuals';
 import { PerspectiveCamera, Scene, Vector3 } from 'three';
 import { EventBus } from '../core/events';
 import type { BoxCollider, GameEvents, RiderLook, Settings, WyvernLook } from '../core/types';
@@ -78,8 +79,11 @@ export class Game implements GameActions {
   private running = false;
   private view: GameView;
   private showcase: Showcase | null = null;
+  /** Presentation only, populated by the opt-in experimental showcase. */
+  skyLanceVisuals: SkyLanceVisuals | null = null;
   /** Neutral input fed to the simulation when the player has no control (title, menus). */
   private idleInput = emptyFrame();
+  private readonly lanceAim = new Vector3();
   /** Lowers the render resolution when frames run long (real GPUs vary wildly). */
   private adaptive = new AdaptiveResolution();
   /** Seconds before frame times count for adaptive resolution again (boot, screen changes). */
@@ -232,6 +236,11 @@ export class Game implements GameActions {
     requestAnimationFrame(frame);
   }
 
+  /** Stop the loop and release opt-in scene resources. Other systems retain their existing lifecycle. */
+  stop(): void {
+    this.running = false; this.showcase?.dispose?.(this); this.showcase = null;
+  }
+
   /**
    * Advance the game by dt seconds (sim + presentation) and, unless told not to, render.
    * `frameTime` is the real, unclamped time since the last frame (feeds adaptive resolution).
@@ -240,6 +249,8 @@ export class Game implements GameActions {
     if (!(dt >= 0)) dt = 0;
     this.syncColliders();
     this.input.flying = this.player.mode === 'flying';
+    this.input.traversal = !!this.player.skyLance && this.screen === 'play' && !this.ui.capturesInput &&
+      (this.player.mode === 'onFoot' || this.player.mode === 'falling' || this.player.mode === 'traversing');
     const input = this.input.poll(dt);
     this.haptics.update(dt);
     const simulate = (this.screen === 'play' || this.screen === 'title') && !this.debug.freeze;
@@ -248,7 +259,11 @@ export class Game implements GameActions {
       this.accumulator += dt;
       let steps = 0;
       const gameplayInput = this.screen === 'play' && this.player.controllable && !this.ui.capturesInput ? input : this.idleInput;
+      if (gameplayInput === this.idleInput && this.player.skyLance) this.player.cancelLanceWindup();
       // Presses are per rendered frame; latch them so 0 or several fixed steps see each once.
+      if (this.player.skyLance && !gameplayInput.aim) {
+        gameplayInput.aim = this.camera.getWorldDirection(this.lanceAim);
+      }
       this.player.latchPresses(gameplayInput);
       while (this.accumulator >= FIXED_DT && steps < MAX_STEPS) {
         this.player.fixedUpdate(FIXED_DT, gameplayInput, this.cameraRig.yaw);
@@ -275,9 +290,11 @@ export class Game implements GameActions {
     this.world.update(dt, this.camera, focus);
     this.wyvern.update(dt, this.player.wyvernPose);
     this.rider.update(dt, this.player.riderPose, this.player.riderPose.mounted ? this.wyvern.saddle : null);
+    if (this.player.skyLance) this.skyLanceVisuals?.update(this.player.skyLance, this.rider, this.player.riderPose, alpha);
     // Photo mode (opened from the pause menu) flies the camera while the world holds still.
     const cameraInput = this.screen === 'play' || this.screen === 'stable' || this.cameraRig.mode === 'photo';
     this.cameraRig.update(dt, cameraInput ? input : this.idleInput, this.player);
+    if (this.player.skyLance) this.skyLanceVisuals?.updateReticle(this.camera, this.player.foot.position, this.player.foot.velocity, this.player.skyLance);
     this.dressing.update(dt, this.camera, focus);
     this.races.update(dt, this.camera, this.player);
     this.collectibles.update(dt, this.camera, this.player);
@@ -411,6 +428,7 @@ export class Game implements GameActions {
   // --- Internals ------------------------------------------------------------------------------
 
   private setScreen(screen: GameScreen): void {
+    if (this.screen === 'play' && screen !== 'play' && this.player.skyLance) this.player.cancelLanceWindup();
     this.audio.setScreen(screen);
     this.screen = screen;
     this.adaptiveGrace = Math.max(this.adaptiveGrace, 1);

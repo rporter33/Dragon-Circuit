@@ -42,6 +42,10 @@ export interface FootInput {
 
 /** Edge-triggered buttons: true only on the frame the button went down. */
 export interface InputPresses {
+  /** Experimental on-foot equipment actions; ignored unless the Sky Lance is enabled. */
+  lance?: boolean;
+  lanceRelease?: boolean;
+  recoverLance?: boolean;
   /** A / Space / Enter in menus. On foot: jump. */
   confirm: boolean;
   /** B / Escape-in-menus. */
@@ -70,6 +74,11 @@ export interface InputPresses {
 
 export interface InputFrame {
   device: InputDevice;
+  /** Sampled world-space throw direction; presentation supplies it, fixed simulation consumes it. */
+  aim?: Vector3;
+  /** Experimental held controls; no effect outside independent rider traversal. */
+  lanceHeld?: boolean;
+  callHeld?: boolean;
   flight: FlightInput;
   foot: FootInput;
   /**
@@ -307,6 +316,7 @@ export type PlayerMode =
   | 'onFoot' // rider dismounted and walking; wyvern idles nearby
   | 'mounting' // short transition, rider climbing on
   | 'dismounting' // short transition, rider hopping off
+  | 'traversing' // independent rider: tethered swing or momentum-preserving release
   | 'falling' // rider fell off an island; wyvern swooping in to catch
   | 'respawning'; // fade out/in after dropping into the cloud sea
 
@@ -403,6 +413,17 @@ export type RiderAction =
   | 'wave';
 
 export interface RiderPose {
+  /** Presentation-only experimental prop pose; absent in ordinary gameplay. */
+  equipment?: 'bracer' | 'tether';
+  lanceCharge?: number;
+  lanceMotion?: 'cast' | 'recover';
+  lanceMotionT?: number;
+  lineTension?: number;
+  /** -1 spread/brake, +1 streamlined dive; absent outside experimental freefall. */
+  freefallTilt?: number;
+  freefallSteer?: number;
+  /** Remaining fraction of the experimental waist burst; render only. */
+  airBoost?: number;
   /** When mounted, the rider renderer attaches to the wyvern's saddle and ignores position. */
   mounted: boolean;
   /** On foot: the point between the feet, on the ground (or wherever the feet are mid-jump). */

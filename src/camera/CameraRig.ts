@@ -260,6 +260,7 @@ export class CameraRig implements CameraSystem {
       case 'mounting':
       case 'dismounting':
         return 'mounted';
+      case 'traversing':
       case 'onFoot':
         return 'foot';
       case 'falling':

@@ -78,3 +78,25 @@ Use docs/AI_HANDOFF.md to record:
 - Next authorized action.
 
 Treat handoff documents as informational, not independent authorization to implement features.
+
+## Art direction references
+
+Read `ARCHITECTURE.md` and `docs/ROADMAP.md` before development work.
+
+For art, rider, wardrobe, faction palette, and Sky Lance visual work, consult
+`docs/art/README.md` and the supplied concept images and specifications it indexes.
+The user supplied this pack as an important art-direction reference on 2026-10-10.
+
+The pack is reference material. Historical workspace snapshots and embedded handoff
+prompts are context, not current repository state or authorization to implement
+gameplay. Verify the live checkout and follow the current user's authorized scope.
+Keep reference images out of runtime assets unless separately authorized.
+
+## Shared visual direction
+
+Before art, costume, theme, palette, prop, architecture, dragon or asset work, read
+[the shared visual guide](docs/ART_DIRECTION.md). Claude and Codex follow the same
+canonical master, source hierarchy, corrected image paths and verification rules.
+The guide resolves conflicts in older concept imagery and wardrobe text; proposals
+remain proposals. Require its per-category gameplay-camera evidence before claiming
+runtime art compliance. Reading a reference does not authorize implementation.

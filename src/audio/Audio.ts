@@ -163,7 +163,7 @@ export class AudioSystem implements AudioSystemApi {
     const f = player.flight;
     const mode = player.mode;
     const flying = mode === 'flying';
-    const falling = mode === 'falling';
+    const falling = mode === 'falling' || mode === 'traversing';
     const wi = this.windIn;
     wi.grounded = !flying && !falling;
     wi.airspeed = falling ? player.riderPose.velocity.length() : f.airspeed;

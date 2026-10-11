@@ -71,6 +71,13 @@ interface ColliderDef {
 }
 
 export class Rider implements RiderRenderable {
+  /** Render-only sockets, resolved against the current rig after animation and model rebuilds. */
+  equipmentFrame(socket: 'bracer' | 'harness' | 'waist', out: Matrix4): Matrix4 {
+    const { bones, dims } = this.model.rig;
+    out.copy(bones[socket === 'bracer' ? B.foreArmL : socket === 'waist' ? B.hips : B.chest].matrixWorld);
+    return out.scale(_v.set(socket === 'bracer' ? dims.g : dims.w, dims.h, dims.g));
+  }
+
   readonly group = new Group();
   private model: RiderModel;
   private animator: RiderAnimator;

@@ -50,6 +50,8 @@ export class Companion {
   anim: CompanionAnim = { airborne: false, gait: 'idle', wingSpread: 0.22, flapPhase: 0, flapStrength: 0, flare: 0 };
   /** Set when the wyvern should come to the rider even if it's within the follow distance. */
   called = false;
+  private airRecall = false;
+  private readonly recallOrientation = new Quaternion();
   /**
    * How far the rider may wander before the wyvern follows. Normally the follow distance; at a
    * new game the wyvern starts further away than that and waits where it was placed.
@@ -87,6 +89,7 @@ export class Companion {
   /** Stand at the walker's current position facing its yaw. */
   standStill(): void {
     this.state = 'idle';
+    this.airRecall = false;
     this.stateTime = 0;
     this.walker.speed = 0;
     this.velocity.set(0, 0, 0);
@@ -101,6 +104,7 @@ export class Companion {
   /** Begin the catch: dive from wherever the wyvern is to just below the falling rider. */
   beginSwoop(rider: Vector3, riderVel: Vector3, catchPoint: Vector3, duration: number): void {
     this.state = 'swoop';
+    this.airRecall = false;
     this.stateTime = 0;
     this.duration = duration;
     this.p0.copy(this.walker.position);
@@ -114,9 +118,17 @@ export class Companion {
     this.landYaw = yawOf(_a.set(riderVel.x, 0, riderVel.z).lengthSq() > 0.5 ? _a : _dir.set(-_dir.x, 0, -_dir.z));
   }
 
+  /** Cancel a pending rescue without snapping an airborne wyvern into a standing pose. */
+  cancelRescue(ground: Vector3, standHeight: number): void {
+    if (this.state !== 'swoop') return;
+    this.called = false;
+    this.beginHop(ground, standHeight, this.walker.yaw);
+  }
+
   /** Hop (short flight) to land at `target` (a ground point), facing `faceYaw`. */
   private beginHop(target: Vector3, standHeight: number, faceYaw: number): void {
     this.state = 'hop';
+    this.airRecall = false;
     this.stateTime = 0;
     this.p0.copy(this.walker.position);
     this.p2.copy(target);
@@ -201,16 +213,23 @@ export class Companion {
         bezier(this.p0, this.p1, this.p2, e, w.position, _tan);
         if (_tan.lengthSq() < 1e-6) _tan.set(Math.sin(w.yaw), 0, Math.cos(w.yaw));
         const flatLen = Math.sqrt(_tan.x * _tan.x + _tan.z * _tan.z);
-        const pitch = clamp(Math.atan2(_tan.y, flatLen), -0.9, 0.7);
+        const hop = this.state === 'hop';
+        // A long hop to a lower island is scripted travel, not a high-speed aerodynamic dive.
+        // Keep its silhouette readable and level the body before supported contact.
+        const pitch = clamp(Math.atan2(_tan.y, flatLen), hop ? -0.55 : -0.9, 0.7)
+          * (hop ? 1-smoothstep(0.75,1,t) : 1);
         if (flatLen > 0.05) w.yaw = Math.atan2(_tan.x, _tan.z);
         if (this.state === 'hop' && t > 0.8) w.yaw = lerp(w.yaw, this.landYaw, smoothstep(0.8, 1, t));
         standingOrientation(w.yaw, _a.set(0, 1, 0), 0, pitch, this.orientation);
-        this.anim.airborne = t > 0.06 && t < 0.97;
+        if (this.airRecall) this.orientation.slerpQuaternions(this.recallOrientation, this.orientation, smoothstep(0,.12,t));
+        // Hop feet remain airborne until settle() actually establishes support below.
+        this.anim.airborne = (this.airRecall || t > 0.06) && (hop || t < 0.97);
         this.anim.gait = t < 0.15 ? 'takeoff' : t > 0.82 ? 'landing' : 'jump';
         this.anim.wingSpread = this.state === 'swoop' && t > 0.3 && t < 0.75 ? 0.45 : 1;
         this.anim.flapStrength = this.state === 'hop' ? (t < 0.6 ? 0.85 : 0.4) : t < 0.3 ? 0.9 : 0.2;
         this.anim.flapPhase = (flapClock * breed.flapRate) % 1;
-        this.anim.flare = smoothstep(0.7, 0.95, t) * (this.state === 'hop' ? 1 : 0.5);
+        const descent = hop ? smoothstep(.1,.65,-_tan.y/Math.max(.1,flatLen))*.8 : 0;
+        this.anim.flare = Math.max(descent,smoothstep(0.7, 0.95, t) * (hop ? 1 : 0.5));
         const g = terrain.groundAt(w.position.x, w.position.z, w.position.y);
         w.groundY = g ? g.y : w.groundY;
         if (this.state === 'hop' && t >= 1) {
@@ -312,6 +331,7 @@ export class Companion {
     this.called = false;
     this.leash = P.followDistance;
     this.state = 'idle';
+    this.airRecall = false;
     this.stateTime = 0;
     this.greetPlanned = false;
   }
@@ -340,8 +360,13 @@ export class Companion {
     return out.set(rider.x - s * along - c * lat, rider.y, rider.z - c * along + s * lat);
   }
 
+  /** Ground recall of an independently flying dragon. Failure leaves its current flight intact. */
+  recallFromAir(rider: Vector3, breed: BreedStats, terrain: TerrainQuery): boolean {
+    return this.hopToward(rider, breed, terrain, true);
+  }
+
   /** Find a landing spot beside the rider (a greeting point) and hop there. */
-  private hopToward(rider: Vector3, breed: BreedStats, terrain: TerrainQuery): void {
+  private hopToward(rider: Vector3, breed: BreedStats, terrain: TerrainQuery, fromAir = false): boolean {
     const sh = breed.standHeight;
     for (let k = 0; k < 8; k++) {
       const off = (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 4);
@@ -351,12 +376,18 @@ export class Companion {
       _a.y = g.y;
       // Land on the greeting line, facing along it.
       this.beginHop(_a, sh, this.greetYaw);
-      return;
+      // Already airborne: never replay the ground launch or plant feet at the old perch.
+      this.airRecall = fromAir;
+      this.recallOrientation.copy(this.orientation);
+      return true;
     }
+    if (fromAir) { this.called = false; return false; }
     // Nowhere to land near the rider: stay put.
     this.called = false;
     this.state = 'idle';
+    this.airRecall = false;
     this.stateTime = 0;
+    return false;
   }
 }
 

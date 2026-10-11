@@ -33,6 +33,8 @@ export class IslandShape {
   readonly maxRadius: number;
   readonly minY: number;
   readonly maxY: number;
+  /** Lower bound for top height over the footprint (hills/terraces only add height). */
+  readonly minTopY: number;
   private outlineN: (theta: number) => number;
   private hillN: Noise2;
   private rockN: Noise2;
@@ -118,6 +120,7 @@ export class IslandShape {
     this.maxRadius = def.radius * (1 + def.outline + this.rag);
     const lean = Math.hypot(this.tiltX, this.tiltZ) * this.maxRadius;
     this.maxY = def.y + def.hills + this.terrace + lean + 2;
+    this.minTopY = def.y - RIM_DROP - lean;
     this.minY = def.y - def.depth * 1.3 - def.lip * this.lipVar * 1.6 - lean - 6;
     this.track = def.kind === 'roost' ? this.buildTrack() : null;
   }
