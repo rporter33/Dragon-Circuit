@@ -41,9 +41,16 @@ try{
   },scenario);
   // Let already submitted software-3D work drain before the UI-only measurement.
   if(scenario.includes('painted-ui')){await page.waitForTimeout(500);await page.evaluate(()=>{const p=window.__motionPhase;p.frames=[];p.reticleMs=0;p.updates=0;p.forecasts=0;p.physicsSweeps=0;p.start=performance.now();p.settlingMs=500;});}
-  await page.waitForTimeout(scenario.includes('painted-ui')?2000:4000);
+  if(scenario.includes('painted-ui'))await page.waitForTimeout(2000);
+  else{
+   // Full SwiftShader submission can yield fewer than eleven RAF frames in 4s
+   // on CI. Retain the rendered-sample requirement; collect for at least 4s and
+   // until it is met, with a hard 120s deadline. Report the actual slow rate.
+   try{await page.waitForFunction(()=>__motionPhase.frames.length>10&&performance.now()-__motionPhase.start>=4000,null,{timeout:120000,polling:100});}
+   catch(error){evidence.collectionFailure={scenario,message:error.message,phase:await Promise.race([page.evaluate(()=>window.__motionPhase).catch(e=>({error:e.message})),new Promise(resolve=>setTimeout(()=>resolve({error:'Phase query did not respond within 2s'}),2000))])};console.error('Rendered RAF collection failure:',JSON.stringify(evidence.collectionFailure));throw error;}
+  }
   const data=await page.evaluate(()=>{const phase=window.__motionPhase;window.__motionPhase=null;phase.end=performance.now();return phase;});
-  await page.screenshot({path:`${shots}/${scenario}.png`});
+  await page.screenshot({path:`${shots}/${scenario}.png`,timeout:120000});
   const frames=data.frames,span=data.end-data.start,green=frames.filter(f=>f.valid).length,checking=frames.filter(f=>f.state==='checking').length,intervals=frames.slice(1).map((f,i)=>f.ms-frames[i].ms).sort((a,b)=>a-b);
   let transitions=0;for(let i=1;i<frames.length;i++)if(frames[i].valid!==frames[i-1].valid)transitions++;
   const extent=values=>Math.max(...values)-Math.min(...values),yawSpan=extent(frames.map(f=>f.yaw)),horizontalSpan=Math.hypot(extent(frames.map(f=>f.feet[0])),extent(frames.map(f=>f.feet[2]))),verticalSpan=extent(frames.map(f=>f.feet[1]));
