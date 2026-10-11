@@ -119,8 +119,9 @@ The bundled readable PowerShell server binds only `127.0.0.1:18787`, requires no
 admin setup, and opens the review game. It makes no persistent execution-policy change.
 Closing the console stops it. Windows execution remains a physical review check.
 
-This localhost origin has separate browser storage from the normal game, so keep its folder,
-port and browser to retain these review records. It does not migrate normal saves. If managed
+This localhost origin has separate browser storage from the normal game, so it separates normal production saves. Different review folders served on this same port
+in the same browser share review records and ghosts. Keep the port and browser to retain
+those records. It does not migrate normal saves. If managed
 Windows blocks PowerShell, the source fallback is `npm ci`, `npm run build`, then
 `npm run preview -- --host 127.0.0.1 --port 18787`. A cloud localhost URL is not the delivery.
 
