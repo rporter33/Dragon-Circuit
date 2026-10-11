@@ -2,6 +2,7 @@ import type { GameView } from '../game/contracts';
 import { LANCE } from '../traversal/tuning';
 import { div, h, LiveText } from './dom';
 import type { ControlAction } from '../input/scheme';
+import { placeWindlinePanel } from './hudPlacement';
 
 /** Read-only normal-game feedback; all state and hold timing belong to fixed simulation. */
 export class WindlineHud {
@@ -24,7 +25,11 @@ export class WindlineHud {
   private readonly linked = h('p', {}, this.glyph('airSteer'), ' guides the swing. ', this.glyph('tetherPull'), ' pulls inward.');
   private readonly free = h('p', {}, this.glyph('airSteer'), ' steers; forward dives, back brakes. ', this.glyph('airBoost'), ' boosts.');
   private readonly hints = div('dw-windline-hints', this.cast, this.retain.el, this.linked, this.free);
-  private readonly panel = div('dw-windline-panel', h('span', { class: 'dw-windline-title', text: 'Windline' }), this.status.el, this.boost, this.call, this.hints);
+  private readonly compactCast = h('span', {}, this.glyph('lance'), ' Cast · 65 m');
+  private readonly compactPull = h('span', {}, this.glyph('tetherPull'), ' Pull · ', this.glyph('lance'), ' Release');
+  private readonly compactFree = h('span', {}, this.glyph('airBoost'), ' Boost');
+  private readonly compact = div('dw-windline-compact', this.compactCast, this.compactPull, this.compactFree);
+  private readonly panel = div('dw-windline-panel', h('span', { class: 'dw-windline-title', text: 'Windline' }), this.status.el, this.boost, this.call, this.hints, this.compact);
 
   constructor(fillGlyphs: (el: HTMLElement) => void) {
     this.root.append(this.reticle, this.panel); this.root.hidden = true; fillGlyphs(this.root);
@@ -37,6 +42,7 @@ export class WindlineHud {
     const airborne = p.mode === 'traversing', recovering = p.mode === 'falling';
     const progress = p.windlineHoldProgress ?? 0, holding = progress > 0;
     const hints = view.save.data.settings.showControlHints && (riderFree || p.mode === 'flying');
+    this.panel.dataset.context = `${p.mode}/${hints}/${!!lance?.rope}/${holding}`;
     this.root.hidden = !visible || !lance || (!riderFree && !hints && !holding);
     this.reticle.hidden = !riderFree;
     this.panel.hidden = !hints && !airborne && !recovering && !holding;
@@ -49,6 +55,10 @@ export class WindlineHud {
     const lineState = lance?.rope ? caught ? 'Line caught' : lance.pullTime > 0 ? 'Pulling' : lance.taut ? 'Taut line' : 'Slack line'
       : recovering ? 'Wyvern approaching' : airborne ? 'Freefall' : p.mode === 'flying' ? 'Mounted flight' : 'On foot';
     this.status.set(lineState); this.panel.dataset.traversalState = lineState;
+    this.compact.hidden = !hints;
+    this.compactCast.hidden = !riderFree || airborne;
+    this.compactPull.hidden = !lance?.rope;
+    this.compactFree.hidden = !airborne || !!lance?.rope;
     this.boost.hidden = !airborne || !boost;
     if (lance && boost && airborne) {
       const pulling = !!lance.rope && lance.pullTime > 0;
@@ -74,4 +84,6 @@ export class WindlineHud {
     this.callTrack.setAttribute('aria-label', `${action === 'leap' ? 'Leap' : 'Recall'} hold progress`);
     this.callTrack.setAttribute('aria-valuenow', String(Math.round(100 * progress)));
   }
+
+  layout(): void { placeWindlinePanel(this.panel); }
 }

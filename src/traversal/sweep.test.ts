@@ -39,4 +39,24 @@ describe('accelerated analytic rock sweeps',()=>{
     expect(normal).toHaveBeenCalledTimes(2); // Cache expires at the end of each synchronous sweep.
 
   });
+  it('keeps the complete conservative tether envelope while bounding long moving-line work',()=>{
+    const t=new Terrain(LAYOUT),w=new TraversalWorld(t),s=t.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
+    const from=new V(x,s.bottomHeight(x,z)-55,z),tip=w.sweep(from,new V(x,from.y+60,z),.08)!;
+    expect(tip.anchorId).not.toBeNull();
+    const query=vi.spyOn(t,'rockContact');
+    const swung=from.clone().add(new V(8,-3,4));
+    expect(w.sweep(swung,tip.point,.02,tip.anchorId!)).toBeNull();
+    expect(query.mock.calls.length).toBeLessThan(1800);
+    // Anchor identity never excludes its solid: a line through the island remains blocked.
+    expect(w.sweep(from,new V(x,s.def.y+5,z),.02,tip.anchorId!)).not.toBeNull();
+  });
+  it('does not miss the retained fine-lattice contacts on seeded grazing tether paths',{timeout:30000},()=>{
+    const t=new Terrain(LAYOUT),w=new TraversalWorld(t),rng=mulberry32(60713);
+    for(let i=0;i<100;i++){
+      const s=t.islands[i%t.islands.length],a=rng()*Math.PI*2,r=s.def.radius*(.1+.92*rng());
+      const x=s.def.x+Math.cos(a)*r,z=s.def.z+Math.sin(a)*r,y=s.bottomHeight(x,z);
+      const from=new V(x,y-2-rng()*15,z),to=from.clone().add(new V((rng()-.5)*24,2+rng()*24,(rng()-.5)*24));
+      if(dense(t,from,to,.02)!==null)expect(w.sweep(from,to,.02,'line'),`grazing tether ${i}`).not.toBeNull();
+    }
+  });
 });
