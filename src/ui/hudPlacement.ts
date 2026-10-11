@@ -32,6 +32,22 @@ function painted(el: HTMLElement): boolean {
   return el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0;
 }
 
+/** Reserve the discovery band's declared visual overflow, clipped by the UI viewport.
+ * Its two untransformed absolute pseudo-elements extend beyond the text box. */
+function paintedBounds(el: HTMLElement): HudRect {
+  const box = el.getBoundingClientRect();
+  let left=box.left,top=box.top,right=box.right,bottom=box.bottom;
+  if(el.classList.contains('dw-banner'))for(const pseudo of ['::before','::after']){
+    const style=getComputedStyle(el,pseudo);
+    if(style.content==='none'||style.content==='normal'||style.display==='none')continue;
+    const x=parseFloat(style.left),y=parseFloat(style.top),width=parseFloat(style.width),height=parseFloat(style.height);
+    if(![x,y,width,height].every(Number.isFinite))continue;
+    left=Math.min(left,box.left+x);top=Math.min(top,box.top+y);
+    right=Math.max(right,box.left+x+width);bottom=Math.max(bottom,box.top+y+height);
+  }
+  return {left:Math.max(0,left),top:Math.max(0,top),right:Math.min(innerWidth,right),bottom:Math.min(innerHeight,bottom)};
+}
+
 /** No gameplay queries. Called after the existing HUD has updated its visibility. */
 export function placeWindlinePanel(panel: HTMLElement): void {
   if (panel.hidden || panel.closest('[hidden]')) return;
@@ -43,10 +59,12 @@ export function placeWindlinePanel(panel: HTMLElement): void {
   // forced layout; a bounded check follows CSS fades and notices during transitions.
   if (previous?.signature === signature && now < previous.next) return;
   checks.set(panel, { signature, next: now + 50 });
-  const occupied = elements.filter(painted).map(el => el.getBoundingClientRect());
+  const occupied = elements.filter(painted).map(paintedBounds);
   const key = `${width}/${height}/${panel.dataset.context}/${panel.textContent}/${occupied.map(r => [r.left,r.top,r.right,r.bottom].join(',')).join(';')}`;
   if (layouts.get(panel) === key) return;
   layouts.set(panel, key);
+  panel.style.visibility = '';
+  panel.classList.remove('is-status-only');
   const fullWidth = Math.min(290, Math.max(160, width * .32));
   const sideWidth = Math.max(96, Math.min(160, width * .35 - MARGIN - GAP));
   for (const [compact, panelWidth] of [[false, fullWidth], [true, fullWidth], [true, sideWidth]] as const) {
@@ -60,8 +78,16 @@ export function placeWindlinePanel(panel: HTMLElement): void {
       return;
     }
   }
-  // Only optional guidance collapses; the traversal resource status remains available.
-  panel.dataset.layout = 'compact';
-  panel.style.left = `${width - MARGIN - panel.getBoundingClientRect().width}px`;
-  panel.style.top = `${MARGIN}px`;
+  // Try the resource alone before dropping a secondary overlay in an unsatisfiable
+  // viewport. There is no unchecked corner fallback covering existing instruments.
+  if(panel.dataset.essential==='true'){
+    panel.classList.add('is-status-only');
+    for(const panelWidth of [fullWidth,sideWidth]){
+      panel.style.width=`${panelWidth}px`;
+      const box=panel.getBoundingClientRect(),slot=edgeSlot(width,height,box.width,box.height,occupied);
+      if(!slot)continue;
+      panel.style.left=`${slot.left}px`;panel.style.top=`${slot.top}px`;panel.dataset.layout='status-only';return;
+    }
+  }
+  panel.dataset.layout='suppressed';panel.style.visibility='hidden';
 }

@@ -43,6 +43,7 @@ export class WindlineHud {
     const progress = p.windlineHoldProgress ?? 0, holding = progress > 0;
     const hints = view.save.data.settings.showControlHints && (riderFree || p.mode === 'flying');
     this.panel.dataset.context = `${p.mode}/${hints}/${!!lance?.rope}/${holding}`;
+    this.panel.dataset.essential = String(airborne || recovering || holding);
     this.root.hidden = !visible || !lance || (!riderFree && !hints && !holding);
     this.reticle.hidden = !riderFree;
     this.panel.hidden = !hints && !airborne && !recovering && !holding;
