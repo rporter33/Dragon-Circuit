@@ -2,6 +2,7 @@ import type { GameView } from '../game/contracts';
 import { LANCE } from '../traversal/tuning';
 import { div, h, LiveText } from './dom';
 import type { ControlAction } from '../input/scheme';
+import { placeWindlinePanel } from './hudPlacement';
 
 /** Normal-game feedback. No tutorial rewards or physics live in this overlay. */
 export class WindlineHud {
@@ -19,7 +20,12 @@ export class WindlineHud {
   private readonly call = h('p', {}, 'When free, hold ', this.glyph('recall'), ' to recall your wyvern.');
   private readonly leap = h('p', {}, 'Hold ', this.glyph('leap'), ' to leap. Release, then hold again to recall.');
   private readonly hints = div('dw-windline-hints', this.cast, this.retain.el, this.linked, this.free, this.call, this.leap);
-  private readonly panel = div('dw-windline-panel', h('strong', { text: 'Windline' }), this.boost, this.hints);
+  private readonly compactCast = h('span', {}, this.glyph('lance'), ' Cast · 65 m');
+  private readonly compactLeap = h('span', {}, this.glyph('leap'), ' Hold to leap');
+  private readonly compactPull = h('span', {}, this.glyph('tetherPull'), ' Pull · ', this.glyph('lance'), ' Release');
+  private readonly compactFree = h('span', {}, this.glyph('airBoost'), ' Boost · ', this.glyph('recall'), ' Hold to recall');
+  private readonly compact = div('dw-windline-compact', this.compactCast, this.compactLeap, this.compactPull, this.compactFree);
+  private readonly panel = div('dw-windline-panel', h('strong', { class: 'dw-windline-title', text: 'Windline' }), this.boost, this.hints, this.compact);
 
   constructor(fillGlyphs: (el: HTMLElement) => void) {
     this.root.append(this.reticle, this.panel);
@@ -36,6 +42,8 @@ export class WindlineHud {
     const riderFree = p.mode === 'onFoot' || p.mode === 'traversing' || p.mode === 'falling';
     const airborne = p.mode === 'traversing';
     const hints = view.save.data.settings.showControlHints && (riderFree || p.mode === 'flying');
+    this.panel.dataset.context = `${p.mode}/${hints}/${!!lance?.rope}`;
+    this.panel.dataset.essential = String(airborne && !!boost);
     this.root.hidden = !visible || !lance || (!riderFree && !hints);
     this.reticle.hidden = !riderFree;
     this.panel.hidden = !hints && !airborne;
@@ -45,6 +53,11 @@ export class WindlineHud {
     this.free.hidden = !airborne || !!lance?.rope;
     this.call.hidden = !riderFree || !!lance?.rope;
     this.leap.hidden = p.mode !== 'flying';
+    this.compact.hidden = !hints;
+    this.compactCast.hidden = !riderFree || airborne;
+    this.compactLeap.hidden = p.mode !== 'flying';
+    this.compactPull.hidden = !lance?.rope;
+    this.compactFree.hidden = !airborne || !!lance?.rope;
     this.retain.set(p.lanceInteraction === 'toggle' ? 'Press again to release.' : 'Hold to retain; release to detach.');
     this.boost.hidden = !airborne || !boost;
     if (lance && boost && airborne) {
@@ -56,4 +69,6 @@ export class WindlineHud {
       this.boost.setAttribute('aria-label', lance.rope ? 'Tether pull available' : boost.available ? 'Air boost ready' : 'Air boost recharging');
     }
   }
+
+  layout(): void { placeWindlinePanel(this.panel); }
 }
