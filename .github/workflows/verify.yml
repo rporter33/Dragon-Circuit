@@ -1,0 +1,58 @@
+name: Verify integration
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- --maxWorkers=2
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/smoke.mjs --no-build
+      - name: Verify experimental scenes against the production build
+        shell: bash
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 5174 --strictPort > /tmp/preview.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:5174/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:5174/ > /dev/null
+          node scripts/windhaven-smoke.mjs http://127.0.0.1:5174
+          node scripts/sky-lance-check.mjs http://127.0.0.1:5174
+          node scripts/sky-lance-check.mjs http://127.0.0.1:5174 --motion-only
+          node scripts/sky-lance-check.mjs http://127.0.0.1:5174 --control-only
+          node scripts/sky-lance-check.mjs http://127.0.0.1:5174 --input-only
+          node scripts/sky-lance-check.mjs http://127.0.0.1:5174 --spin-only --expect-retained --evidence=integration
+      - name: Preserve browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-browser-evidence
+          path: |
+            shots/
+            /tmp/preview.log
+            /tmp/driftwing-*-browser-check.json
+            /tmp/driftwing-spin-integration.json
+          retention-days: 30
