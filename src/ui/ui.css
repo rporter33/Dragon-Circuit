@@ -3363,6 +3363,7 @@
 .dw-windline-meter { height: 4px; background: #315e9c66; margin-top: .3em; border-radius: 2px; overflow: hidden; }
 .dw-windline-meter > div { height: 100%; background: #a8e5ff; }
 .dw-windline-reticle { position: fixed; width: 20px; height: 20px; transform: translate(-50%, -50%); filter: drop-shadow(0 0 1px #182631); color: #a8ddec; }
+.dw-windline-reticle, .dw-windline-reticle * { transition-property: none !important; }
 .dw-windline-reticle [data-aim-status] { display: none; }
 .dw-windline-reticle [data-valid-ring] { opacity: 0; stroke: currentColor; filter: drop-shadow(0 0 1px #182631); }
 .dw-windline-reticle.is-valid [data-valid-ring] { opacity: 1; }
