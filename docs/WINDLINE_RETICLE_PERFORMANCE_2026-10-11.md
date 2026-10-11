@@ -1,5 +1,7 @@
 # Windline current-render validation
 
+**Superseded product behavior:** Robert subsequently deferred the predictive hit indicator and approved a fixed neutral light-blue aiming dot. See[neutral reticle scope](WINDLINE_NEUTRAL_RETICLE_2026-10-11.md). The experiment below and exact9f28427 source/evidence remain preserved on`preserve/windline-prediction-9f28427`; prediction-only geometry/caches are removed from the simplified candidate. Historical failed measurements remain evidence, not release acceptance for the new neutral behavior.
+
 Robert approved a deeper reticle performance pass after the bounded experiment failed. This candidate remains in draft PR #5; merge and deployment are not authorized. It incorporates released editor/audio main `a7adb45c28dd252091b8c10e13ea357067071061` without character-model or ship gameplay work.
 
 ## Physical contract and bounded geometry reuse

@@ -8,7 +8,7 @@ import { placeWindlinePanel } from './hudPlacement';
 export class WindlineHud {
   readonly root = div('dw-layer dw-windline');
   private readonly reticle = h('div', { class: 'dw-windline-reticle', attrs: { id: 'sky-lance-reticle', 'aria-hidden': 'true' },
-    html: '<svg viewBox="0 0 20 20" width="20" height="20"><circle data-valid-ring cx="10" cy="10" r="5" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="10" r="2.5" fill="currentColor" stroke="#182631" stroke-width="1.5"/></svg><span data-aim-status></span>' });
+    html: '<svg viewBox="0 0 20 20" width="20" height="20"><circle cx="10" cy="10" r="2.5" fill="currentColor" stroke="#182631" stroke-width="1.5"/></svg>' });
   private readonly status = new LiveText(h('strong', { attrs: { 'data-line-state': '' } }));
   private readonly boostText = new LiveText(h('span', { attrs: { 'data-boost-text': '' } }));
   private readonly boostFill = h('div', { attrs: { 'data-boost-fill': '' } });

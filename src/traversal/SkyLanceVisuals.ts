@@ -47,7 +47,7 @@ export class SkyLanceVisuals {
   private forecastRevision: number | undefined;
   target: TargetPreview | null = null;
   private readonly previewOrigin = new Vector3();
-  constructor() {
+  constructor(private readonly predictiveAim = false) {
     const bronze = toonMaterial({ color: '#AA8656' });
     this.seed.name = 'windline-seed'; this.seed.renderOrder = 102;
     this.group.add(this.seed);
@@ -115,13 +115,20 @@ export class SkyLanceVisuals {
     for (const material of materials) material.dispose();
     this.group.clear(); this.reticle = null;
   }
-  /** Fixed centre feedback. The certified analytic adapter validates the complete
-   * current query every visible ready render. Unknown/slower adapters retain their
-   * bounded fallback; changed pose never inherits eligibility there either. */
+  /** Normal gameplay draws a neutral aiming dot without any world query.
+   * Predictive feedback is explicitly opt-in for the isolated SkyLance study. */
   updateReticle(camera: Camera, feet: Vector3, velocity: Vector3, lance: SkyLance): void {
     this.reticle ??= document.getElementById('sky-lance-reticle');
     this.updateLineWidth(camera);
     if (!this.reticle) return;
+    if (!this.predictiveAim) {
+      this.target = null;
+      this.reticle.dataset.target = 'aiming';
+      this.reticle.style.color = '#a8ddec';
+      this.reticle.classList.remove('is-valid');
+      this.reticle.style.left = '50%'; this.reticle.style.top = '50%';
+      return;
+    }
     if (this.reticle.hidden || this.reticle.closest('[hidden]')) {
       // A caller may reveal this element later in the same frame. Hidden feedback
       // must carry no old eligibility, and the first visible update must query now.
@@ -134,7 +141,7 @@ export class SkyLanceVisuals {
     camera.getWorldDirection(this.aimDirection);
     this.previewOrigin.copy(feet).addScaledVector(UP,LANCE.harnessHeight);
     const now=performance.now();
-    if (lance.state==='ready'&&lance.world.renderTargetQueries || now >= this.nextPreview || this.previewState !== lance.state) {
+    if (now >= this.nextPreview || this.previewState !== lance.state) {
       this.previewState=lance.state;
       this.forecastAim.copy(this.aimDirection); this.forecastOrigin.copy(this.previewOrigin); this.forecastVelocity.copy(velocity);
       this.forecastCamera.copy(camera.position);
@@ -146,9 +153,7 @@ export class SkyLanceVisuals {
       const completed=performance.now();
       this.nextPreview=completed+Math.max(50,Math.min(250,(completed-now)*8));
     }
-    // Even tiny changes can cross a thin solid or range/path boundary. Every ready
-    // render on the analytic adapter has a fresh proof. A changed query on a slower
-    // fallback clears eligibility until its next complete forecast.
+    // The isolated study clears eligibility when its bounded forecast is stale.
     const fresh = this.forecastAim.equals(this.aimDirection)
       && this.forecastOrigin.equals(this.previewOrigin)
       && this.forecastVelocity.equals(velocity)

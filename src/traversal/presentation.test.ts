@@ -5,10 +5,6 @@ import { Rider } from '../creatures/rider/Rider';
 import { createRiderPose } from '../player/poses';
 import { SkyLance } from './SkyLance';
 import { SkyLanceVisuals } from './SkyLanceVisuals';
-import { Terrain } from '../world/terrain';
-import { LAYOUT } from '../world/layout';
-import { TraversalWorld } from './sweep';
-import { predictCenteredTarget } from './target';
 afterEach(() => vi.unstubAllGlobals());
 describe('render-only Windline equipment', () => {
   it.each(['slight', 'medium', 'broad'] as const)('%s follows rebuilt rigs and produces finite geometry without moving gameplay anchors', build => {
@@ -83,134 +79,44 @@ describe('render-only Windline equipment', () => {
 });
 
 
-describe('responsive aiming feedback',()=>{
-  it.each([false,true].flatMap(fast=>['self','root'].flatMap(hidden=>['range','new solid'].map(boundary=>({fast,hidden,boundary})))))(
-    'clears hidden eligibility and validates the first reveal ($fast/$hidden/$boundary)',({fast,hidden,boundary})=>{
-    vi.stubGlobal('window',{innerHeight:720});let rootHidden=false;
-    const el={hidden:false,closest:()=>rootHidden?{}:null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
-    vi.stubGlobal('document',{getElementById:()=>el});let now=1000;const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
-    const terrain=new Terrain({...LAYOUT,islands:[],spires:[],arches:[]});terrain.colliders.add({kind:'box',x:0,y:1000,z:boundary==='range'?65.06:26,hx:2,hy:5,hz:.001,yaw:0});
-    const world=new TraversalWorld(terrain,undefined,fast),lance=new SkyLance(world),camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,999,0),velocity=new Vector3();
-    camera.position.set(0,1000,0);camera.lookAt(0,1000,1);camera.updateMatrixWorld();const visuals=new SkyLanceVisuals(),sweeps=vi.spyOn(world,'sweep');
-    try{
-      visuals.updateReticle(camera,feet,velocity,lance);expect(el.dataset.target).toBe('reachable');expect(el.style.color).toBe('#94d6a2');
-      if(hidden==='self')el.hidden=true;else rootHidden=true;
-      const before=sweeps.mock.calls.length;now+=1;visuals.updateReticle(camera,feet,velocity,lance);
-      expect(sweeps.mock.calls.length).toBe(before);expect(visuals.target).toBeNull();expect(el.style.color).toBe('#a8ddec');expect(el.classList.toggle).toHaveBeenLastCalledWith('is-valid',false);
-      if(boundary==='range')feet.z=-.03;else terrain.colliders.add({kind:'box',x:0,y:1000,z:1,hx:.05,hy:3,hz:.005,yaw:0});
-      // Reveal after the prior hidden update, before any query: no stale green can paint.
-      el.hidden=false;rootHidden=false;expect(el.style.color).toBe('#a8ddec');expect(el.dataset.target).toBe('checking');
-      const reference=predictCenteredTarget(world,camera.position,camera.getWorldDirection(new Vector3()),feet.clone().add(new Vector3(0,1,0)),velocity);expect(reference.state).not.toBe('reachable');
-      now+=1;visuals.updateReticle(camera,feet,velocity,lance);expect(visuals.target).toEqual(reference);expect(el.dataset.target).toBe(reference.state);expect(el.style.color).toBe('#a8ddec');
-    }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
-  });
-  it('clears green when a new first solid blocks an unchanged pose and the cached anchor remains valid',()=>{
+describe('neutral normal-game aiming dot',()=>{
+  it.each(['idle','look','velocity','new solid','self hidden','root hidden','attached','spent'])(
+    'stays centred and performs zero prediction work during %s',scenario=>{
     vi.stubGlobal('window',{innerHeight:720});
-    const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
-    vi.stubGlobal('document',{getElementById:()=>el});let now=1000;
-    const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
-    const terrain=new Terrain({...LAYOUT,islands:[],spires:[],arches:[]});
-    terrain.colliders.add({kind:'box',x:0,y:1000,z:26,hx:2,hy:5,hz:.001,yaw:0});
-    const world=new TraversalWorld(terrain),lance=new SkyLance(world),camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,999,0),velocity=new Vector3();
-    camera.position.set(0,1000,0);camera.lookAt(0,1000,1);camera.updateMatrixWorld();
-    const visuals=new SkyLanceVisuals(),sweeps=vi.spyOn(world,'sweep');
+    const el={hidden:false,closest:()=>scenario==='root hidden'?{}:null,classList:{remove:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>};
+    vi.stubGlobal('document',{getElementById:()=>el});
+    const sweep=vi.fn(()=>{throw Error('Neutral aiming must never query geometry');}),anchorValid=vi.fn(()=>true);
+    const lance=new SkyLance({sweep,anchorValid}),camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,999,0),velocity=new Vector3(),visuals=new SkyLanceVisuals();
+    camera.position.set(0,1000,-6);camera.lookAt(0,1000,20);camera.updateMatrixWorld();
     try{
-      visuals.updateReticle(camera,feet,velocity,lance);expect(el.style.color).toBe('#94d6a2');const cachedAnchor=visuals.target!.anchorId!;
-      terrain.colliders.add({kind:'box',x:0,y:1000,z:1,hx:.05,hy:3,hz:.005,yaw:0});
-      expect(world.anchorValid(cachedAnchor)).toBe(true);
-      expect(predictCenteredTarget(world,camera.position,camera.getWorldDirection(new Vector3()),feet.clone().add(new Vector3(0,1,0)),velocity).state).toBe('blocked');
-      const queries=sweeps.mock.calls.length;now+=1;visuals.updateReticle(camera,feet,velocity,lance);
-      expect(el.dataset.target).toBe('blocked');expect(el.style.color).toBe('#a8ddec');expect(sweeps.mock.calls.length).toBeGreaterThan(queries);
-    }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
+      if(scenario==='self hidden')el.hidden=true;
+      if(scenario==='attached'){lance.rope={anchor:new Vector3(0,1000,20),length:20};lance.state='anchored';}
+      if(scenario==='spent')lance.state='spent';
+      for(let i=0;i<120;i++){
+        if(scenario==='look'){camera.position.x+=.03;camera.rotateY(.01);camera.updateMatrixWorld();}
+        if(scenario==='velocity')velocity.set(i*.1,-i,2);
+        if(scenario==='new solid')Object.assign(lance.world,{revision:i});
+        visuals.updateReticle(camera,feet,velocity,lance);
+        expect(visuals.target).toBeNull();expect(el.dataset.target).toBe('aiming');
+        expect(el.style.color).toBe('#a8ddec');expect(el.style.left).toBe('50%');expect(el.style.top).toBe('50%');
+      }
+      expect(sweep).not.toHaveBeenCalled();expect(anchorValid).not.toHaveBeenCalled();expect(el.classList.remove).toHaveBeenLastCalledWith('is-valid');
+    }finally{visuals.dispose();}
   });
-  it('validates each ready render and clears a removed anchor immediately',()=>{
-    vi.stubGlobal('window',{innerHeight:720});
-    const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
-    vi.stubGlobal('document',{getElementById:()=>el});let now=1000;
-    const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
-    const terrain=new Terrain({...LAYOUT,islands:[],spires:[],arches:[]});
-    terrain.colliders.add({kind:'box',x:0,y:1000,z:26,hx:2,hy:5,hz:.001,yaw:0});
-    const world=new TraversalWorld(terrain),lance=new SkyLance(world),camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,999,0),velocity=new Vector3();
-    camera.position.set(0,1000,0);camera.lookAt(0,1000,1);camera.updateMatrixWorld();
-    const visuals=new SkyLanceVisuals(),sweeps=vi.spyOn(world,'sweep');
-    try{
-      visuals.updateReticle(camera,feet,velocity,lance);const queries=sweeps.mock.calls.length;
-      for(let i=0;i<30;i++){now+=1;visuals.updateReticle(camera,feet,velocity,lance);expect(el.style.color).toBe('#94d6a2');}
-      expect(sweeps.mock.calls.length).toBeGreaterThan(queries);
-      terrain.colliders.clear();now+=1;visuals.updateReticle(camera,feet,velocity,lance);
-      expect(el.dataset.target).toBe('out-of-range');expect(el.style.color).toBe('#a8ddec');expect(sweeps.mock.calls.length).toBeGreaterThan(queries);
-    }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
-  });
-  it.each(['thin-target edge','range boundary','camera translation','harness obstruction','inherited velocity'] as const)('validates the complete current query on the same %s render',change=>{
-    vi.stubGlobal('window',{innerHeight:720});
-    const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
-    vi.stubGlobal('document',{getElementById:()=>el});let now=1000;
-    const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
-    const terrain=new Terrain({...LAYOUT,islands:[],spires:[],arches:[]});
-    terrain.colliders.add({kind:'box',x:0,y:1000,z:change==='range boundary'?65.06:26,hx:change==='thin-target edge'||change==='camera translation'?.005:2,hy:5,hz:.001,yaw:0});
-    if(change==='harness obstruction')terrain.colliders.add({kind:'box',x:.2,y:1000,z:.2,hx:.04,hy:2,hz:.04,yaw:0});
-    const world=new TraversalWorld(terrain),lance=new SkyLance(world),camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,999,0),velocity=new Vector3();
-    camera.position.set(0,1000,0);camera.lookAt(0,1000,1);camera.updateMatrixWorld();
-    const visuals=new SkyLanceVisuals(),sweeps=vi.spyOn(world,'sweep');
-    try{
-      visuals.updateReticle(camera,feet,velocity,lance);expect(el.dataset.target).toBe('reachable');expect(el.style.color).toBe('#94d6a2');
-      if(change==='thin-target edge')camera.lookAt(Math.sin(.007),1000,Math.cos(.007));
-      if(change==='range boundary')feet.z=-.03;
-      if(change==='camera translation')camera.position.x=.12;
-      if(change==='harness obstruction')feet.x=.14;
-      if(change==='inherited velocity')velocity.x=.49;
-      camera.updateMatrixWorld();
-      const reference=predictCenteredTarget(world,camera.position,camera.getWorldDirection(new Vector3()),feet.clone().add(new Vector3(0,1,0)),velocity);
-      if(change!=='inherited velocity')expect(reference.state).not.toBe('reachable');
-      const queries=sweeps.mock.calls.length;now+=1;visuals.updateReticle(camera,feet,velocity,lance);
-      expect(sweeps.mock.calls.length).toBeGreaterThan(queries);
-      expect(visuals.target).toEqual(reference);expect(el.dataset.target).toBe(reference.state);
-      expect(el.style.color).toBe(reference.state==='reachable'?'#94d6a2':'#a8ddec');expect(el.classList.toggle).toHaveBeenLastCalledWith('is-valid',reference.state==='reachable');
-    }finally{sweeps.mockRestore();clock.mockRestore();visuals.dispose();}
-  });
-  it('yields gameplay time after a slow forecast and refreshes on equipment state changes',()=>{
+  it('retains bounded predictive feedback only when explicitly enabled for the isolated study',()=>{
     vi.stubGlobal('window',{innerHeight:720});
     const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:()=>null};
     vi.stubGlobal('document',{getElementById:()=>el});let now=1000,queries=0;
     const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
     const lance=new SkyLance({anchorValid:()=>true,sweep:()=>{queries++;now+=100;return null;}});
-    const camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,1000,0),v=new Vector3();
+    const camera=new PerspectiveCamera(50,16/9,.1,1000),feet=new Vector3(0,1000,0),v=new Vector3(),visuals=new SkyLanceVisuals(true);
     camera.position.set(0,1002,-6);camera.lookAt(0,1002,20);camera.updateMatrixWorld();
-    const visuals=new SkyLanceVisuals();
     try{
       visuals.updateReticle(camera,feet,v,lance);expect(queries).toBe(1);
       for(let i=0;i<20;i++){now+=1;feet.x+=.01;visuals.updateReticle(camera,feet,v,lance);}
       expect(queries).toBe(1);expect(el.dataset.target).toBe('checking');
-      lance.state='spent';visuals.updateReticle(camera,feet,v,lance);expect(queries).toBe(1);
-      lance.state='ready';visuals.updateReticle(camera,feet,v,lance);expect(queries).toBe(2);
-    }finally{clock.mockRestore();visuals.dispose();}
-  });
-  it('keeps the dot centred, bounds forecasts and clears stale eligibility',()=>{
-    vi.stubGlobal('window',{innerHeight:720});
-    const label={textContent:''},impact={style:{} as Record<string,string>};
-    const el={hidden:false,closest:()=>null,classList:{toggle:vi.fn()},dataset:{} as Record<string,string>,style:{} as Record<string,string>,querySelector:(query:string)=>query==='[data-impact]'?impact:label};
-    vi.stubGlobal('document',{getElementById:()=>el});let now=1000;const clock=vi.spyOn(performance,'now').mockImplementation(()=>now);
-    let queries=0;
-    const lance=new SkyLance({anchorValid:()=>true,sweep:(from,to,radius)=>{
-      if(from.z===-6)queries++; // One centre-ray sweep per forecast.
-      if(radius!==.08 || from.z>=20 || to.z<20)return null;
-      const fraction=(20-from.z)/(to.z-from.z);
-      return {fraction,point:from.clone().lerp(to,fraction),normal:new Vector3(0,0,-1),anchorId:'surface'};
-    }});
-    const camera=new PerspectiveCamera(50,16/9,.1,1000);camera.position.set(0,1002,-6);camera.lookAt(0,1002,20);camera.updateMatrixWorld();
-    const visuals=new SkyLanceVisuals(),feet=new Vector3(0,1000,0),v=new Vector3();
-    try{
-      visuals.updateReticle(camera,feet,v,lance);expect(el.dataset.target).toBe('reachable');const left=el.style.left;const firstQueries=queries;
-      camera.lookAt(5,1002,20);camera.updateMatrixWorld();now+=1;visuals.updateReticle(camera,feet,v,lance);
-      expect(el.style.left).toBe(left);expect(el.style.left).toBe('50%');expect(el.style.top).toBe('50%');expect(el.dataset.target).toBe('checking');expect(queries).toBe(firstQueries);
-      now+=50;visuals.updateReticle(camera,feet,v,lance);expect(el.dataset.target).toBe('reachable');
-      const x=el.style.left,y=el.style.top;
-      lance.state='spent';visuals.updateReticle(camera,feet,v,lance);expect(el.style.left).toBe(x);expect(el.style.top).toBe(y);
-      lance.state='ready';now+=50;visuals.updateReticle(camera,feet,v,lance);const before=queries;
-      for(let i=0;i<120;i++){now+=1000/120;visuals.updateReticle(camera,feet,v,lance);}
-      expect(queries-before).toBeLessThanOrEqual(20); // At most 20 forecasts/sec.
-      el.hidden=true;now+=100;const hiddenQueries=queries;visuals.updateReticle(camera,feet,v,lance);
-      expect(queries).toBe(hiddenQueries); // Mounted/menu HUD does not forecast an unusable cast.
+      el.hidden=true;now+=1000;visuals.updateReticle(camera,feet,v,lance);expect(queries).toBe(1);
+      el.hidden=false;visuals.updateReticle(camera,feet,v,lance);expect(queries).toBe(2);
     }finally{clock.mockRestore();visuals.dispose();}
   });
 });

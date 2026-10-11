@@ -45,8 +45,8 @@ try {
   g.input.setScripted({lookActive:true,lookIsRate:false,lookX:g.cameraRig.yaw+Math.PI/2,lookY:-10});__flowTick();g.input.setScripted(null);__flowTick(60);
  });
  await page.waitForTimeout(80);
- evidence.anchorCue=await page.evaluate(()=>{const g=__dw.game;g.skyLanceVisuals.nextPreview=0;g.frame(0,true);const el=document.querySelector('#sky-lance-reticle');return {state:el.dataset.target,label:el.querySelector('[data-aim-status]').textContent};});
- assert.equal(evidence.anchorCue.state,'reachable');assert.match(evidence.anchorCue.label,/READY/);
+ evidence.anchorCue=await page.evaluate(()=>{const g=__dw.game;g.frame(0,true);const el=document.querySelector('#sky-lance-reticle');return {state:el.dataset.target,color:getComputedStyle(el).color,valid:el.classList.contains('is-valid'),target:g.skyLanceVisuals.target};});
+ assert.equal(evidence.anchorCue.state,'aiming');assert.equal(evidence.anchorCue.color,'rgb(168, 221, 236)');assert.equal(evidence.anchorCue.valid,false);assert.equal(evidence.anchorCue.target,null);
  await page.screenshot({path:'shots/windline-flow/anchor-1280.png'});
  evidence.line=await page.evaluate(()=>{
   const g=__dw.game,p=g.player;__flowSet(7,.6);__flowTick();for(let i=0;i<240&&!p.skyLance.rope&&p.skyLance.state==='projectile';i++)__flowTick();

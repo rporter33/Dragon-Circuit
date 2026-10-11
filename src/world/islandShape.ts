@@ -16,20 +16,6 @@ import type { SurfaceKind } from '../core/types';
 import { smoothstep } from '../core/math';
 import { fbm2, noise2, periodicNoise, ridged2, type Noise2 } from '../core/noise';
 import type { ArchDef, IslandDef, SpireDef } from './layout';
-import {analyticBottomBounds, type AnalyticUnderside} from './undersideBounds';
-export interface UndersideIntervalStats {
-  domainHits:number; domainMisses:number;
-  centralHits:number; centralMisses:number; stencilHits:number; stencilMisses:number;
-}
-/** Own numeric copies of radius-independent bounds for one exact immutable box.
- * Slots are central, +X, -X, +Z, -Z; the stencil remains lazy. */
-export interface UndersideIntervalSnapshots {
-  readonly definition:string;
-  readonly domain:readonly [number,number,number,number];
-  readonly bounds:(readonly [number,number]|null|undefined)[];
-  readonly stats?:UndersideIntervalStats;
-}
-export type UndersideFloorSolver=(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY?:number,snapshots?:UndersideIntervalSnapshots)=>number|null;
 
 /** Height the top surface rolls off by at the very rim (m). */
 export const RIM_DROP = 3;
@@ -89,14 +75,9 @@ export class IslandShape {
   private pavedN: (theta: number) => number;
   private toothScale = 1;
   private toothChance = 0.6;
-  private readonly boundsDefinition: string;
-  private readonly boundsParameters:AnalyticUnderside;
-  private readonly floorSolver:UndersideFloorSolver;
-  private readonly boundsScratch:[number,number][]=Array.from({length:5},()=>[0,0]);
 
   constructor(def: IslandDef) {
     this.def = def;
-    this.boundsDefinition = JSON.stringify(def);
     this.outlineN = periodicNoise(def.seed, 6);
     this.hillN = noise2(def.seed + 1);
     this.rockN = noise2(def.seed + 2);
@@ -142,8 +123,6 @@ export class IslandShape {
     this.minTopY = def.y - RIM_DROP - lean;
     this.minY = def.y - def.depth * 1.3 - def.lip * this.lipVar * 1.6 - lean - 6;
     this.track = def.kind === 'roost' ? this.buildTrack() : null;
-    this.boundsParameters={...def,ridgeFreq:this.ridgeFreq,lumpFreq:this.lumpFreq,toothCell:this.toothCell,outlineRadius:(a:number)=>this.outlineRadius(a),noise:this.underN,tooth:(x:number,z:number)=>this.toothAt(x,z),coneExp:this.coneExp,skew:this.skew,skewDir:this.skewDir,twin:this.twin,twinDir:this.twinDir,tiltX:this.tiltX,tiltZ:this.tiltZ,rag:this.rag,lipVar:this.lipVar,toothScale:this.toothScale,lipAt:(a:number)=>this.lipAt(a)};
-    this.floorSolver=(minX,maxX,minZ,maxZ,radius,queryMaxY,snapshots)=>this.immutableUndersideFloor(minX,maxX,minZ,maxZ,radius,queryMaxY,snapshots);
   }
 
   /** Height of the island's list (tilt) at local offset (dx, dz) from its center. */
@@ -290,51 +269,6 @@ export class IslandShape {
     stal = Math.min(1.3, stal);
     const lip = this.lipAt(theta);
     return d.y - lip - (d.depth - lip) * profile * stal + this.leanAt(dx, dz);
-  }
-
-  /** Conservative lower contact-plane envelope for a query-local XZ box. */
-  undersideContactFloor(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY=Infinity):number|null {
-    const solver=this.undersideCertificateSolver(JSON.stringify(this.def));
-    return solver?solver(minX,maxX,minZ,maxZ,radius,queryMaxY):null;
-  }
-  /** A validated immutable definition can reuse this solver throughout one synchronous sweep. */
-  undersideCertificateSolver(definition:string):UndersideFloorSolver|null {
-    if(definition!==this.boundsDefinition)return null;
-    const s=this.boundsParameters;
-    if(![s.x,s.y,s.z,s.radius,s.depth,s.lip,s.outline,s.coneExp,s.skew,s.twin,s.tiltX,s.tiltZ,s.rag,s.lipVar,s.toothScale,s.ridgeFreq,s.lumpFreq,s.toothCell].every(Number.isFinite)||s.radius<=0||s.toothCell<=0||s.depth<s.lip||s.coneExp<=0||s.outline<0||s.outline+s.rag>=1)return null;
-    return this.floorSolver;
-  }
-  private immutableUndersideFloor(minX:number,maxX:number,minZ:number,maxZ:number,radius:number,queryMaxY=Infinity,snapshots?:UndersideIntervalSnapshots):number|null {
-    const args=this.boundsParameters;
-    // Validate exact domains, including signed zero. A mismatched snapshot has
-    // no effect on the original bound evaluation or its rounding/fallback.
-    const shared=snapshots?.definition===this.boundsDefinition&&
-      Object.is(minX,snapshots.domain[0])&&Object.is(maxX,snapshots.domain[1])&&
-      Object.is(minZ,snapshots.domain[2])&&Object.is(maxZ,snapshots.domain[3])?snapshots:undefined;
-    let stencil=0;
-    const height=(x:number,z:number)=>{
-      const slot=stencil++,cached=shared?.bounds[slot];
-      if(cached!==undefined){if(shared?.stats)shared.stats[slot===0?'centralHits':'stencilHits']++;return cached;}
-      const value=analyticBottomBounds(args,minX+x,maxX+x,minZ+z,maxZ+z,this.boundsScratch[slot]);
-      if(!shared)return value;
-      // analyticBottomBounds writes reusable scratch storage: never retain it.
-      const owned=value?[value[0],value[1]] as const:null;
-      shared.bounds[slot]=owned;if(shared.stats)shared.stats[slot===0?'centralMisses':'stencilMisses']++;
-      return owned;
-    };
-    const b=height(0,0);
-    if(!b)return null;
-    // collideIsland already rejects below this global normal envelope. Distant slices
-    // need no additional stencil bounds; near slices still get the tight envelope.
-    const span=this.maxY-this.minY+4;
-    const farFloor=Math.min(b[0]-radius*Math.sqrt(2*span*span+9)/3,(this.minTopY+b[0])*.5)-1e-7;
-    if(queryMaxY<farFloor)return farFloor;
-    const xp=height(1.5,0),xm=height(-1.5,0),zp=height(0,1.5),zm=height(0,-1.5);
-    if(!xp||!xm||!zp||!zm)return null;
-    const hx=Math.max(Math.abs(xp[0]-xm[1]),Math.abs(xp[1]-xm[0]));
-    const hz=Math.max(Math.abs(zp[0]-zm[1]),Math.abs(zp[1]-zm[0]));
-    const floor=Math.min(b[0]-radius*Math.hypot(hx,hz,3)/3,(this.minTopY+b[0])*.5);
-    return Number.isFinite(floor)?floor-1e-9*(1+Math.abs(floor)):null;
   }
 
   /** 0..1 hanging-tooth field: sparse cones on a jittered grid (Worley), local (dx, dz). */

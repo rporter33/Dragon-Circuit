@@ -1,146 +1,101 @@
-// Fixed screen-centre feedback, fresh physical casts and bounded preview CPU.
-// Uses the ordinary Game and existing Roost. Standard controller input is simulated.
+// Neutral screen-centre dot; zero ready prediction; fresh actual Q/RT casts.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {chromium} from 'playwright';
 import {browserEvidence} from './browser-evidence.mjs';
-import {diagnoseReticle100} from './windline-reticle-diagnostic.mjs';
 const url=new URL(process.argv[2]??'http://127.0.0.1:5175/');url.search='?manual=1&quality=low';
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--enable-webgl']});
 const page=await browser.newPage({viewport:{width:1280,height:720}}),errors=[],evidence={captures:[]};let metadata=null;
 page.on('pageerror',e=>errors.push(e.message));fs.mkdirSync('shots/windline-reticle',{recursive:true});
-const cue=()=>page.locator('#sky-lance-reticle').evaluate(el=>{const r=el.getBoundingClientRect();return {target:el.dataset.target,color:getComputedStyle(el).color.replaceAll(' ',''),ring:getComputedStyle(el.querySelector('[data-valid-ring]')).opacity,centre:[r.left+r.width/2,r.top+r.height/2],size:[r.width,r.height],viewport:[innerWidth,innerHeight]};});
+const cue=()=>page.locator('#sky-lance-reticle').evaluate(el=>{const r=el.getBoundingClientRect();return {state:el.dataset.target,color:getComputedStyle(el).color.replaceAll(' ',''),valid:el.classList.contains('is-valid'),ring:!!el.querySelector('[data-valid-ring]'),centre:[r.left+r.width/2,r.top+r.height/2],size:[r.width,r.height],viewport:[innerWidth,innerHeight]};});
+const neutral=c=>{assert.equal(c.state,'aiming');assert.equal(c.color,'rgb(168,221,236)');assert.equal(c.valid,false);assert.equal(c.ring,false);assert.deepEqual(c.size,[20,20]);assert.ok(Math.abs(c.centre[0]-c.viewport[0]/2)<.25&&Math.abs(c.centre[1]-c.viewport[1]/2)<.25);};
 async function capture(name,clip){const path=`shots/windline-reticle/${name}.png`;await page.screenshot({path,...(clip?{clip}:{})});evidence.captures.push({path,sha256:createHash('sha256').update(fs.readFileSync(path)).digest('hex')});}
 async function readyPose(depth=18){await page.evaluate(depth=>{
  const g=__dw.game,p=g.player,s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
- __reticlePad.buttons[7]={pressed:false,touched:false,value:0};g.placeAtSpawn();p.foot.position.set(x,s.bottomHeight(x,z)-depth,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);g.frame(1/120,false);g.cameraRig.snap(p);
+ __reticlePad.buttons[7]={pressed:false,touched:false,value:0};__reticlePad.axes.fill(0);g.placeAtSpawn();p.foot.position.set(x,s.bottomHeight(x,z)-depth,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);g.frame(1/120,false);g.cameraRig.snap(p);
  g.input.setScripted({lookActive:true,lookIsRate:false,lookX:g.cameraRig.yaw+Math.PI/2,lookY:-10});g.frame(1/120,false);g.input.setScripted(null);
- for(let i=0;i<60;i++)g.frame(1/120,false);g.skyLanceVisuals.nextPreview=0;g.frame(0,true);
+ for(let i=0;i<60;i++)g.frame(1/120,false);g.frame(0,true);
  },depth);}
 try{
  await page.goto(url.href);await page.waitForFunction(()=>window.__dw?.ready,null,{timeout:180000});metadata=await browserEvidence(page,url);
  await page.evaluate(()=>{
   const g=__dw.game;g.save.data.firstLeadGuide='skipped';g.startGame();__dw.advance(.1);g.applySettings({...g.settings,reducedMotion:true});
-  const pad=window.__reticlePad={id:'Xbox standard controller reticle QA',mapping:'standard',connected:true,index:0,timestamp:0,axes:[.9,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,touched:false,value:0}))};
-  Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[pad]});g.frame(1/120,false);pad.axes[0]=0;g.frame(1/120,false);
+  const pad=window.__reticlePad={id:'Xbox standard neutral reticle QA',mapping:'standard',connected:true,index:0,timestamp:0,axes:[0,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,touched:false,value:0}))};
+  Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[pad]});
  });
- assert.equal(await page.evaluate(()=>__dw.game.input.device),'gamepad');
- evidence.glyphDevice=await page.locator('.dw-ui').getAttribute('data-device');assert.notEqual(evidence.glyphDevice,'keyboard');
- evidence.green=[];
- for(const [width,height] of [[1280,720],[1920,1080],[617,380]]){
-  await page.setViewportSize({width,height});await readyPose();const c=await cue();evidence.green.push(c);
-  assert.equal(c.target,'reachable');assert.equal(c.color,'rgb(148,214,162)');assert.equal(c.ring,'1');assert.deepEqual(c.size,[20,20]);
-  assert.ok(Math.abs(c.centre[0]-width/2)<.25&&Math.abs(c.centre[1]-height/2)<.25);
-  await capture(`green-${width}`);if(width===1280)await capture('green-dot-zoom-source',{x:width/2-14,y:height/2-14,width:28,height:28});
+ evidence.alignment=[];
+ for(const device of ['keyboard','gamepad'])for(const [width,height] of [[1280,720],[1920,1080],[617,380],[360,780]]){
+  await page.setViewportSize({width,height});await readyPose();
+  if(device==='keyboard'){await page.keyboard.press('w');await page.evaluate(()=>__dw.game.frame(1/120,true));}
+  else await page.evaluate(()=>{__reticlePad.axes[0]=.9;__dw.game.frame(1/120,true);__reticlePad.axes[0]=0;__dw.game.frame(1/120,true);});
+  assert.equal(await page.evaluate(()=>__dw.game.input.device),device);const c=await cue();neutral(c);evidence.alignment.push({device,...c});await capture(`neutral-${device}-${width}`);
+  if(device==='gamepad'&&width===1280)await capture('neutral-dot-zoom-source',{x:width/2-14,y:height/2-14,width:28,height:28});
  }
- await page.setViewportSize({width:1280,height:720});
- await page.evaluate(()=>{const g=__dw.game,p=g.player;g.placeAtSpawn();p.foot.position.set(5000,1000,5000);p.foot.grounded=false;p.foot.velocity.set(0,0,0);g.frame(1/120,false);g.cameraRig.snap(p);g.skyLanceVisuals.nextPreview=0;g.frame(0,true);});
- evidence.blue=await cue();assert.equal(evidence.blue.target,'out-of-range');assert.equal(evidence.blue.color,'rgb(168,221,236)');assert.equal(evidence.blue.ring,'0');
- await capture('blue-1280');await capture('blue-dot-zoom-source',{x:626,y:346,width:28,height:28});
- await readyPose();
- evidence.budget=await page.evaluate(()=>{
-  const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,original=w.sweep,position=p.foot.position.clone(),rows=[];let queried=false,forecasts=0,validFrames=0,checkingFrames=0;
-  const diagnosticPose={feet:p.foot.position.toArray(),velocity:p.foot.velocity.toArray(),camera:g.camera.position.toArray(),quaternion:g.camera.quaternion.toArray(),revision:w.revision};
-  w.clearGeometryCertificates(); // Include first-query construction and every miss.
-  w.sweep=function(...args){queried=true;return original.apply(this,args);};const start=performance.now();
-  const el=document.querySelector('#sky-lance-reticle');
-  try{for(let i=0;i<100;i++){queried=false;p.foot.position.x+=.001;const before={...w.certificateStats},tick=performance.now();v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);rows.push({ms:performance.now()-tick,misses:w.certificateStats.misses-before.misses,hits:w.certificateStats.hits-before.hits,tightened:w.certificateStats.tightened-before.tightened});if(queried)forecasts++;if(el.classList.contains('is-valid'))validFrames++;if(el.dataset.target==='checking')checkingFrames++;}}
-  finally{w.sweep=original;p.foot.position.copy(position);}
-  const elapsed=performance.now()-start;v.nextPreview=performance.now()+500;
-  const at=g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(position.clone()),.5),blocker={kind:'box',x:at.x,y:at.y,z:at.z,hx:.1,hy:.1,hz:.1,yaw:0};
-  w.terrain.colliders.addSource('reticle-boundary-qa',()=>[blocker]);v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);
-  const invalidated={target:el.dataset.target,valid:el.classList.contains('is-valid'),color:getComputedStyle(el).color};w.terrain.colliders.removeSource('reticle-boundary-qa');
-  return {calls:100,forecasts,elapsed,firstCompleteMs:rows[0].ms,coldStart:true,rows,validFrames,checkingFrames,invalidated,diagnosticPose};
+ await page.setViewportSize({width:1280,height:720});await readyPose();
+ evidence.ready=await page.evaluate(()=>{
+  const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,sw=w.sweep,rows=[];let sweeps=0;
+  w.sweep=function(...args){sweeps++;return sw.apply(this,args);};const feet=p.foot.position.clone(),cam=g.camera.position.clone(),quat=g.camera.quaternion.clone();
+  try{for(const motion of ['idle','strong movement'])for(let i=0;i<240;i++){
+   p.foot.position.copy(feet);g.camera.position.copy(cam);g.camera.quaternion.copy(quat);
+   if(motion!=='idle'){p.foot.position.x+=i*.03;g.camera.position.x+=i*.03;g.camera.rotateY(.025*Math.sin(i/20));p.foot.velocity.set(4*Math.sin(i/17),-.2,2*Math.cos(i/13));}
+   const start=performance.now();v.updateReticle(g.camera,p.foot.position,p.foot.velocity,p.skyLance);const ms=performance.now()-start,el=document.querySelector('#sky-lance-reticle');
+   rows.push({motion,index:i,ms,target:v.target,state:el.dataset.target,valid:el.classList.contains('is-valid'),color:getComputedStyle(el).color,sweeps});
+  }}finally{w.sweep=sw;p.foot.position.copy(feet);g.camera.position.copy(cam);g.camera.quaternion.copy(quat);p.foot.velocity.set(0,0,0);}
+  return {rows,sweeps,excludedWarmupQueries:0,firstMs:rows[0].ms,meanMs:rows.reduce((a,r)=>a+r.ms,0)/rows.length};
  });
- console.log('Complete 100-pose CPU diagnostics:',JSON.stringify(evidence.budget));
- assert.equal(evidence.budget.forecasts,100,'every changed-pose render executes a full query');
- assert.equal(evidence.budget.validFrames,100,'continuously eligible movement remains green');assert.equal(evidence.budget.checkingFrames,0);
- // Run after the unchanged baseline is complete, before its retained assertion,
- // so failing CI still exports the diagnostic without prewarming that baseline.
- evidence.diagnostic=await diagnoseReticle100(page,evidence.budget.diagnosticPose);
- console.log('Instrumented 100-pose stage diagnostics:',JSON.stringify({summary:evidence.diagnostic.summary,zeroMissSummary:evidence.diagnostic.zeroMissSummary,parityMismatches:evidence.diagnostic.mismatches.length,interpretation:evidence.diagnostic.interpretation}));
- assert.equal(evidence.diagnostic.rows.length,100);assert.equal(evidence.diagnostic.referenceQueries,100);
- assert.equal(evidence.diagnostic.geometryStableDuringReplay,true);assert.deepEqual(evidence.diagnostic.mismatches,[]);
- assert.deepEqual(evidence.diagnostic.rows.map(({misses,hits,tightened})=>({misses,hits,tightened})),evidence.budget.rows.map(({misses,hits,tightened})=>({misses,hits,tightened})),'diagnostic replays the exact cold/miss/hit sequence');
- assert.ok(evidence.budget.elapsed/100<2.5,'complete moving-pose preview mean CPU cost');
- assert.equal(evidence.budget.invalidated.target,'blocked');assert.equal(evidence.budget.invalidated.valid,false);
- // Capture the first renderer submission after actual Game/UI visibility changes.
- // Only these lifecycle captures suppress 3D; current-pose validation still runs.
+ assert.equal(evidence.ready.sweeps,0);assert.ok(evidence.ready.meanMs<2.5,'neutral moving/idle dot mean CPU budget');
+ assert.ok(evidence.ready.rows.every(r=>r.target===null&&r.state==='aiming'&&!r.valid&&r.color==='rgb(168, 221, 236)'));
+ console.log('Neutral idle/moving CPU:',JSON.stringify({samples:evidence.ready.rows.length,sweeps:evidence.ready.sweeps,firstMs:evidence.ready.firstMs,meanMs:evidence.ready.meanMs}));
  evidence.lifecycle=[];
  for(const action of ['pause','hud','mount-leap']){
-  await readyPose();
-  const result=await page.evaluate(action=>{
-   const g=__dw.game,p=g.player,v=g.skyLanceVisuals,w=p.skyLance.world,el=document.querySelector('#sky-lance-reticle'),render=g.renderer.render,sw=w.sweep,paints=[];let queries=0;
-   const snapshot=()=>({visible:!el.hidden&&!el.closest('[hidden]'),valid:el.classList.contains('is-valid'),state:el.dataset.target,queries,mode:p.mode});
-   g.renderer.render=()=>paints.push(snapshot());w.sweep=function(...args){queries++;return sw.apply(this,args);};
+  await readyPose();const result=await page.evaluate(action=>{
+   const g=__dw.game,p=g.player,w=p.skyLance.world,el=document.querySelector('#sky-lance-reticle'),render=g.renderer.render,sw=w.sweep,update=g.skyLanceVisuals.updateReticle,paints=[];let sweeps=0,physicsSweeps=0,predicting=false;
+   const snapshot=()=>{const r=el.getBoundingClientRect();return {visible:!el.hidden&&!el.closest('[hidden]'),valid:el.classList.contains('is-valid'),state:el.dataset.target,color:getComputedStyle(el).color,target:g.skyLanceVisuals.target,centre:[r.left+r.width/2,r.top+r.height/2],sweeps,mode:p.mode};};
+   g.renderer.render=()=>paints.push(snapshot());g.skyLanceVisuals.updateReticle=function(...args){predicting=true;try{return update.apply(this,args);}finally{predicting=false;}};w.sweep=function(...args){if(predicting)sweeps++;else physicsSweeps++;return sw.apply(this,args);};
    const tick=pressed=>{g.input.setScripted(pressed?{pressed}:null);g.frame(0,true);g.input.setScripted(null);};
-   let hidden,firstVisible;
    try{
-    if(action==='pause'){g.pause();tick();}
-    else if(action==='hud')tick({toggleHud:true});
-    else {p.teleport(p.foot.position.clone().set(5000,900,5000),0,'flying',30);g.frame(1/120,true);}
-    hidden=snapshot();
-    const at=g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(p.foot.position.clone()),.5),blocker={kind:'box',x:at.x,y:at.y,z:at.z,hx:.1,hy:.1,hz:.1,yaw:0};
-    if(action!=='mount-leap')w.terrain.colliders.addSource('reticle-lifecycle-qa',()=>[blocker]);
-    const before=queries;
-    if(action==='pause'){g.resume();tick();}
-    else if(action==='hud')tick({toggleHud:true});
-    else {__reticlePad.buttons[3]={pressed:true,touched:true,value:1};for(let i=0;i<48&&!paints.some(f=>f.visible);i++)g.frame(1/120,true);__reticlePad.buttons[3]={pressed:false,touched:false,value:0};}
-    firstVisible=paints.find(f=>f.visible);return {action,hidden,firstVisible,freshQueries:queries-before,paints};
-   }finally{g.renderer.render=render;w.sweep=sw;w.terrain.colliders.removeSource('reticle-lifecycle-qa');g.input.setScripted(null);__reticlePad.buttons[3]={pressed:false,touched:false,value:0};}
+    if(action==='pause'){g.pause();tick();}else if(action==='hud')tick({toggleHud:true});else {p.teleport(p.foot.position.clone().set(5000,900,5000),0,'flying',30);g.frame(1/120,true);}
+    const hidden=snapshot();
+    if(action==='pause'){g.resume();tick();}else if(action==='hud')tick({toggleHud:true});else {__reticlePad.buttons[3]={pressed:true,touched:true,value:1};for(let i=0;i<48&&!paints.some(f=>f.visible);i++)g.frame(1/120,true);}
+    return {action,hidden,firstVisible:paints.find(f=>f.visible),sweeps,physicsSweeps,paints};
+   }finally{g.renderer.render=render;g.skyLanceVisuals.updateReticle=update;w.sweep=sw;g.input.setScripted(null);__reticlePad.buttons[3]={pressed:false,touched:false,value:0};}
   },action);
-  evidence.lifecycle.push(result);
-  assert.equal(result.hidden.visible,false);assert.equal(result.hidden.valid,false,'hidden frames clear prior green');
-  assert.ok(result.firstVisible,'visibility transition reaches a renderer submission');assert.equal(result.firstVisible.valid,false,'first visible submission cannot retain prior green');
-  assert.equal(result.firstVisible.state,action==='mount-leap'?'out-of-range':'blocked');assert.ok(result.freshQueries>0,'first visible frame validates the changed pose/geometry');
+  evidence.lifecycle.push(result);assert.equal(result.hidden.visible,false);assert.ok(result.firstVisible);assert.equal(result.sweeps,0);
+  assert.equal(result.firstVisible.state,'aiming');assert.equal(result.firstVisible.valid,false);assert.equal(result.firstVisible.target,null);assert.equal(result.firstVisible.color,'rgb(168, 221, 236)');assert.deepEqual(result.firstVisible.centre,[640,360]);
  }
- console.log('First-visible Game lifecycle diagnostics:',JSON.stringify(evidence.lifecycle));
- await readyPose();
- evidence.cast=await page.evaluate(()=>{
-  const g=__dw.game,p=g.player,target=g.skyLanceVisuals.target,point=target.point.clone(),anchor=target.anchorId;
-  __reticlePad.buttons[7]={pressed:true,touched:true,value:.8};let steps=0;g.frame(1/120,false);steps++;
-  while(steps<240&&p.skyLance.state==='projectile'){g.frame(1/120,false);steps++;}
-  return {anchor,actualAnchor:p.skyLance.anchorId,attached:!!p.skyLance.rope,impactError:p.skyLance.position.distanceTo(point),seconds:steps/120,ship:!!g.scene.getObjectByName('Windhaven')};
- });
- assert.equal(evidence.cast.attached,true);assert.equal(evidence.cast.actualAnchor,evidence.cast.anchor);assert.ok(evidence.cast.impactError<.16);assert.equal(evidence.cast.ship,false);
- const attached=await cue();assert.equal(attached.target,'attached');assert.equal(attached.color,'rgb(168,221,236)');assert.equal(attached.ring,'0');
- // Combine moving look, real centred RT casting and a long retained swing. CPU
- // timings exclude renderer submission; they do not certify physical frame rate.
+ evidence.casts=[];
+ for(const [device,depth] of [['keyboard',18],['gamepad',45]]){
+  await readyPose(depth);
+  const expected=await page.evaluate(()=>{const g=__dw.game,w=g.player.skyLance.world,ray=g.camera.getWorldDirection(g.player.foot.position.clone()),hit=w.sweep(g.camera.position,g.camera.position.clone().addScaledVector(ray,100),.08);return {anchor:hit?.anchorId,point:hit?.point.toArray()};});
+  if(device==='keyboard')await page.keyboard.down('q');else await page.evaluate(()=>{__reticlePad.buttons[7]={pressed:true,touched:true,value:.8};});
+  const cast=await page.evaluate(expected=>{
+   const g=__dw.game,p=g.player,w=p.skyLance.world,sw=w.sweep;let queries=0,steps=0;
+   w.sweep=function(...args){queries++;return sw.apply(this,args);};
+   try{g.frame(1/120,false);steps++;while(steps<240&&p.skyLance.state==='projectile'){g.frame(1/120,false);steps++;}const point=p.skyLance.position.toArray();return {anchor:p.skyLance.anchorId,attached:!!p.skyLance.rope,length:p.skyLance.rope?.length,point,impactError:Math.hypot(...point.map((n,i)=>n-expected.point[i])),queries,seconds:steps/120,ship:!!g.scene.getObjectByName('Windhaven')};}
+   finally{w.sweep=sw;}
+  },expected);
+  evidence.casts.push({device,expected,...cast});assert.equal(cast.attached,true);assert.equal(cast.anchor,expected.anchor);assert.ok(cast.impactError<.16);assert.ok(cast.queries>0,'actual press solves fresh physical geometry');assert.equal(cast.ship,false);neutral(await cue());
+  if(device==='keyboard')await page.keyboard.up('q');else await page.evaluate(()=>{__reticlePad.buttons[7]={pressed:false,touched:false,value:0};});
+  await page.evaluate(()=>__dw.game.frame(1/120,false));
+ }
+ // Inserting a new thin first solid after aiming must affect the actual press.
+ await readyPose();const inserted=await page.evaluate(()=>{const g=__dw.game,at=g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(g.player.foot.position.clone()),12);g.world.terrain.colliders.addSource('neutral-cast-wall',()=>[{kind:'box',x:at.x,y:at.y,z:at.z,hx:2,hy:2,hz:.001,yaw:0}]);g.frame(0,false);const w=g.player.skyLance.world,hit=w.sweep(g.camera.position,g.camera.position.clone().addScaledVector(g.camera.getWorldDirection(at.clone()),100),.08);return {anchor:hit?.anchorId,point:hit?.point.toArray()};});
+ neutral(await cue());await page.evaluate(()=>{__reticlePad.buttons[7]={pressed:true,touched:true,value:.8};const g=__dw.game;g.frame(1/120,false);for(let i=0;i<240&&g.player.skyLance.state==='projectile';i++)g.frame(1/120,false);});
+ evidence.newSolid=await page.evaluate(()=>({anchor:__dw.game.player.skyLance.anchorId,rope:!!__dw.game.player.skyLance.rope}));assert.equal(evidence.newSolid.rope,true);assert.equal(evidence.newSolid.anchor,inserted.anchor);
+ await page.evaluate(()=>{__reticlePad.buttons[7]={pressed:false,touched:false,value:0};__dw.game.frame(1/120,false);__dw.game.world.terrain.colliders.removeSource('neutral-cast-wall');});
+ // No surface within range: the neutral dot makes no promise and actual cast misses.
+ await page.evaluate(()=>{const g=__dw.game,p=g.player;g.placeAtSpawn();p.foot.position.set(5000,1000,5000);p.foot.grounded=false;p.foot.velocity.set(0,0,0);g.frame(1/120,false);g.cameraRig.snap(p);g.frame(0,true);});neutral(await cue());await capture('neutral-empty-range');
+ evidence.range=await page.evaluate(()=>{const g=__dw.game,p=g.player;__reticlePad.buttons[7]={pressed:true,touched:true,value:.8};g.frame(1/120,false);for(let i=0;i<240&&p.skyLance.state==='projectile';i++)g.frame(1/120,false);__reticlePad.buttons[7]={pressed:false,touched:false,value:0};return {rope:!!p.skyLance.rope,anchor:p.skyLance.anchorId,state:p.skyLance.state,reason:p.skyLance.reason};});assert.equal(evidence.range.rope,false);assert.equal(evidence.range.anchor,null);assert.equal(evidence.range.state,'spent');
  await readyPose(45);
- evidence.movingCamera=await page.evaluate(()=>{
-  const g=__dw.game,p=g.player,v=g.skyLanceVisuals,original=v.updateReticle;let active=null;
-  v.updateReticle=function(...args){const start=performance.now(),before=this.nextPreview;try{return original.apply(this,args);}finally{if(active){active.reticleMs+=performance.now()-start;if(p.skyLance.state==='ready'&&this.nextPreview!==before)active.forecasts++;}}};
-  const tick=(input={})=>{g.input.setScripted(input);g.frame(1/120,false);g.input.setScripted(null);};
-  const sample=(n,held)=>{
-   active={frames:[],reticleMs:0,forecasts:0,validFrames:0,checkingFrames:0};const start=performance.now(),reticle=document.querySelector('#sky-lance-reticle');
-   for(let i=0;i<n;i++){const step=performance.now();tick({lanceHeld:held,lookActive:true,lookIsRate:true,lookX:.35*Math.sin(i/30),lookY:.08*Math.sin(i/45),...(held?{foot:{moveX:.25,moveY:0,sprint:false}}:{})});active.frames.push(performance.now()-step);if(reticle.classList.contains('is-valid'))active.validFrames++;if(reticle.dataset.target==='checking')active.checkingFrames++;}
-   const d=active;active=null;const elapsed=performance.now()-start,sorted=d.frames.sort((a,b)=>a-b);
-   return {samples:n,elapsedMs:elapsed,meanMs:sorted.reduce((a,b)=>a+b,0)/n,p95Ms:sorted[Math.floor(n*.95)],maxMs:sorted[n-1],reticlePerStepMs:d.reticleMs/n,forecasts:d.forecasts,validFrames:d.validFrames,checkingFrames:d.checkingFrames};
-  };
-  try{
-   v.nextPreview=0; // Include a real forecast even on a fast runner inside the cooldown.
-   const ready=sample(120,false),s=g.world.terrain.islands[0],x=s.def.x+s.def.radius*.35,z=s.def.z;
-   __reticlePad.buttons[7]={pressed:false,touched:false,value:0};g.placeAtSpawn();p.foot.position.set(x,s.bottomHeight(x,z)-45,z);p.foot.grounded=false;p.foot.velocity.set(0,0,0);tick();g.cameraRig.snap(p);
-   tick({lookActive:true,lookIsRate:false,lookX:g.cameraRig.yaw+Math.PI/2,lookY:-10});for(let i=0;i<60;i++)tick();v.nextPreview=0;g.frame(0,false);
-   const candidate=v.target?.anchorId,cue=v.target?.state;__reticlePad.buttons[7]={pressed:true,touched:true,value:.8};g.frame(1/120,false);
-   for(let i=0;i<240&&p.skyLance.state==='projectile';i++)g.frame(1/120,false);
-   if(!p.skyLance.rope)throw Error('Long centred cast failed: '+p.skyLance.reason);
-   const anchor=p.skyLance.anchorId,length=p.skyLance.rope.length,hanging=sample(360,true);p.foot.velocity.set(8,0,4);
-   const swinging=sample(480,true),retained=!!p.skyLance.rope,yaw=g.cameraRig.yaw;
-   __reticlePad.buttons[7]={pressed:false,touched:false,value:0};g.frame(1/120,false);const released=sample(180,false);
-   return {ready,candidate,cue,anchor,length,hanging,swinging,retained,released,releasedRope:!!p.skyLance.rope,yaw};
-  }finally{v.updateReticle=original;}
+ evidence.swing=await page.evaluate(()=>{
+  const g=__dw.game,p=g.player,v=g.skyLanceVisuals,update=v.updateReticle,w=p.skyLance.world,sw=w.sweep;let reticleMs=0,updates=0,predicting=false,forecasts=0;
+  v.updateReticle=function(...args){const t=performance.now();predicting=true;try{return update.apply(this,args);}finally{predicting=false;reticleMs+=performance.now()-t;updates++;}};w.sweep=function(...args){if(predicting)forecasts++;return sw.apply(this,args);};
+  const sample=(n,held)=>{const rows=[];reticleMs=0;updates=0;const before=forecasts;__reticlePad.buttons[7]={pressed:held,touched:held,value:held?.8:0};for(let i=0;i<n;i++){__reticlePad.axes[2]=Math.sin(i/35)*.18;const t=performance.now();g.frame(1/120,false);rows.push(performance.now()-t);}rows.sort((a,b)=>a-b);return {samples:n,meanMs:rows.reduce((a,b)=>a+b,0)/n,p95Ms:rows[Math.floor(n*.95)],reticleMsPerUpdate:reticleMs/updates,forecasts:forecasts-before};};
+  try{const feet=p.foot.position.clone(),velocity=p.foot.velocity.clone(),camera=g.camera.position.clone(),quaternion=g.camera.quaternion.clone(),ready=sample(120,false);p.foot.position.copy(feet);p.foot.velocity.copy(velocity);g.camera.position.copy(camera);g.camera.quaternion.copy(quaternion);__reticlePad.axes.fill(0);__reticlePad.buttons[7]={pressed:true,touched:true,value:.8};g.frame(1/120,false);for(let i=0;i<240&&p.skyLance.state==='projectile';i++)g.frame(1/120,false);if(!p.skyLance.rope)throw Error('Long actual cast failed: '+p.skyLance.reason);const length=p.skyLance.rope.length,hanging=sample(360,true);p.foot.velocity.set(8,0,4);const swinging=sample(480,true),retained=!!p.skyLance.rope;__reticlePad.buttons[7]={pressed:false,touched:false,value:0};g.frame(1/120,false);const released=sample(180,false);return {ready,length,hanging,swinging,retained,released,releasedRope:!!p.skyLance.rope};}
+  finally{v.updateReticle=update;w.sweep=sw;__reticlePad.axes.fill(0);}
  });
- const moving=evidence.movingCamera;
- console.log('Ready-preview and moving-swing CPU diagnostics:',JSON.stringify(moving));
- assert.equal(moving.cue,'reachable');assert.equal(moving.candidate,moving.anchor);assert.ok(moving.length>45&&moving.length<=65);
- assert.equal(moving.retained,true);assert.equal(moving.releasedRope,false);
- assert.ok(moving.ready.forecasts>0,'ready CPU sample includes actual target forecasting');
- assert.equal(moving.ready.forecasts,moving.ready.samples,'every moving ready render is freshly validated');assert.equal(moving.ready.checkingFrames,0);
- assert.ok(moving.ready.reticlePerStepMs<2.5,'bounded ready preview average CPU cost');
- assert.equal(moving.swinging.forecasts,0,'attached line never runs a ready-target forecast');
- assert.ok(moving.swinging.p95Ms<20,'sustained moving-camera swing CPU budget');
+ assert.equal(evidence.swing.retained,true);assert.equal(evidence.swing.releasedRope,false);assert.equal(evidence.swing.ready.forecasts,0);assert.equal(evidence.swing.swinging.forecasts,0);assert.ok(evidence.swing.ready.reticleMsPerUpdate<2.5);assert.ok(evidence.swing.swinging.p95Ms<20,'original sustained moving-camera swing CPU budget');
  assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>__dw.errors),[]);
- console.log('Fixed-dot and fresh controller cast checks passed:',JSON.stringify(evidence));
+ console.log('Neutral reticle, fresh casts and sustained swing passed:',JSON.stringify({alignment:evidence.alignment,casts:evidence.casts,newSolid:evidence.newSolid,range:evidence.range,swing:evidence.swing}));
 }finally{fs.writeFileSync('/tmp/driftwing-windline-reticle-browser-check.json',JSON.stringify({metadata,evidence,errors},null,2));await browser.close();}

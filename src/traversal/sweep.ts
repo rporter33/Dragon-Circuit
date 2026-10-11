@@ -3,13 +3,8 @@ import type { Collider } from '../core/types';
 import type { Terrain, TerrainSolid, RockColumns } from '../world/terrain';
 import { signedDistance } from '../world/colliders';
 import { AnchorRegistry } from './anchors';
-import type {IslandShape,UndersideFloorSolver,UndersideIntervalSnapshots,UndersideIntervalStats} from '../world/islandShape';
-interface GeometryCertificate { far: number; tight?: number; x:number; z:number; cell:number }
-interface RadiusCertificates {coarse:Map<number,GeometryCertificate>;fine:Map<number,GeometryCertificate>}
-interface ShapeCertificates { definition:string; solver:UndersideFloorSolver|null; radii:Map<number,RadiusCertificates>; domains:{coarse:Map<number,UndersideIntervalSnapshots>;fine:Map<number,UndersideIntervalSnapshots>} }
-const CERTIFICATE_CELL=.04, FINE_CERTIFICATE_CELL=.01, CERTIFICATE_CAPACITY=16384, CELL_OFFSET=2**22, CELL_STRIDE=2**23;
 export interface SweepHit { fraction: number; point: Vector3; normal: Vector3; anchorId: string | null; exhausted?: boolean }
-export interface SweepWorld { readonly revision?: number; readonly renderTargetQueries?: boolean; anchorValid(id: string): boolean; sweep(from: Vector3, to: Vector3, radius: number, ignoreAnchorId?: string): SweepHit | null }
+export interface SweepWorld { readonly revision?: number; anchorValid(id: string): boolean; sweep(from: Vector3, to: Vector3, radius: number, ignoreAnchorId?: string): SweepHit | null }
 /** Conservative fixed query budgets for the isolated V1; overload blocks rather than tunnels. */
 export const SWEEP_LIMITS = Object.freeze({ length: 128, candidates: 256, tetherSpacing: .04 });
 /** Exact-distance conservative advancement against a sphere-expanded primitive (including thin boxes).
@@ -41,59 +36,8 @@ export function sweepShape(from: Vector3, to: Vector3, radius: number, shape: Co
  */
 export class TraversalWorld implements SweepWorld {
   get revision(): number { return this.terrain.colliders.revision; }
-  get renderTargetQueries():boolean {return this.localUndersideBounds;}
   private readonly rockAnchors = new Map<string,{solid:TerrainSolid; definition:string}>();
-  private readonly certificates = new Map<IslandShape,ShapeCertificates>();
-  private certificateQueue:{map:Map<number,GeometryCertificate>;key:number;entry:GeometryCertificate}[]=[];
-  private certificateHead=0;
-  private domainQueue:{map:Map<number,UndersideIntervalSnapshots>;key:number;entry:UndersideIntervalSnapshots}[]=[];
-  private domainHead=0;
-  readonly certificateStats={hits:0,misses:0,tightened:0,definitionChanges:0};
-  readonly intervalStats:UndersideIntervalStats={domainHits:0,domainMisses:0,centralHits:0,centralMisses:0,stencilHits:0,stencilMisses:0};
-  clearGeometryCertificates():void {this.certificates.clear();this.certificateQueue=[];this.certificateHead=0;this.domainQueue=[];this.domainHead=0;}
-  private certificateMap(shape:IslandShape,radius:number):{maps:RadiusCertificates;cache:ShapeCertificates} {
-    const definition=JSON.stringify(shape.def);
-    let cache=this.certificates.get(shape);
-    if(!cache||cache.definition!==definition){
-      if(cache)this.certificateStats.definitionChanges++;
-      cache={definition,solver:shape.undersideCertificateSolver(definition),radii:new Map(),domains:{coarse:new Map(),fine:new Map()}};this.certificates.set(shape,cache);
-    }
-    let maps=cache.radii.get(radius);if(!maps){maps={coarse:new Map(),fine:new Map()};cache.radii.set(radius,maps);}return {maps,cache};
-  }
-  private domainSnapshot(cache:ShapeCertificates,key:number,x:number,z:number,cell:number):UndersideIntervalSnapshots {
-    const map=cell===CERTIFICATE_CELL?cache.domains.coarse:cache.domains.fine,cached=map.get(key);
-    if(cached){this.intervalStats.domainHits++;return cached;}
-    this.intervalStats.domainMisses++;
-    const pad=1e-7,entry:UndersideIntervalSnapshots={definition:cache.definition,domain:[x*cell-pad,(x+1)*cell+pad,z*cell-pad,(z+1)*cell+pad],bounds:[],stats:this.intervalStats};
-    map.set(key,entry);this.domainQueue.push({map,key,entry});
-    // Independent of the unchanged radius-floor FIFO. No floor retains a domain
-    // snapshot, so eviction cannot leave an unbounded secondary history alive.
-    while(this.domainQueue.length-this.domainHead>CERTIFICATE_CAPACITY){const old=this.domainQueue[this.domainHead++];if(old.map.get(old.key)===old.entry)old.map.delete(old.key);}
-    if(this.domainHead>=CERTIFICATE_CAPACITY){this.domainQueue.splice(0,this.domainHead);this.domainHead=0;}
-    return entry;
-  }
-  private cellCertificate(shape:IslandShape,map:Map<number,GeometryCertificate>,cache:ShapeCertificates,key:number,x:number,z:number,radius:number,cell=CERTIFICATE_CELL):GeometryCertificate {
-    const cached=map.get(key);if(cached){this.certificateStats.hits++;return cached;}
-    this.certificateStats.misses++;
-    const pad=1e-7,minX=x*cell-pad,maxX=(x+1)*cell+pad,minZ=z*cell-pad,maxZ=(z+1)*cell+pad;
-    const far=cache.solver?.(minX,maxX,minZ,maxZ,radius,-Infinity,this.domainSnapshot(cache,key,x,z,cell))??null;
-    const entry:GeometryCertificate={x,z,cell,far:far??shape.minY-radius,...(far===null?{tight:shape.minY-radius}:{})};
-    map.set(key,entry);this.certificateQueue.push({map,key,entry});
-    while(this.certificateQueue.length-this.certificateHead>CERTIFICATE_CAPACITY){const old=this.certificateQueue[this.certificateHead++];if(old.map.get(old.key)===old.entry)old.map.delete(old.key);}
-    if(this.certificateHead>=CERTIFICATE_CAPACITY){this.certificateQueue.splice(0,this.certificateHead);this.certificateHead=0;}
-    return entry;
-  }
-  private certificateFloor(shape:IslandShape,cache:ShapeCertificates,entry:GeometryCertificate,radius:number,y:number):number {
-    if(entry.tight!==undefined)return entry.tight;
-    if(y<entry.far)return entry.far;
-    this.certificateStats.tightened++;
-    const pad=1e-7;
-    const key=(entry.x+CELL_OFFSET)*CELL_STRIDE+entry.z+CELL_OFFSET;
-    entry.tight=Math.max(entry.far,cache.solver?.(entry.x*entry.cell-pad,(entry.x+1)*entry.cell+pad,entry.z*entry.cell-pad,(entry.z+1)*entry.cell+pad,radius,Infinity,this.domainSnapshot(cache,key,entry.x,entry.z,entry.cell))??shape.minY-radius);
-    return entry.tight;
-  }
-  // The reference path remains available for exact geometry/query parity checks.
-  constructor(readonly terrain: Terrain, readonly anchors = new AnchorRegistry([],true), readonly localUndersideBounds = true) {}
+  constructor(readonly terrain: Terrain, readonly anchors = new AnchorRegistry([],true)) {}
   private rockId(solid: TerrainSolid): string | null {
     if (!this.anchors.allSolids) return null;
     const id = `rock-${solid.type}-${solid.shape.def.id}`;
@@ -171,59 +115,10 @@ export class TraversalWorld implements SweepWorld {
       if (lo<=hi) ranges.push([Math.max(0,Math.floor(end>0?lo/end*count:0)),Math.min(count,Math.ceil(end>0?hi/end*count:0))]);
     }
     ranges.sort((a,b)=>a[0]-b[0]);
-    // Memoize only immutable analytic empty-space certificates, never a target/pose result.
-    // Primitive candidates remain fresh; shape definition changes invalidate their own map.
-    // All original lattice points still charge the logical budget before certificate rejection.
-    const proofSources=this.localUndersideBounds&&!columns?rocks.map(solid=>({solid,map:solid.type==='island'?this.certificateMap(solid.shape,rockRadius):null})):null;
-    let cellX=Infinity,cellZ=Infinity;
-    let proofs:{shape:IslandShape;cache:ShapeCertificates;maps:RadiusCertificates;entry:GeometryCertificate;fine?:GeometryCertificate}[]=[];
-    let otherFloor=Infinity;
-    for(const solid of rocks)if(solid.type!=='island')otherFloor=Math.min(otherFloor,(solid.type==='spire'?solid.shape.def.tipY:solid.shape.center.y-solid.shape.boundRadius)-rockRadius);
     let checked=-1,queries=0;
     for (const [first,last] of ranges) for (let i=Math.max(first,checked+1);i<=last;i++) {
       checked=i;point.lerpVectors(from,to,end*i/count);
       if (++queries>16384) return {fraction:end*i/count,point,normal:from.clone().sub(to).normalize(),anchorId:null,exhausted:true};
-      if(proofSources){
-        const x=Math.floor(point.x/CERTIFICATE_CELL),z=Math.floor(point.z/CERTIFICATE_CELL);
-        if(Math.abs(x)<CELL_OFFSET/2&&Math.abs(z)<CELL_OFFSET/2){
-          if(x!==cellX||z!==cellZ){
-            cellX=x;cellZ=z;proofs=[];const key=(x+CELL_OFFSET)*CELL_STRIDE+z+CELL_OFFSET;
-            for(const source of proofSources)if(source.solid.type==='island')proofs.push({shape:source.solid.shape,cache:source.map!.cache,maps:source.map!.maps,entry:this.cellCertificate(source.solid.shape,source.map!.maps.coarse,source.map!.cache,key,x,z,rockRadius)});
-          }
-          let floor=otherFloor,cell=CERTIFICATE_CELL,cx=x,cz=z;
-          const fx=Math.floor(point.x/FINE_CERTIFICATE_CELL),fz=Math.floor(point.z/FINE_CERTIFICATE_CELL);
-          for(const proof of proofs){
-            let local=this.certificateFloor(proof.shape,proof.cache,proof.entry,rockRadius,point.y);
-            // Refine only ambiguous near-contact cells. This is the same enclosing
-            // analytic proof on a smaller domain, never a reused hit/target result.
-            if(point.y>=local&&proof.cache.solver&&Math.abs(fx)<CELL_OFFSET/2&&Math.abs(fz)<CELL_OFFSET/2){
-              if(!proof.fine||proof.fine.x!==fx||proof.fine.z!==fz)proof.fine=this.cellCertificate(proof.shape,proof.maps.fine,proof.cache,(fx+CELL_OFFSET)*CELL_STRIDE+fz+CELL_OFFSET,fx,fz,rockRadius,FINE_CERTIFICATE_CELL);
-              local=Math.max(local,this.certificateFloor(proof.shape,proof.cache,proof.fine,rockRadius,point.y));
-              cell=FINE_CERTIFICATE_CELL;cx=fx;cz=fz;
-            }
-            floor=Math.min(floor,local);
-          }
-          if(point.y<floor){
-            // Charge, but do not evaluate, consecutive original lattice nodes that stay
-            // inside this certified XZ cell and strictly below its enclosing plane floor.
-            let until=end;
-            // Intersect coarse and fine domains explicitly. Floating division at
-            // a shared seam can choose adjacent cells despite mathematical nesting.
-            if(delta.x!==0)until=Math.min(until,((delta.x>0?x+1:x)*CERTIFICATE_CELL-from.x)/delta.x,((delta.x>0?cx+1:cx)*cell-from.x)/delta.x);
-            if(delta.z!==0)until=Math.min(until,((delta.z>0?z+1:z)*CERTIFICATE_CELL-from.z)/delta.z,((delta.z>0?cz+1:cz)*cell-from.z)/delta.z);
-            if(delta.y>0)until=Math.min(until,(floor-from.y)/delta.y);
-            const skip=Math.min(last,end>0?Math.floor((until-1e-9)/end*count):last);
-            if(skip>i){
-              if(queries+skip-i>16384){
-                const blocked=i+16384-queries+1;point.lerpVectors(from,to,end*blocked/count);
-                return {fraction:end*blocked/count,point,normal:from.clone().sub(to).normalize(),anchorId:null,exhausted:true};
-              }
-              queries+=skip-i;i=skip;checked=i;
-            }
-            continue;
-          }
-        }
-      }
       if (!this.terrain.rockContact(point,rockRadius,push,normal,undefined,columns,rocks)) continue;
       const fraction = end * i / count;
       if (i === 0 && push.lengthSq() < 1e-8 && to.clone().sub(from).dot(normal) >= 0) continue;
