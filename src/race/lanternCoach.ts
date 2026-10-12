@@ -52,7 +52,7 @@ export class LanternCoach {
       const gain = Math.round(f.y - this.entryY);
       const delta = `${gain >= 0 ? '+' : '−'}${Math.abs(gain)} m`;
       const rate = `${f.vy >= 0 ? '+' : '−'}${Math.abs(f.vy).toFixed(1)} m/s`;
-      if (f.y >= LANTERN_EXIT_HEIGHT) return { phase: 'exit', title: `Climb ${delta} · height to spare`, body: 'Leave when ready. Glide around the spire’s east side; bank toward the gold ring.', suggestLift: false };
+      if (this.heightReady) return { phase: 'exit', title: `Climb ${delta} · choose your exit`, body: 'Leave when ready. Glide around the spire’s east side; bank toward the gold ring.', suggestLift: false };
       return { phase: 'climb', title: `In rising air · climb ${delta} · ${rate}`, body: 'Circle gently inside the warm strokes. Release flap; aim for about 730 m before leaving.', suggestLift: false };
     }
     const finishDistance = Math.hypot(f.x - f.finishX, f.z - f.finishZ);

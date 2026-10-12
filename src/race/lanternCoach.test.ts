@@ -16,6 +16,7 @@ describe('optional Lantern advice', () => {
     const a = c.update(frame({ y: 630 }), thermal);
     expect(a.title).toContain('+30 m');
     expect(c.update(frame({ y: 730 }), thermal).phase).toBe('exit');
+    expect(c.update(frame({ y: 728 }), thermal).phase).toBe('exit');
   });
   it('reports actual descent in rising air without claiming a climb', () => {
     const c = new LanternCoach(); c.update(frame(), thermal);
