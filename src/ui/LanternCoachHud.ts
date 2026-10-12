@@ -51,9 +51,9 @@ export class LanternCoachHud {
     // hidden must establish a fresh entry height. Pause holds both position and observation.
     if (!active || view.screen !== 'play') { this.layoutPhase = ''; return; }
     const f = view.player.flight;
-    const finishY = r.defs.find(d => d.id === r.activeId)!.rings[0].position[1];
+    const [finishX, finishY, finishZ] = r.defs.find(d => d.id === r.activeId)!.rings[0].position;
     view.weather.windAt(f.position, this.wind);
-    const advice = this.coach.update({ x: f.position.x, y: f.position.y, z: f.position.z, lift: this.wind.y, vy: f.velocity.y, stall: f.stall, missedFinish: this.missed, finishY }, this.thermal);
+    const advice = this.coach.update({ x: f.position.x, y: f.position.y, z: f.position.z, lift: this.wind.y, vy: f.velocity.y, stall: f.stall, missedFinish: this.missed, finishX, finishY, finishZ }, this.thermal);
     if (!show) { this.layoutPhase = ''; return; }
     this.line.dataset.phase = advice.phase;
     this.title.set(advice.title); this.body.set(advice.body);

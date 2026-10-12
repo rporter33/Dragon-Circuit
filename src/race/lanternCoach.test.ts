@@ -5,7 +5,7 @@ import { WindField } from '../sky/windField';
 import { Vector3 } from 'three';
 
 const thermal = LAYOUT.thermals.find(t => t.id === LANTERN_LIFT_ID)!;
-const frame = (patch: Partial<LanternCoachFrame> = {}): LanternCoachFrame => ({ x: thermal.x, z: thermal.z, y: 600, lift: 10, vy: 5, stall: 0, missedFinish: false, finishY: 690, ...patch });
+const frame = (patch: Partial<LanternCoachFrame> = {}): LanternCoachFrame => ({ x: thermal.x, z: thermal.z, y: 600, lift: 10, vy: 5, stall: 0, missedFinish: false, finishX: -1115, finishY: 690, finishZ: 821, ...patch });
 
 describe('optional Lantern advice', () => {
   it('uses a real thermal at the suggested entry and exit heights', () => {
@@ -47,5 +47,24 @@ describe('optional Lantern advice', () => {
     expect(c.update(frame({ lift: 1.5 }), thermal).phase).toBe('climb');
     c.update(frame({ x: 0, lift: 0 }), thermal); c.reset();
     expect(c.update(frame({ x: 0, lift: 0 }), thermal).phase).toBe('seek');
+  });
+  it('keeps a completed climb aimed toward the lower finish during the descent', () => {
+    const c = new LanternCoach(); c.update(frame(), thermal); c.update(frame({ y: 735 }), thermal);
+    expect(c.update(frame({ x: -1300, z: 330, y: 706, lift: 0 }), thermal).phase).toBe('exit');
+    for (const y of [706, 700, 690]) {
+      const a = c.update(frame({ x: -970, z: 740, y, lift: 0 }), thermal);
+      expect(a.phase).toBe('approach'); expect(a.suggestLift).toBe(false);
+    }
+  });
+  it('recognizes a valid final approach without requiring the suggested lift visit', () => {
+    const a = new LanternCoach().update(frame({ x: -970, z: 740, y: 706, lift: 0 }), thermal);
+    expect(a.phase).toBe('approach'); expect(a.title).toContain('690 m');
+  });
+  it('still offers recovery when a prior climb has been lost below finish height', () => {
+    const c = new LanternCoach(); c.update(frame({ y: 735 }), thermal);
+    const a = c.update(frame({ x: -1100, z: 480, y: 620, lift: 0 }), thermal);
+    expect(a.phase).toBe('recover'); expect(a.suggestLift).toBe(true);
+    c.reset();
+    expect(c.update(frame({ x: 0, z: 0, y: 706, lift: 0 }), thermal).phase).toBe('seek');
   });
 });

@@ -60,7 +60,7 @@ try {
         if (repeat === 0) g.resume();
         __lanternNeutral();
         if (repeat === 0) { g.races.abort('quit'); g.setWyvernLook({ ...g.save.data.wyvern, breed }); g.placeAtSpawn(); }
-        const metrics = window.__lanternMetrics = { breed, repeat, modes: {}, menuSeconds: 0, sampledSeconds: 0, flapFreeGain: 0, maxStall: 0, mappingError: 0, startConditions: null, eventsBefore: { ...__lanternEvents } };
+        const metrics = window.__lanternMetrics = { breed, repeat, modes: {}, menuSeconds: 0, sampledSeconds: 0, flapFreeGain: 0, maxStall: 0, mappingError: 0, coachingSequence: [], lastCoachPhase: null, finalApproachSamples: 0, finalApproachPhases: {}, badApproach: [], startConditions: null, eventsBefore: { ...__lanternEvents } };
         window.__lanternSample = () => {
           const mode = g.screen === 'play' && !g.ui.capturesInput ? g.player.mode : 'menu';
           metrics.modes[mode] = (metrics.modes[mode] ?? 0) + 1 / 120;
@@ -77,8 +77,9 @@ try {
       }, { breed, repeat });
       let result;
       for (let chunk = 0; chunk < 50; chunk++) {
-        result = await page.evaluate(() => {
+        result = await page.evaluate(baseline => {
           const g = __dw.game, m = __lanternMetrics, runner = __lanternRunner;
+          const finish = g.races.defs.find(d => d.id === 'lantern-dash').rings[0].position;
           for (let i = 0; i < 1200 && ['countdown', 'running'].includes(g.races.state); i++) {
             LanternPilot.steer(g, __lanternPad, runner);
             const y = g.player.flight.position.y;
@@ -86,6 +87,23 @@ try {
             g.frame(1 / 120, false); __lanternSample();
             m.maxStall = Math.max(m.maxStall, g.player.flight.stall);
             m.mappingError = Math.max(m.mappingError, Math.abs(g.input.frame.flight.pitch - runner.input.pitch), Math.abs(g.input.frame.flight.roll - runner.input.roll));
+            const p = g.player.position;
+            if (g.races.state === 'running') {
+              const coach = document.querySelector('.dw-lantern-coach'), phase = coach?.dataset.phase ?? 'absent';
+              if (phase !== m.lastCoachPhase && m.coachingSequence.length < 24)
+                m.coachingSequence.push({ phase, timeMs: g.races.elapsedMs, position: p.toArray(), text: coach?.textContent });
+              m.lastCoachPhase = phase;
+            }
+            // Independent final-flight window: observe real full attempts rather than staging
+            // a successful end pose or using the coach's departure altitude as a test oracle.
+            if (g.races.state === 'running' && g.player.mode === 'flying' && g.player.flight.stall <= 0.15 &&
+                Math.hypot(p.x - finish[0], p.z - finish[2]) < 180 && p.y >= finish[1] - 10 && p.y <= finish[1] + 40) {
+              const coach = document.querySelector('.dw-lantern-coach'), phase = coach?.dataset.phase ?? 'absent';
+              m.finalApproachSamples++;
+              m.finalApproachPhases[phase] = (m.finalApproachPhases[phase] ?? 0) + 1;
+              if (!baseline && !['approach', 'finish'].includes(phase) && m.badApproach.length < 5)
+                m.badApproach.push({ position: p.toArray(), phase, text: coach?.textContent });
+            }
             if (flapFree && g.input.frame.flight.flap === 0) {
               if (__lanternFree === null) __lanternFree = y;
               m.flapFreeGain = Math.max(m.flapFreeGain, g.player.flight.position.y - __lanternFree);
@@ -95,13 +113,20 @@ try {
             }
           }
           return { state: g.races.state, mode: g.player.mode, position: g.player.position.toArray(), metrics: m, timeMs: g.races.elapsedMs, events: { ...__lanternEvents } };
-        });
+        }, baseline);
         if (!['countdown', 'running'].includes(result.state)) break;
       }
       assert.equal(result.state, 'finished', `${breed}/${repeat}: ${JSON.stringify(result)}`);
       assert.equal(result.events.respawns, result.metrics.eventsBefore.respawns, 'whole route must finish without respawn');
       assert.equal(result.events.hits, result.metrics.eventsBefore.hits, 'whole route must avoid hard solid contacts');
       assert.ok(result.metrics.mappingError < 1e-6, 'real stick mapping must match requested pilot steering');
+      assert.ok(result.metrics.finalApproachSamples > 0, 'each full attempt must observe the actual lower final approach');
+      if (!baseline) assert.deepEqual(result.metrics.badApproach, [], 'valid final descent must stay aimed at the finish, not seek/circle back');
+      if (!baseline) {
+        assert.ok(result.metrics.coachingSequence.some(s => s.phase === 'seek'), 'full attempt observes finding lift');
+        assert.ok(result.metrics.coachingSequence.some(s => s.phase === 'climb'), 'full attempt observes entering real lift');
+        assert.ok(result.metrics.coachingSequence.some(s => s.phase === 'approach'), 'full attempt observes the lower finish approach');
+      }
       // Wait for the actual result card, then View performs the existing retry in next repeat.
       await page.evaluate(() => {
         __lanternNeutral();
@@ -187,6 +212,34 @@ try {
       return { entry, missedLift, reentry, stall, overshoot: document.querySelector('.dw-lantern-coach').dataset.phase };
     });
     assert.deepEqual(evidence.recovery, { entry: 'climb', missedLift: 'recover', reentry: 'climb', stall: 'stall', overshoot: 'finish' });
+    // One staged entry, then continuous real flight: fly out of lift, see recovery, and steer
+    // back through Input.poll. No teleport between departure and re-entry; no airtime claim.
+    evidence.offLineRecovery = await page.evaluate(() => {
+      const g = __dw.game; g.resume(); g.races.abort('quit'); __lanternNeutral(); __lanternClimate();
+      g.player.teleport(g.player.position.clone().set(-1300, 600, 480), 0, 'flying', 26);
+      g.races.debugStage('lantern-dash', 0, 30000); g.frame(0, false);
+      const sequence = [], respawns = __lanternEvents.respawns;
+      let last = '', seconds = 0;
+      const sample = () => {
+        const el = document.querySelector('.dw-lantern-coach'), phase = el.dataset.phase;
+        if (phase !== last && sequence.length < 16) sequence.push({ phase, seconds, position: g.player.position.toArray(), text: el.textContent });
+        last = phase; return phase;
+      };
+      sample();
+      for (let i = 0; i < 1200 && last !== 'recover' && g.races.state === 'running'; i++) { __lanternTick(1); seconds += 1 / 120; sample(); }
+      const sawRecovery = last === 'recover';
+      const runner = LanternPilot.create(g);
+      runner.pilot.s = runner.pilot.path.nodeS[2];
+      runner.pilot.circlingNode = 2; // QA pilot's existing orbit mode, never runtime navigation
+      let reentered = false;
+      for (let i = 0; i < 7200 && !reentered && g.races.state === 'running'; i++) {
+        LanternPilot.steer(g, __lanternPad, runner); __lanternTick(1); seconds += 1 / 120;
+        reentered = sample() === 'climb';
+      }
+      __lanternNeutral(); g.races.abort('quit');
+      return { sawRecovery, reentered, seconds, sequence, respawns: __lanternEvents.respawns - respawns, mode: g.player.mode };
+    });
+    assert.ok(evidence.offLineRecovery.sawRecovery && evidence.offLineRecovery.reentered && evidence.offLineRecovery.respawns === 0 && evidence.offLineRecovery.mode === 'flying', 'real missed-lift flight must return to lift with truthful recovery cues');
     // Actual stall recovery inputs at a safe height; this is a staged failure, not a whole run.
     evidence.stallRecovery = await page.evaluate(() => {
       const g = __dw.game;

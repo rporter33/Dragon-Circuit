@@ -1,5 +1,15 @@
 # Driftwing — AI Development Handoff
 
+## Final-descent correction — 2026-10-12 UTC
+
+Independent review found that the prior 02cfe3d package told a valid 706 m final descent
+into the unchanged 690 m ring to seek/circle back. That package is superseded. The correction
+uses ephemeral departure-height context and the real finish position/height; complete virtual
+attempts now record the visible cue sequence and assert correct guidance during the actual
+lower final approach. A continuously flown missed-lift/re-entry case verifies recovery cues.
+FlightModel, timing/medals, records/ghosts, IDs and Windline-abort contract remain unchanged.
+Rebuild/package identity and exact-head CI must be completed before owner-playtest readiness.
+
 ## Active: bounded Lantern Dash review — 2026-10-11 UTC
 
 - Robert approved this bounded implementation and will physically playtest. Base remote main

@@ -6,6 +6,19 @@ verified from remote main as `f97bac535611e09c6c732230b5f0ca73b9bbf804` on 2026-
 The clean saved checkout contained no project `.agents/skills`; `/workspace/.agents` was empty.
 `AGENTS.md`, architecture, roadmap, canonical art master and pack introduction were read.
 
+## Review correction — final descent
+
+The initial `02cfe3d` package is superseded after independent review found a misleading cue:
+a rider who had climbed and then descended below 715 m toward the unchanged 690 m finish
+was told to circle back. Presentation now retains bounded departure-height context and
+recognizes the actual finish approach by position and finish height. A valid lower final
+approach stays aimed at the gold ring, including routes that skipped the suggested thermal.
+Low missed lift still offers recovery. No flight, timing, medal, saved-state or route geometry
+changes are involved. Full attempts now retain the visible coaching sequence and independently
+sample the final 180 m near the ring, rejecting seek/circle-back guidance there. A continuously
+flown missed-lift/re-entry exercise separately records off-line recovery; staged fragments
+remain excluded from the full-flow airborne claim. Human clarity/enjoyment remain for playtest.
+
 ## Player-facing change
 
 Lantern Dash still starts at 630 m and finishes through the same gold ring at 690 m. With
