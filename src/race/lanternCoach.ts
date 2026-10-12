@@ -26,8 +26,9 @@ export class LanternCoach {
   private entryY = 0;
   private leftLift = false;
   private heightReady = false;
+  private stalled = false;
 
-  reset(): void { this.inLift = false; this.entryY = 0; this.leftLift = false; this.heightReady = false; }
+  reset(): void { this.inLift = false; this.entryY = 0; this.leftLift = false; this.heightReady = false; this.stalled = false; }
 
   update(f: LanternCoachFrame, thermal: ThermalDef): LanternAdvice {
     const distance = Math.hypot(f.x - thermal.x, f.z - thermal.z);
@@ -43,7 +44,9 @@ export class LanternCoach {
     if (f.y >= LANTERN_EXIT_HEIGHT) this.heightReady = true;
     else if (f.y < f.finishY - 20) this.heightReady = false;
 
-    if (f.stall > 0.15) return { phase: 'stall', title: 'Recover airspeed', body: 'Ease the nose down; level the wings. Climb again once speed returns.', suggestLift: !lifting };
+    // Avoid alternating recovery lines when the physical stall measure hovers at its edge.
+    this.stalled = f.stall > (this.stalled ? 0.05 : 0.15);
+    if (this.stalled) return { phase: 'stall', title: 'Recover airspeed', body: 'Ease the nose down; level the wings. Climb again once speed returns.', suggestLift: !lifting };
     if (f.missedFinish) return { phase: 'finish', title: 'Room for another approach', body: 'Make a wide turn in open sky; approach the gold ring from the Roost side.', suggestLift: f.y < f.finishY - 20 };
     if (lifting) {
       const gain = Math.round(f.y - this.entryY);

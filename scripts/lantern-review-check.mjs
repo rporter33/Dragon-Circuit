@@ -96,7 +96,7 @@ try {
             }
             // Independent final-flight window: observe real full attempts rather than staging
             // a successful end pose or using the coach's departure altitude as a test oracle.
-            if (g.races.state === 'running' && g.player.mode === 'flying' && g.player.flight.stall <= 0.15 &&
+            if (g.races.state === 'running' && g.player.mode === 'flying' && g.player.flight.stall <= 0.05 &&
                 Math.hypot(p.x - finish[0], p.z - finish[2]) < 180 && p.y >= finish[1] - 10 && p.y <= finish[1] + 40) {
               const coach = document.querySelector('.dw-lantern-coach'), phase = coach?.dataset.phase ?? 'absent';
               m.finalApproachSamples++;

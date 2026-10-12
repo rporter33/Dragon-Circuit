@@ -38,6 +38,13 @@ describe('optional Lantern advice', () => {
     expect(c.update(frame({ stall: 0.3, missedFinish: true }), thermal).phase).toBe('stall');
     expect(c.update(frame({ missedFinish: true }), thermal).phase).toBe('finish');
   });
+  it('holds a single stall recovery cue through threshold jitter until speed recovers', () => {
+    const c = new LanternCoach();
+    for (const stall of [0.3, 0.14, 0.16, 0.08]) expect(c.update(frame({ stall }), thermal).phase).toBe('stall');
+    expect(c.update(frame({ stall: 0.04 }), thermal).phase).toBe('climb');
+    c.reset();
+    expect(c.update(frame({ stall: 0.08 }), thermal).phase).toBe('climb');
+  });
   it('does not require the suggested thermal if the rider already has height', () => {
     const a = new LanternCoach().update(frame({ x: 0, lift: 0, y: 750 }), thermal);
     expect(a.phase).toBe('exit'); expect(a.suggestLift).toBe(false);
