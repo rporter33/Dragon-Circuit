@@ -57,6 +57,7 @@ export class LanternCoach {
     }
     const finishDistance = Math.hypot(f.x - f.finishX, f.z - f.finishZ);
     if (finishDistance <= 350 && f.y >= f.finishY - 20) return { phase: 'approach', title: `Gold finish · ${Math.round(f.finishY)} m`, body: 'Line up at the ring’s height; keep speed and approach from the spire’s east side.', suggestLift: false };
+    if (finishDistance <= 350) return { phase: 'recover', title: 'Below finish height · regain height', body: 'Keep speed; use gentle flaps if able, or return to the warm lift before another approach.', suggestLift: true };
     if (this.heightReady || f.y >= LANTERN_EXIT_HEIGHT - 15) return { phase: 'exit', title: 'Glide, then bank', body: 'Go around the spire’s east side toward the gold ring. More lift is always an option.', suggestLift: false };
     if (this.leftLift) return { phase: 'recover', title: 'Lift fell away · circle back', body: 'Keep speed; turn gently back into the warm column south of the spire.', suggestLift: true };
     return { phase: 'seek', title: 'Suggested lift · south of Lantern Spire', body: 'Find the warm rising strokes; enter below 730 m with speed, then circle gently.', suggestLift: true };

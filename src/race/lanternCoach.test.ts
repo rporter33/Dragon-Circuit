@@ -67,6 +67,11 @@ describe('optional Lantern advice', () => {
     const a = new LanternCoach().update(frame({ x: -970, z: 740, y: 706, lift: 0 }), thermal);
     expect(a.phase).toBe('approach'); expect(a.title).toContain('690 m');
   });
+  it('offers local height recovery on a low final approach without requiring a thermal detour', () => {
+    const a = new LanternCoach().update(frame({ x: -1100, z: 820, y: 650, lift: 0 }), thermal);
+    expect(a.phase).toBe('recover'); expect(a.title).toContain('Below finish height');
+    expect(a.body).toContain('gentle flaps'); expect(a.body).not.toContain('circle back');
+  });
   it('still offers recovery when a prior climb has been lost below finish height', () => {
     const c = new LanternCoach(); c.update(frame({ y: 735 }), thermal);
     const a = c.update(frame({ x: -1100, z: 480, y: 620, lift: 0 }), thermal);
