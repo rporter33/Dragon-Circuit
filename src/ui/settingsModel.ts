@@ -115,7 +115,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
       { kind: 'toggle', key: 'showGhost', label: 'Race ghost', help: 'Race against a ghost of your best run.' },
       {
         kind: 'toggle', key: 'showControlHints', label: 'Show tips',
-        help: 'First-flight lessons and flying hints like “Flare to land”. Interaction prompts always show.',
+        help: 'First-flight lessons, flying hints and optional Lantern Dash lift coaching. Interaction prompts always show.',
       },
       { kind: 'action', id: 'replayTips', label: 'Replay tips', help: 'Show the first-flight lessons again, from the start.' },
       { kind: 'choice', key: 'timeOfDay', label: 'Time of day', help: 'Let the sun cross the sky, or hold it at your favourite hour.', options: TIME_OF_DAY } as ChoiceRow,

@@ -14,6 +14,7 @@ import { LiveClass, LiveStyle, LiveText, div, fromHtml, h } from './dom';
 import { formatDelta, formatTime, titleCase } from './format';
 import { ICONS } from './icons';
 import type { NoticeSpec } from './notices';
+import { LanternCoachHud } from './LanternCoachHud';
 
 export interface RaceHudCtx {
   events: GameEventBus;
@@ -39,6 +40,7 @@ const ABORT_LINES: Record<string, string> = {
 export class RaceHud {
   readonly root: HTMLElement;
   private ctx: RaceHudCtx;
+  private lantern: LanternCoachHud;
 
   private cluster: HTMLElement;
   private clusterOn: LiveClass;
@@ -98,6 +100,8 @@ export class RaceHud {
     this.time = new LiveText(timeV);
     this.best = new LiveText(bestV);
     this.clusterOn = new LiveClass(this.cluster, 'is-on');
+    this.lantern = new LanternCoachHud(ctx.events);
+    this.cluster.insertBefore(this.lantern.line, this.delta);
 
     // A slim line under the race cluster, not a card in the middle: the gate itself (what you aim
     // for) fills the centre of the screen on the approach.
@@ -119,7 +123,7 @@ export class RaceHud {
     this.missed = div('dw-missed', fromHtml(ICONS.race), h('span', { text: 'MISSED A RING — TURN BACK' }));
     this.missedOn = new LiveClass(this.missed, 'is-on');
 
-    this.root = div('dw-layer dw-racehud', this.cluster, this.gate, this.count, this.missed, this.edge);
+    this.root = div('dw-layer dw-racehud', this.cluster, this.gate, this.count, this.missed, this.edge, this.lantern.marker);
     this.subscribe(ctx.events);
   }
 
@@ -293,6 +297,7 @@ export class RaceHud {
 
     this.missedOn.set(hudVisible && running && this.missedLeft > 0);
     this.updateEdge(view, hudVisible && running);
+    this.lantern.update(view, hudVisible);
   }
 
   /** Arrow on an ellipse near the screen edge, pointing at the next ring when it is off-screen. */

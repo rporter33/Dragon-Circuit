@@ -1,5 +1,40 @@
 # Driftwing — AI Development Handoff
 
+## Final-descent correction — 2026-10-12 UTC
+
+Independent review found that the prior 02cfe3d package told a valid 706 m final descent
+into the unchanged 690 m ring to seek/circle back. That package is superseded. The correction
+uses ephemeral departure-height context and the real finish position/height; complete virtual
+attempts now record the visible cue sequence and assert correct guidance during the actual
+lower final approach. A continuously flown missed-lift/re-entry case verifies recovery cues.
+FlightModel, timing/medals, records/ghosts, IDs and Windline-abort contract remain unchanged.
+Rebuild/package identity and exact-head CI must be completed before owner-playtest readiness.
+
+## Active: bounded Lantern Dash review — 2026-10-11 UTC
+
+- Robert approved this bounded implementation and will physically playtest. Base remote main
+  verified as f97bac535611e09c6c732230b5f0ca73b9bbf804; isolated branch
+  `review/lantern-dash-lift-20261011`. Initial checkout was clean. Other worktrees/branches,
+  rider, wardrobe, skeleton, animation and Blender artifacts were not edited.
+- Optional real-thermal tag, factual climb/descent, exit and recovery advice reuse existing
+  warm wind visuals and Show tips. True finish/camera waypoint, course IDs, courseVia, race
+  lifecycle, saves/ghosts, medals/stamina and FlightModel are preserved. Only RaceHud has a
+  narrow integration into the existing view. Timed mounted races still abort on Windline leap.
+- Initial unit suite: 112 files/1,200 tests pass, including original all-breed course/medal/4 m
+  checks; typecheck/build and 15/15 production smoke pass. Whole virtual-controller attempts
+  on all breeds match baseline times; separate real-lift 30 m no-flap exercises pass all breeds.
+  Browser recovery/pause/retry/leap-abort probes pass. Final-head QA and private package status
+  must be taken from the final review artifact/PR, not inferred from this checkpoint.
+- See docs/qa/LANTERN_DASH_REVIEW.md and the ZIP README for Windows loopback launch,
+  matched evidence, bounded airtime accounting and Robert's concise playtest checklist.
+  Actual Windows execution/controller/rumble and human usability are unverified here.
+- Executor commands, shell/files and long-lived processes persisted across the reported
+  disconnect notifications. On 2026-10-11 at 23:14:59 UTC, preview HTTP 200, cgroup OOM counters
+  all zero and disk usage 1%; available logs did not identify a disconnect cause.
+- Authorized next action: finish exact-head checks and publish only this separate draft PR
+  with its private review package. No main merge, release, deploy or normal-build replacement.
+  Horizontal/curved wind streams remain a separate owner checkpoint after Robert's route test.
+
 ## Latest: Robert approved neutral dot and deferred hit prediction — 2026-10-11 UTC
 
 - Exactebe0496 fullChromium141 CI38154344579 still fails unchanged45Hz moving-UI gate:15 samples/2.002s/7.492Hz, median16ms/p951167.5ms, visible0 submissions/0 forecasts/.006667ms dot update with real yaw/steering/fall. Full3D11/11 samples pass, priorGLfinish.1ms, neutral480/0 queries/.015833ms/fresh native first/newsolid24214/range/retained swing7.2ms and unit/type/build/smoke/normal/controller pass. Editor38154344564 passes; integrationartifact11708381472/editor11708530789 preserved. Browser mode alone is insufficient. A fixed500ms pause plusGLfinish does not establish compositor transition; harness now crosses exactlyTWO native RAF boundaries after switching to UI-only BEFORE existing500ms settling and unchanged2s timing. Startup callback poses/times/blue/null/visible/0-query/0-submit truth are preserved and asserted separately, with bounded120s transition; no rate-based waiting, discarded failing measurement, threshold/CPU/workflow/source change. Reports first measured callback delay. New exact-head CI must prove or refute startup-tail hypothesis; do not merge failedheads.
