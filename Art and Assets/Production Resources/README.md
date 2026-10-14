@@ -4,5 +4,6 @@
 - [Architecture](../../ARCHITECTURE.md) — verified project systems and their boundaries.
 - [Roadmap](../../docs/ROADMAP.md) — current project sequencing and status.
 - [AI handoff](../../docs/AI_HANDOFF.md) — dated work records and next steps.
-- [Tripo workflow guide](../Guides/tripo/README.md).
+- [Meshy generation and Blender handoff](../Guides/meshy/README.md) — current primary generator.
+- [Historical Tripo workflow guide](../Guides/tripo/README.md) — earlier settings and source provenance.
 - [Sol and Blender workflow guide](../Guides/sol-blender/README.md).

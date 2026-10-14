@@ -4,7 +4,7 @@ A browsable entry point for Dragon Circuit's visual direction, asset authoring g
 
 ## Sections
 
-- [Guides](Guides/README.md) — art style, model budgets, Tripo settings, prompts, customization and Sol/Blender workflow.
+- [Guides](Guides/README.md) — art style, model budgets, Meshy generation, prompts, customization and Sol/Blender workflow; historical Tripo guidance is retained.
 - [Lessons Learned](Lessons%20Learned/README.md) — practical findings from completed Blender studies.
 - [References](References/README.md) — canonical art direction and the art reference pack.
 - [Creatures and Customization](Creatures%20and%20Customization/README.md) — wyvern source, cosmetics and customization guidance.
@@ -15,5 +15,7 @@ A browsable entry point for Dragon Circuit's visual direction, asset authoring g
 - [Production Resources](Production%20Resources/README.md) — project architecture and curated development resources.
 
 ## How to use this hub
+
+Robert selected **Meshy as the primary 3D generation tool on 2026-10-14**. Follow [Meshy generation](Guides/meshy/README.md) → Blender cleanup, fit, rig and material verification → an editable `.blend` master and a GLB candidate for a separately approved runtime handoff. Existing Tripo sources keep their original provenance; this tool change does not establish game compatibility.
 
 The guides and lessons are gathered here. Existing source code, canonical art references, and project-specific reviews stay at their established paths; the section pages link to those originals so the repository keeps one authoritative copy. Read [AGENTS.md](../AGENTS.md), [ARCHITECTURE.md](../ARCHITECTURE.md), and [the shared art direction](../docs/ART_DIRECTION.md) before proposing implementation.

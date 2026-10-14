@@ -1,8 +1,10 @@
-# Tripo — geometry-first settings
+# Tripo — historical geometry-first settings
 
 [Back to guide index](../README.md)
 
-Recommendations based on the user-supplied Tripo screenshot and official guidance checked during the 2026-10-13 discussion. Labels, available models and plan features may change.
+**Historical guidance:** Robert switched to [Meshy as the primary generator](../meshy/README.md) on 2026-10-14. Keep this page and original Tripo filenames/source records for provenance and earlier assets. Do not translate these control names or settings into Meshy defaults.
+
+The recommendations below are preserved from the user-supplied Tripo screenshot and official guidance checked during the 2026-10-13 discussion. Labels, available models and plan features may change.
 
 | Control | Recommended first trial |
 |---|---|
