@@ -16,6 +16,8 @@ A browsable entry point for Dragon Circuit's visual direction, asset authoring g
 
 ## How to use this hub
 
+For game/design/tools/QA navigation, use [the documentation map](../docs/README.md). [Asset ownership and the register](../assets/README.md) distinguish committed files, reported external studies, missing storyboard images and unverified rights. [Owner decisions](../docs/production/DECISIONS.md) keep the website with the game and select a separate master/raw archive whose destination remains pending.
+
 Robert selected **Meshy as the primary 3D generation tool on 2026-10-14**. Follow [Meshy generation](Guides/meshy/README.md) → Blender cleanup, fit, rig and material verification → an editable `.blend` master and a GLB candidate for a separately approved runtime handoff. Existing Tripo sources keep their original provenance; this tool change does not establish game compatibility.
 
 The guides and lessons are gathered here. Existing source code, canonical art references, and project-specific reviews stay at their established paths; the section pages link to those originals so the repository keeps one authoritative copy. Read [AGENTS.md](../AGENTS.md), [ARCHITECTURE.md](../ARCHITECTURE.md), and [the shared art direction](../docs/ART_DIRECTION.md) before proposing implementation.

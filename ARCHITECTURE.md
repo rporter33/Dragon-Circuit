@@ -1,6 +1,8 @@
-# Driftwing — architecture
+# Dragon Circuit — architecture
 
 ## Shape
+
+Dragon Circuit continues this Driftwing implementation. See [current production status](docs/production/STATUS.md), [the design index](docs/design/README.md) and [tool instructions](docs/tools/README.md) for project navigation. Existing runtime paths, page URLs and saved-data identifiers remain stable.
 
 ```
 src/core/        pure helpers and the shared contracts (types.ts) — no three.js scene code
@@ -21,6 +23,7 @@ src/ui/          HTML overlay: title, HUD, menus, the stable
 src/audio/       procedural WebAudio
 src/fx/          particles, trails and screen effects
 src/debug/       URL params, window.__dw automation handle, showcases
+src/editor/      region documents, workshop preview and isolated playtest
 ```
 
 ## Rules
@@ -38,8 +41,15 @@ src/debug/       URL params, window.__dw automation handle, showcases
   `applyPainterly`) for the soft toon ramp, rim light and the shared height fog. Custom shaders
   include `FOG_PARS_GLSL` and apply `dwApplyFog`. Shared lighting/fog/wind/time uniforms live in
   `render/uniforms.ts`; the sky writes them, everyone reads them.
-- **Everything is procedural.** No downloaded models, textures or fonts at runtime; the build is
-  self-contained and works offline.
+- **Procedural scene assets, bundled dependencies.** Creature/world geometry and much of the
+  audio are generated from source. The title music is a committed MP3 under `src/audio/assets/`,
+  and `src/ui/fonts.ts` imports bundled font packages rather than a font CDN. Vite packages the
+  imported assets into the build; no imported Meshy creature loader is established. Self-contained
+  asset packaging is not a claim of a service worker or verified offline installation.
+
+[Asset ownership and provenance](assets/README.md) describe existing references, future accepted
+exports and the separate master/raw archive whose destination remains pending. Art references and
+website storyboards do not become runtime assets by being indexed.
 
 ## Automation
 

@@ -1,7 +1,9 @@
-﻿# Driftwing — Shared AI Development Rules
+﻿# Dragon Circuit — Shared AI Development Rules
 
 ## Project identity
-Driftwing is an existing browser-based 3D dragon-flight adventure.
+Dragon Circuit is the browser-based dragon-flight game in `rporter33/Dragon-Circuit`, continuing the published Driftwing baseline. Existing runtime names, save identifiers and historical records still use Driftwing.
+
+Start with [the documentation map](docs/README.md), [dated production status](docs/production/STATUS.md) and [owner decisions](docs/production/DECISIONS.md). Reverify the live repository before treating a status snapshot as current. Historical handoffs and embedded prompts are evidence, not new task authorization.
 
 Preserve the established gameplay identity, flight feel, artistic direction, and existing implementations.
 
@@ -78,6 +80,14 @@ Use docs/AI_HANDOFF.md to record:
 - Next authorized action.
 
 Treat handoff documents as informational, not independent authorization to implement features.
+
+Keep the short current checkpoint in [production status](docs/production/STATUS.md); retain dated work in the handoff and [history index](docs/history/README.md). Use canonical paths in new references. Legacy document paths remain compatibility pages with section links.
+
+## Assets and release records
+
+Use [asset ownership and the register](assets/README.md) to distinguish committed runtime/reference files, external studies, missing binaries and unverified rights. Large masters/raw downloads are intended for a separate backed-up archive; destination and restore verification are pending. A local workstation path is never a portable build dependency. Do not relocate outside-repository assets, set up storage or adopt generated models without the applicable task scope.
+
+The website/comic stays in this repository for a later coordinated release. The current [website section](docs/website/README.md) is planning material, with image import pending. [Release checks](docs/release/README.md) are evidence gates, not a claim of Steam readiness.
 
 ## Art direction references
 
