@@ -938,3 +938,14 @@ The import commit is the Git commit introducing this file; this is a static hand
 - New browser measurements identify full tested head/tree, actual runtime build stamp, script assets, runner identity/dirty state and time. Screenshot entries include SHA-256 hashes. Fresh clean-head `c1b8e37` HUD/CPU captures and normal gameplay checks passed; manifests/raw comparison replace the exploratory measurements, whose history remains in Git. Source/build identities and actual images are in `docs/qa/`. The following evidence-only commit leaves runtime source and tests unchanged; exact final-head CI is recorded in PR #6.
 - Environment recovered: repair and enhancement worktrees respond normally. Requested reticle/faster-cast work is preserved on remote `wip/windline-fixed-dot` at `14807517b1999f8fb262bfecbe913f6b686ab814`; it is not validated or merged. PR #5 still targets its separate earlier enhancement head.
 - Next authorized action: run committed-head browser checks, attach fresh evidence, push review follow-up to draft PR #6, and obtain parent review after exact-head CI. Do not merge repair or enhancement without that review.
+
+
+## 2026-10-13 — Dragon Circuit asset authoring READMEs
+
+- Objective: make the owner's cel-shaded asset guidance and reusable prompts accessible in Dragon Circuit on GitHub.
+- Branch: `codex/asset-authoring-readmes`; source baseline `81761be3a4ce53ee1c90cdd9957a3171fe704a8a`; guide content commit `58992021d3caaf70f0da5b8ec5dcd12247b92621` before this handoff entry.
+- Added: [guide index](asset-guides/README.md) and six separate READMEs for art style, budgets, Tripo, base prompts, customization and Sol/Blender.
+- Verification: uploaded guide contents read back and compared; prompt field lengths and relative navigation checked. No game tests, build, render or performance measurement run for this documentation-only task.
+- Scope: selected visual direction is recorded separately from provisional budgets, static Blender evidence and unverified runtime compatibility. Six-limbed dragon rig/integration remains a proposal.
+- Preserved: existing game code, assets, reference pack, canonical art guide, main branch and prior handoff entries. No .blend or render binaries uploaded.
+- Next action: owner review of documentation branch/PR. No merge, deployment or runtime implementation performed or authorized by these documents.
