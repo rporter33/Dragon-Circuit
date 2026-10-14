@@ -1,6 +1,7 @@
 # Dragon Circuit — asset authoring guides
 
 [Back to Art and Assets](../README.md)
+
 Updated 2026-10-13. These guides capture Robert's selected cel-shaded visual direction and the proposed workflow for one customizable wyvern and one six-limbed dragon.
 
 ## Read the guide you need
