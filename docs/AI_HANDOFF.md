@@ -958,3 +958,13 @@ The import commit is the Git commit introducing this file; this is a static hand
 - Scope: selected visual direction is recorded separately from provisional budgets, static Blender evidence and unverified runtime compatibility. Six-limbed dragon rig/integration remains a proposal.
 - Preserved: existing game code, assets, reference pack, canonical art guide, main branch and prior handoff entries. No .blend or render binaries uploaded.
 - Next action: owner review of documentation branch/PR. No merge, deployment or runtime implementation performed or authorized by these documents.
+
+
+## Art and Assets documentation hub — 2026-10-14
+
+- Objective: group the asset-authoring guides and Blender study lessons in the repository's Art and Assets section and make related references discoverable by topic.
+- Added the [Art and Assets hub](../Art%20and%20Assets/README.md), with sections for guides, lessons learned, canonical art references, creatures, rider and wardrobe, world, rendering, storyboards, and production resources.
+- Moved the seven asset-guide documents and Blender lessons into the hub. Former paths under docs/asset-guides/ and the repository-root lessons path now point to the new copies so existing links remain navigable.
+- Canonical art pack, code, and project references remain at their original paths and are linked from the section pages. The referenced Blender study files remain local workstation files.
+- Scope and validation: documentation organization only; no game code, runtime assets, tests, or builds changed or run. Local links and target paths were checked against the repository tree before publishing this branch.
+- Branch: codex/art-and-assets-hub, based on main 0b09f31723e4cf1a399e41b7971bfcda1a004c6d. Review the pull request before merging.
