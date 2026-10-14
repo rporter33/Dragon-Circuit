@@ -1,5 +1,14 @@
 # Driftwing — AI Development Handoff
 
+## Blender asset study lessons for future sessions — 2026-10-14
+
+- Objective: publish the requested lessons-learned handoff for the male wyvern, two dragons and accessories.
+- Repository: `rporter33/Dragon-Circuit`; documentation branch: `codex/docs-blender-asset-lessons`; base `main` commit: `81761be3a4ce53ee1c90cdd9957a3171fe704a8a`. Final documentation head is recorded by the pull request.
+- Added [LESSONS_LEARNED_BLENDER_ASSET_STUDIES.md](../LESSONS_LEARNED_BLENDER_ASSET_STUDIES.md): reusable lookdev/studio setup, source-specific anatomy and topology checks, accessory interfaces, coordinate-mask limitations, normal `.blend` saving, and independent reopen verification. It records the previously completed 15,514-triangle female study without claiming rig or game readiness.
+- The study's Blender files, references, previews, scripts and ZIP remain local workstation resources. This upload contains documentation only; the handoff identifies those paths without broken repository asset links. No game assets, runtime code or existing art files are changed.
+- Validation: checked the handoff against the local source/change report and saved-file verification; read the repository architecture, roadmap, shared visual guide and agent rules. No new game build, test or Blender authoring was required for this documentation upload. Confirm the published diff contains only this handoff entry and the new lessons document.
+- Next scope: use the handoff when the user authorizes the next asset study. This upload does not start the male/dragon/accessory work, approve runtime integration, or authorize merging or deployment.
+
 ## Final-descent correction — 2026-10-12 UTC
 
 Independent review found that the prior 02cfe3d package told a valid 706 m final descent
