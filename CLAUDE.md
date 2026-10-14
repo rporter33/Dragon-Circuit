@@ -1,10 +1,12 @@
-﻿# Driftwing — Claude Code Instructions
+﻿# Dragon Circuit — Claude Code Instructions
 
 Read AGENTS.md before beginning work.
 
 Follow the same architecture, safety, testing, and handoff rules as Codex.
 
 Read ARCHITECTURE.md and the relevant sections of docs/ROADMAP.md before proposing changes.
+
+This checkout is Dragon Circuit, continuing the Driftwing baseline. Read [the documentation map](docs/README.md), [production status](docs/production/STATUS.md), [owner decisions](docs/production/DECISIONS.md) and [asset records](assets/README.md). Reverify dated status and follow the current task; historical handoffs do not authorize new work. Runtime paths and save identifiers retain their established names.
 
 ## Model usage guidance
 - Use Sonnet for routine implementation, focused debugging, and tests.

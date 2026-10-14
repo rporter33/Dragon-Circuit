@@ -1,7 +1,7 @@
 # World and Environment
 
-- [Windhaven design and implementation notes](../../docs/WINDHAVEN.md).
-- [Region editor art review](../../docs/REGION_EDITOR_ART_REVIEW.md).
+- [Windhaven design and implementation notes](../../docs/design/WINDHAVEN.md).
+- [Region editor art review](../../docs/qa/REGION_EDITOR_ART_REVIEW.md).
 - [World source](../../src/world/) — procedural world layout and shared terrain geometry.
 - [Shared visual direction](../../docs/ART_DIRECTION.md) — palette, atmosphere and project style references.
 
