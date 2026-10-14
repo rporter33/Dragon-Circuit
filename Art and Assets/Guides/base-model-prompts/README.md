@@ -22,6 +22,6 @@ Create one unadorned stylized dragon base for a cel-shaded exploration game. Exa
 
 Approve anatomy and silhouette first, then neutral geometry, then one accessory from each slot, then deformation. Keep a fixed reference/model version and record each change.
 
-For image references, request one full-body three-quarter view against a plain background first. Approve it before making consistent front/side views. Do not put multiple creatures or alternate designs in a single 3D-generation input.
+For image references, request one full-body three-quarter view against a plain background first. Approve it before making consistent front/side/back views. Do not put multiple creatures or alternate designs in a single 3D-generation input. For Meshy Multi-View, use consistent views of that same approved subject and follow the actual slot labels; review generated complementary views for altered anatomy. Separate views make project review easier; Meshy also documents support for a composited turnaround sheet. One strong image is preferable to contradictory views.
 
-Use [Tripo settings](../tripo/README.md) and [customization contracts](../customization/README.md) alongside these prompts.
+Use the current [Meshy workflow](../meshy/README.md) and [customization contracts](../customization/README.md) alongside these prompts. Prompt text does not set a guaranteed triangle count or establish wing-arm/six-limb auto-rig support. [Tripo settings](../tripo/README.md) are historical guidance for earlier sources.

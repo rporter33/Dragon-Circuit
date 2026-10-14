@@ -20,6 +20,8 @@ The inspected source's existing maximum budgets are Harrier/Skimmer/Galewing 24,
 
 Protect joint loops, face shapes and wing-edge curves. Do not reduce everything uniformly or decimate away attachment surfaces. Check the exported model, not only Blender's edit-mode face count.
 
+For Meshy, inspect geometry before texturing or rigging and remesh only when needed. Triangle or quad-dominant output and requested counts do not guarantee the exported triangle count or deformation quality. The bare-wyvern and bare-dragon ranges above remain provisional project triangle targets to check by measurement, distinct from Meshy's requested polygon/face counts; quad-dominant output must be counted after triangulation. Measure the evaluated Blender mesh and reimported GLB; retain the exploratory targets above without treating a vendor preset as a new project requirement. See the [Meshy workflow and official Remesh sources](../meshy/README.md#geometry-and-material-review).
+
 Also measure draw calls, texture residency, skinning, cloth, transparency, shadows and outline passes. Several small meshes can cost more draw overhead than a combined mesh, even at the same triangle count. Preserve required modularity while sharing materials where practical.
 
 Start with vertex colors or modest textures; inspect 1K before assuming 2K is needed. 8K is not the default for this direction. Compression reduces transfer or memory costs; it does not make poor topology deform correctly.
