@@ -1,3 +1,14 @@
+# Website storyboard handoff — 2026-10-14
+
+Objective: preserve eight chapter-one concept images in a dedicated website storyboard section.
+Branch: docs/website-storyboard-ch01. Previous commit: da96fd1c1ae8d2fae9dec9c7766057737a988997. Draft PR #2.
+Completed: docs/website/README.md and docs/website/storyboard/chapter-01/README.md; linked ZIP with eight PNGs plus review notes.
+Validation: archive entry count (9) and ZIP integrity passed. No runtime changes or gameplay tests.
+Remaining: PNGs are not in Git; connector supports text writes only and direct Git authentication failed. Next authorized action: import eight originals into the chapter directory through an authenticated binary-capable upload route, then update pending status. Main must remain unchanged until review.
+Story remains exploratory; preserve Robert's elder anatomy, tower-top residence, shared regional culture, island and race-ring feedback. Further brainstorming does not authorize implementation.
+
+---
+
 # Driftwing — AI Development Handoff
 
 ## Final-descent correction — 2026-10-12 UTC
